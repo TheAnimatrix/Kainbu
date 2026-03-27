@@ -1,4 +1,4 @@
-package com.avarnic.calurcap;
+package com.avarnic.kainbu;
 
 import com.getcapacitor.BridgeActivity;
 

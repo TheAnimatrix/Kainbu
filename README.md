@@ -57,7 +57,8 @@ Even after running the script, you must manually:
 2.  Go to **Authentication > Providers** and enable **Google**.
 3.  You will need the **Client ID** and **Client Secret** from Google Cloud Console (see below).
 4.  Copy your Supabase URL and Anon Key.
-5.  Update `src/lib/supabaseClient.ts` with your Supabase URL and Anon Key.
+5.  Add `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY`, and `SUPABASE_SERVICE_ROLE_KEY` to your local server environment.
+6.  Update `src/lib/supabaseClient.ts` with your Supabase URL and Anon Key if you are not using env vars directly.
 
 ### 2. Google Cloud Console Setup
 
@@ -127,3 +128,4 @@ Even after running the script, you must manually:
 
 - **Tailwind CSS**: Styles are located in `src/app.css`.
 - **Port**: The development server runs on port `3000` to ensure compatibility with the Android configuration.
+- **Workspace API**: Team-board invite and membership mutations run through the Hono API and require `SUPABASE_SERVICE_ROLE_KEY` on the server.

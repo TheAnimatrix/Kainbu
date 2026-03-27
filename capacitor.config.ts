@@ -1,8 +1,8 @@
 import type { CapacitorConfig } from '@capacitor/cli';
 
 const config: CapacitorConfig = {
-  appId: 'com.avarnic.calurcap',
-  appName: 'Calurcap',
+  appId: 'com.avarnic.kainbu',
+  appName: 'Kainbu',
   webDir: 'build',
   plugins: {
     GoogleAuth: {
@@ -11,11 +11,11 @@ const config: CapacitorConfig = {
       forceCodeForRefreshToken: true,
     },
   },
-  server: {
-    url: 'http://localhost:3000',
-    cleartext: true,
-    androidScheme: 'http'
-  }
+  // server: {
+  //   url: 'http://192.168.0.9:3000',
+  //   cleartext: true,
+  //   androidScheme: 'http'
+  // }
 };
 
 export default config;

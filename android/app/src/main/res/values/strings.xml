@@ -1,7 +1,7 @@
 <?xml version='1.0' encoding='utf-8'?>
 <resources>
-    <string name="app_name">Calurcap</string>
-    <string name="title_activity_main">Calurcap</string>
-    <string name="package_name">com.avarnic.calurcap</string>
-    <string name="custom_url_scheme">com.avarnic.calurcap</string>
+    <string name="app_name">Kainbu</string>
+    <string name="title_activity_main">Kainbu</string>
+    <string name="package_name">com.avarnic.kainbu</string>
+    <string name="custom_url_scheme">com.avarnic.kainbu</string>
 </resources>

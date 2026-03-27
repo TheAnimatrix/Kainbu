@@ -1,12 +1,179 @@
 @import 'tailwindcss';
 
 @theme {
-	--font-sans: 'Inter', 'sans-serif';
+	--font-sans: 'Inter', sans-serif;
+	--font-display: 'Shippori Mincho', serif;
+
+	--color-app-bg: #09090b;
+	--color-app-surface: #18181b;
+	--color-app-surface-hover: #27272a;
+	--color-app-element: #232326;
+	--color-app-border: #2f2f33;
+	--color-app-text: #f4f4f5;
+	--color-app-subtext: #a1a1aa;
+	--color-app-primary: #c2410c;
+	--color-app-primary-hover: #9a3412;
+	--color-app-accent: #3b82f6;
+	--color-app-accent-hover: #2563eb;
+
+	--shadow-kainbu-xl: 0 34px 90px -34px rgba(0, 0, 0, 0.82);
 }
 
 @layer base {
+	:root {
+		color-scheme: dark;
+		--safe-top: env(safe-area-inset-top, 0px);
+		--safe-bottom: env(safe-area-inset-bottom, 0px);
+		--safe-left: env(safe-area-inset-left, 0px);
+		--safe-right: env(safe-area-inset-right, 0px);
+	}
+
+	html,
 	body {
+		height: 100%;
+		min-height: 100%;
+	}
+
+	body {
+		min-height: 100dvh;
 		font-family: var(--font-sans);
-		@apply bg-[#0B1120] text-white antialiased;
+		background:
+			radial-gradient(circle at top right, rgba(194, 65, 12, 0.12), transparent 24rem),
+			radial-gradient(circle at bottom left, rgba(59, 130, 246, 0.1), transparent 28rem),
+			var(--color-app-bg);
+		color: var(--color-app-text);
+		overflow: hidden;
+		-webkit-font-smoothing: antialiased;
+	}
+
+	button,
+	input,
+	textarea,
+	select {
+		font: inherit;
+	}
+
+	button {
+		cursor: pointer;
+		touch-action: manipulation;
+	}
+
+	button:disabled {
+		cursor: not-allowed;
+	}
+
+	* {
+		scrollbar-width: thin;
+		scrollbar-color: rgba(161, 161, 170, 0.3) transparent;
+	}
+
+	::-webkit-scrollbar {
+		width: 8px;
+		height: 8px;
+	}
+
+	::-webkit-scrollbar-track {
+		background: transparent;
+	}
+
+	::-webkit-scrollbar-thumb {
+		background: rgba(63, 63, 70, 0.9);
+		border-radius: 999px;
+	}
+
+	::-webkit-scrollbar-thumb:hover {
+		background: rgba(82, 82, 91, 0.95);
+	}
+}
+
+@layer utilities {
+	.font-display {
+		font-family: var(--font-display);
+	}
+
+	.bg-kainbu-grid {
+		background-image:
+			linear-gradient(to right, rgba(255, 255, 255, 0.05) 1px, transparent 1px),
+			linear-gradient(to bottom, rgba(255, 255, 255, 0.05) 1px, transparent 1px);
+		background-size: 26px 26px;
+	}
+
+	.kainbu-prose {
+		color: var(--color-app-text);
+		line-height: 1.65;
+	}
+
+	.kainbu-prose > :first-child {
+		margin-top: 0;
+	}
+
+	.kainbu-prose > :last-child {
+		margin-bottom: 0;
+	}
+
+	.kainbu-prose p,
+	.kainbu-prose ul,
+	.kainbu-prose ol,
+	.kainbu-prose pre,
+	.kainbu-prose blockquote,
+	.kainbu-prose table {
+		margin: 0.65rem 0;
+	}
+
+	.kainbu-prose h1,
+	.kainbu-prose h2,
+	.kainbu-prose h3,
+	.kainbu-prose h4 {
+		margin: 0.9rem 0 0.45rem;
+		color: var(--color-app-text);
+		font-weight: 700;
+	}
+
+	.kainbu-prose a {
+		color: var(--color-app-accent);
+		text-decoration: underline;
+		text-underline-offset: 0.2rem;
+	}
+
+	.kainbu-prose strong,
+	.kainbu-prose code {
+		color: var(--color-app-text);
+	}
+
+	.kainbu-prose code {
+		border-radius: 0.5rem;
+		background: rgba(255, 255, 255, 0.05);
+		padding: 0.18rem 0.38rem;
+		font-size: 0.92em;
+	}
+
+	.kainbu-prose pre {
+		overflow-x: auto;
+		border: 1px solid var(--color-app-border);
+		border-radius: 1rem;
+		background: rgba(24, 24, 27, 0.95);
+		padding: 1rem;
+	}
+
+	.kainbu-prose pre code {
+		background: transparent;
+		padding: 0;
+	}
+
+	.kainbu-prose ul,
+	.kainbu-prose ol {
+		padding-left: 1.2rem;
+	}
+
+	.kainbu-prose blockquote {
+		border-left: 3px solid rgba(194, 65, 12, 0.65);
+		padding-left: 1rem;
+		color: var(--color-app-subtext);
+	}
+
+	.prose-tight p,
+	.prose-tight ul,
+	.prose-tight ol {
+		margin: 0;
 	}
 }

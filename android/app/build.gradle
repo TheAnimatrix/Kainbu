@@ -1,10 +1,45 @@
 apply plugin: 'com.android.application'
 
+def keystoreProperties = new Properties()
+def keystorePropertiesFile = rootProject.file('keystore.properties')
+
+if (keystorePropertiesFile.exists()) {
+    keystoreProperties.load(new FileInputStream(keystorePropertiesFile))
+}
+
+def readSigningValue = { propertyName, envName ->
+    def envValue = System.getenv(envName)
+    if (envValue != null && !envValue.trim().isEmpty()) {
+        return envValue.trim()
+    }
+
+    def propertyValue = keystoreProperties.getProperty(propertyName)
+    return propertyValue != null && !propertyValue.trim().isEmpty() ? propertyValue.trim() : null
+}
+
+def releaseStoreFile = readSigningValue('storeFile', 'KAINBU_UPLOAD_STORE_FILE')
+def releaseStorePassword = readSigningValue('storePassword', 'KAINBU_UPLOAD_STORE_PASSWORD')
+def releaseKeyAlias = readSigningValue('keyAlias', 'KAINBU_UPLOAD_KEY_ALIAS')
+def releaseKeyPassword = readSigningValue('keyPassword', 'KAINBU_UPLOAD_KEY_PASSWORD')
+def releaseSigningReady = [releaseStoreFile, releaseStorePassword, releaseKeyAlias, releaseKeyPassword].every { it != null }
+def requestedTaskNames = gradle.startParameter.taskNames.collect { it.toLowerCase() }
+def buildingReleaseArtifact = requestedTaskNames.any { it.contains('release') || it.contains('bundle') }
+
 android {
-    namespace "com.avarnic.calurcap"
+    namespace "com.avarnic.kainbu"
     compileSdk rootProject.ext.compileSdkVersion
+    signingConfigs {
+        if (releaseSigningReady) {
+            release {
+                storeFile file(releaseStoreFile)
+                storePassword releaseStorePassword
+                keyAlias releaseKeyAlias
+                keyPassword releaseKeyPassword
+            }
+        }
+    }
     defaultConfig {
-        applicationId "com.avarnic.calurcap"
+        applicationId "com.avarnic.kainbu"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
         versionCode 1
@@ -18,6 +53,9 @@ android {
     }
     buildTypes {
         release {
+            if (releaseSigningReady) {
+                signingConfig signingConfigs.release
+            }
             minifyEnabled false
             proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
         }
@@ -51,4 +89,13 @@ try {
     }
 } catch(Exception e) {
     logger.info("google-services.json not found, google-services plugin not applied. Push Notifications won't work")
+}
+
+afterEvaluate {
+    if (buildingReleaseArtifact && !releaseSigningReady) {
+        throw new GradleException(
+            "Release signing is not configured. Add android/keystore.properties or set " +
+            "KAINBU_UPLOAD_STORE_FILE, KAINBU_UPLOAD_STORE_PASSWORD, KAINBU_UPLOAD_KEY_ALIAS, and KAINBU_UPLOAD_KEY_PASSWORD."
+        )
+    }
 }
