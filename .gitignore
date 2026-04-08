@@ -7,6 +7,14 @@ node_modules
 .wrangler
 /.svelte-kit
 /build
+/.tmp
+/keys
+/app-release.apk
+/.claude
+/.codex
+/.context
+*.un~
+*~
 
 # OS
 .DS_Store

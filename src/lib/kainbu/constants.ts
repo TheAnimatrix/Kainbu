@@ -1,4 +1,5 @@
 import { createId } from '$lib/kainbu/id';
+import { DEFAULT_AI_MODEL_ID } from '$lib/kainbu/models';
 import { DEFAULT_BACKGROUND_THEME } from '$lib/kainbu/backgrounds';
 import { createScratchpadData } from '$lib/kainbu/scratchpad';
 import type { KanbanData, Project, UserSettings } from '$lib/kainbu/types';
@@ -95,8 +96,7 @@ export const clampColumnWidth = (value: number) =>
 
 export const DEFAULT_SETTINGS: UserSettings = {
 	defaultShowCheckbox: true,
-	preferredModelPreset: 'fast',
-	preferredChatMode: 'auto',
+	preferredAiModelId: DEFAULT_AI_MODEL_ID,
 	backgroundTheme: DEFAULT_BACKGROUND_THEME
 };
 
@@ -168,17 +168,26 @@ export const DEFAULT_CHAT_HISTORY = [
 	}
 ];
 
+export const DEFAULT_AI_SESSION_TITLE = 'New chat';
+
 export const DESKTOP_CHAT_WIDTH = 25;
 export const DESKTOP_CHAT_MIN = 20;
 export const DESKTOP_CHAT_MAX = 40;
 
-export const MODEL_PRESET_LABELS = {
-	fast: 'Flash',
-	smart: 'Smart'
-} as const;
-
 export const EMPTY_PROJECT = (userId: string, name = 'New Project'): Project => {
 	const now = Date.now();
+	const initialAiSessionId = createId();
+	const initialChatHistory = structuredClone(DEFAULT_CHAT_HISTORY);
+	const initialAiSession = {
+		id: initialAiSessionId,
+		projectId: '',
+		title: DEFAULT_AI_SESSION_TITLE,
+		modelId: DEFAULT_AI_MODEL_ID,
+		history: initialChatHistory,
+		createdAt: now,
+		updatedAt: now,
+		lastMessageAt: initialChatHistory.at(-1)?.timestamp || now
+	};
 
 	return {
 		id: createId(),
@@ -186,10 +195,36 @@ export const EMPTY_PROJECT = (userId: string, name = 'New Project'): Project => 
 		accessRole: 'owner',
 		name,
 		backgroundTheme: null,
+		boards: [
+			{
+				id: createId(),
+				projectId: '',
+				name: 'Board',
+				position: 0,
+				kanbanData: structuredClone(INITIAL_KANBAN),
+				createdAt: now,
+				updatedAt: now
+			}
+		],
+		pages: [
+			{
+				id: createId(),
+				projectId: '',
+				name: 'Notes',
+				content: INITIAL_SCRATCHPAD,
+				position: 0,
+				createdAt: now,
+				updatedAt: now
+			}
+		],
+		activeBoardId: '',
+		activePageId: '',
 		kanbanData: structuredClone(INITIAL_KANBAN),
-		scratchpadData: createScratchpadData(INITIAL_SCRATCHPAD),
+		scratchpadData: createScratchpadData(INITIAL_SCRATCHPAD, 'Notes'),
 		scratchpadRev: 0,
-		chatHistory: structuredClone(DEFAULT_CHAT_HISTORY),
+		aiSessions: [initialAiSession],
+		activeAiSessionId: initialAiSessionId,
+		chatHistory: structuredClone(initialAiSession.history),
 		members: [],
 		invites: [],
 		createdAt: now,

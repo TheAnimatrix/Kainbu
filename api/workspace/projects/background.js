@@ -1,11 +1,10 @@
-const { createWorkspaceEndpoint } = require('../../../server/vercel-workspace-route');
+import { createWorkspaceEndpoint } from '../../../server/vercel-workspace-route.js';
 
 const { handler, postHandler, optionsHandler, methodNotAllowedHandler } =
 	createWorkspaceEndpoint('handleWorkspaceProjectBackgroundRequest');
 
-module.exports = handler;
-module.exports.default = handler;
-module.exports.POST = postHandler;
-module.exports.OPTIONS = optionsHandler;
-module.exports.GET = methodNotAllowedHandler;
-module.exports.HEAD = methodNotAllowedHandler;
+export default handler;
+export const POST = postHandler;
+export const OPTIONS = optionsHandler;
+export const GET = methodNotAllowedHandler;
+export const HEAD = methodNotAllowedHandler;

@@ -104,7 +104,9 @@
 			</div>
 		</div>
 
-		<p class="mt-2 text-xs text-app-subtext">Only the active pad is shared with AI.</p>
+		<p class="mt-2 text-xs text-app-subtext">
+			AI usually edits the active pad and can pull other pads only when it needs more context.
+		</p>
 	</div>
 
 	<div class="min-h-0 flex-1 overflow-hidden p-2 lg:p-3">

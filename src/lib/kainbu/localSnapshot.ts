@@ -1,21 +1,30 @@
 import { normalizeNullableBackgroundTheme } from '$lib/kainbu/backgrounds';
+import { normalizeProjectStructure } from '$lib/kainbu/projectStructure';
 import { normalizeScratchpadData } from '$lib/kainbu/scratchpad';
 import { normalizeUserSettings } from '$lib/kainbu/settings';
-import type { LocalWorkspaceSnapshot } from '$lib/kainbu/types';
+import type { LocalWorkspaceSnapshot, WorkspaceTab } from '$lib/kainbu/types';
 
-const SNAPSHOT_VERSION = 2;
+const SNAPSHOT_VERSION = 3;
 const SNAPSHOT_KEY_PREFIX = 'kainbu:workspace:';
 
 const isBrowser = typeof window !== 'undefined';
 
 const getSnapshotKey = (userId: string) => `${SNAPSHOT_KEY_PREFIX}${userId}`;
 
+const isWorkspaceTab = (value: unknown): value is WorkspaceTab =>
+	value === 'dashboard' ||
+	value === 'kanban' ||
+	value === 'scratchpad' ||
+	value === 'chat' ||
+	value === 'settings';
+
 const isSnapshot = (value: unknown): value is LocalWorkspaceSnapshot => {
 	if (!value || typeof value !== 'object') return false;
 
 	const candidate = value as Partial<LocalWorkspaceSnapshot>;
+	const version = (value as { version?: number }).version;
 	return (
-		candidate.version === SNAPSHOT_VERSION &&
+		(version === 2 || version === SNAPSHOT_VERSION) &&
 		typeof candidate.userId === 'string' &&
 		typeof candidate.currentProjectId === 'string' &&
 		Array.isArray(candidate.projects) &&
@@ -31,11 +40,21 @@ const isSnapshot = (value: unknown): value is LocalWorkspaceSnapshot => {
 const normalizeSnapshot = (snapshot: LocalWorkspaceSnapshot): LocalWorkspaceSnapshot => ({
 	...snapshot,
 	settings: normalizeUserSettings(snapshot.settings),
-	projects: snapshot.projects.map((project) => ({
-		...project,
-		backgroundTheme: normalizeNullableBackgroundTheme(project.backgroundTheme),
-		scratchpadData: normalizeScratchpadData(project.scratchpadData)
-	}))
+	desktopWorkspaceTab: isWorkspaceTab(snapshot.desktopWorkspaceTab)
+		? snapshot.desktopWorkspaceTab
+		: 'dashboard',
+	mobileTab: isWorkspaceTab(snapshot.mobileTab)
+		? snapshot.mobileTab
+		: isWorkspaceTab(snapshot.desktopWorkspaceTab)
+			? snapshot.desktopWorkspaceTab
+			: 'dashboard',
+	projects: snapshot.projects.map((project) =>
+		normalizeProjectStructure({
+			...project,
+			backgroundTheme: normalizeNullableBackgroundTheme(project.backgroundTheme),
+			scratchpadData: normalizeScratchpadData(project.scratchpadData)
+		})
+	)
 });
 
 export const loadWorkspaceSnapshot = (userId: string): LocalWorkspaceSnapshot | null => {

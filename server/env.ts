@@ -1,8 +1,9 @@
 import { config as loadEnv } from 'dotenv';
 import { existsSync } from 'node:fs';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
-const serverDir = __dirname;
+const serverDir = path.dirname(fileURLToPath(import.meta.url));
 const projectRoot = path.resolve(serverDir, '..');
 
 const envPaths = [...new Set([

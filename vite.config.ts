@@ -11,14 +11,14 @@ export default defineConfig(({ mode }) => {
 		plugins: [tailwindcss(), sveltekit()],
 		server: {
 			host: '127.0.0.1',
-			port: 3000,
+			port: 3001,
 			strictPort: true,
 			allowedHosts: true,
 			cors: true,
 			hmr: lanHost
 				? {
 						host: lanHost,
-						clientPort: 3000,
+						clientPort: 3001,
 						protocol: 'ws'
 					}
 				: undefined,

@@ -1,5 +1,6 @@
 import { DEFAULT_COLUMN_WIDTH, EMPTY_PROJECT } from '$lib/kainbu/constants';
 import { createId } from '$lib/kainbu/id';
+import { normalizeProjectStructure } from '$lib/kainbu/projectStructure';
 import { normalizeScratchpadData } from '$lib/kainbu/scratchpad';
 import type {
 	ChatAttachment,
@@ -12,8 +13,12 @@ type SharedProjectBackup = {
 	version: 2;
 	projects: Array<{
 		name: string;
-		kanbanData: Project['kanbanData'];
-		scratchpadData: Project['scratchpadData'] | string;
+		kanbanData?: Project['kanbanData'];
+		scratchpadData?: Project['scratchpadData'] | string;
+		boards?: Project['boards'];
+		pages?: Project['pages'];
+		activeBoardId?: string;
+		activePageId?: string;
 		createdAt?: number;
 		updatedAt?: number;
 		viewerLastOpenedAt?: number;
@@ -72,15 +77,56 @@ const normalizeProject = (
 ): Project => {
 	const now = Date.now();
 	const seed = EMPTY_PROJECT(userId, candidate.name || 'Imported Project');
-
-	return {
+	const normalizedProject: Project = {
 		...seed,
 		id: createId(),
 		ownerUserId: userId,
 		accessRole: 'owner',
 		name: candidate.name || seed.name,
+		boards:
+			candidate.boards?.map((board, index) => ({
+				...board,
+				id: board.id || createId(),
+				projectId: seed.id,
+				position: board.position ?? index,
+				kanbanData: normalizeKanbanData(board.kanbanData, seed.kanbanData),
+				createdAt: board.createdAt || now,
+				updatedAt: board.updatedAt || now
+			})) ||
+			[
+				{
+					...seed.boards[0],
+					projectId: seed.id,
+					kanbanData: normalizeKanbanData(candidate.kanbanData, seed.kanbanData)
+				}
+			],
+		pages:
+			candidate.pages?.map((page, index) => ({
+				...page,
+				id: page.id || createId(),
+				projectId: seed.id,
+				position: page.position ?? index,
+				content: typeof page.content === 'string' ? page.content : '',
+				createdAt: page.createdAt || now,
+				updatedAt: page.updatedAt || now
+			})) ||
+			[
+				{
+					...seed.pages[0],
+					projectId: seed.id,
+					content: normalizeScratchpadData(
+						candidate.scratchpadData,
+						seed.scratchpadData.pads[0]?.content || ''
+					).pads[0]?.content || ''
+				}
+			],
+		activeBoardId: candidate.activeBoardId || candidate.boards?.[0]?.id || seed.boards[0].id,
+		activePageId: candidate.activePageId || candidate.pages?.[0]?.id || seed.pages[0].id,
 		kanbanData: normalizeKanbanData(candidate.kanbanData, seed.kanbanData),
-		scratchpadData: normalizeScratchpadData(candidate.scratchpadData, seed.scratchpadData.pads[0]?.content || ''),
+		scratchpadData: normalizeScratchpadData(
+			candidate.scratchpadData,
+			seed.scratchpadData.pads[0]?.content || ''
+		),
 		chatHistory: seed.chatHistory,
 		members: [],
 		invites: [],
@@ -89,22 +135,38 @@ const normalizeProject = (
 		updatedAt: candidate.updatedAt || now,
 		viewerLastOpenedAt: candidate.viewerLastOpenedAt || now
 	};
+
+	return normalizeProjectStructure(normalizedProject);
 };
 
 const normalizeLegacySession = (session: LegacySession, userId: string): Project => {
 	const seed = EMPTY_PROJECT(userId, session.name);
 
-	return {
+	return normalizeProjectStructure({
 		...seed,
 		id: createId(),
 		name: session.name || seed.name,
+		boards: [
+			{
+				...seed.boards[0],
+				projectId: seed.id,
+				kanbanData: normalizeKanbanData(session.kanbanData, seed.kanbanData)
+			}
+		],
+		pages: [
+			{
+				...seed.pages[0],
+				projectId: seed.id,
+				content: normalizeScratchpadData(session.scratchpadData).pads[0]?.content || ''
+			}
+		],
 		kanbanData: normalizeKanbanData(session.kanbanData, seed.kanbanData),
 		scratchpadData: normalizeScratchpadData(session.scratchpadData),
 		chatHistory: normalizeChatHistory(session.chatHistory || []),
 		createdAt: session.createdAt || seed.createdAt,
 		updatedAt: session.lastModified || session.createdAt || seed.updatedAt,
 		viewerLastOpenedAt: session.lastModified || seed.viewerLastOpenedAt
-	};
+	});
 };
 
 export const exportProjectsToFile = (projects: Project[]) => {
@@ -112,8 +174,10 @@ export const exportProjectsToFile = (projects: Project[]) => {
 		version: 2,
 		projects: projects.map((project) => ({
 			name: project.name,
-			kanbanData: project.kanbanData,
-			scratchpadData: project.scratchpadData,
+			boards: project.boards,
+			pages: project.pages,
+			activeBoardId: project.activeBoardId,
+			activePageId: project.activePageId,
 			createdAt: project.createdAt,
 			updatedAt: project.updatedAt,
 			viewerLastOpenedAt: project.viewerLastOpenedAt

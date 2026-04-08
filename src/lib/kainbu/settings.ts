@@ -15,16 +15,12 @@ export const normalizeUserSettings = (value: unknown): UserSettings => {
 			typeof value.defaultShowCheckbox === 'boolean'
 				? value.defaultShowCheckbox
 				: DEFAULT_SETTINGS.defaultShowCheckbox,
-		preferredModelPreset:
-			value.preferredModelPreset === 'smart' || value.preferredModelPreset === 'fast'
-				? value.preferredModelPreset
-				: DEFAULT_SETTINGS.preferredModelPreset,
-		preferredChatMode:
-			value.preferredChatMode === 'chat' ||
-			value.preferredChatMode === 'edit' ||
-			value.preferredChatMode === 'auto'
-				? value.preferredChatMode
-				: DEFAULT_SETTINGS.preferredChatMode,
+		preferredAiModelId:
+			typeof value.preferredAiModelId === 'string' && value.preferredAiModelId.trim()
+				? value.preferredAiModelId.trim()
+				: typeof value.preferredModelPreset === 'string' && value.preferredModelPreset.trim()
+					? value.preferredModelPreset.trim()
+					: DEFAULT_SETTINGS.preferredAiModelId,
 		backgroundTheme: normalizeBackgroundTheme(
 			value.backgroundTheme,
 			DEFAULT_SETTINGS.backgroundTheme

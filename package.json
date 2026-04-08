@@ -9,7 +9,7 @@
 	"scripts": {
 		"api:dev": "node scripts/free-port.mjs && tsx watch server/index.ts",
 		"api:start": "node scripts/free-port.mjs && tsx server/index.ts",
-		"dev": "vite dev --host",
+		"dev": "vite dev --host --port 3001",
 		"dev:lan": "vite dev --host 0.0.0.0 --port 3000",
 		"dev:full": "concurrently -k \"npm run api:dev\" \"npm run dev\"",
 		"dev:android": "npx cap run android -l --port=3000 --host=192.168.0.9",
@@ -23,7 +23,8 @@
 		"check:watch": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json --watch",
 		"lint": "eslint . && prettier --check .",
 		"format": "prettier --write .",
-		"setup": "node setup.js"
+		"setup": "node setup.js",
+		"test:deploy": "vitest run tests/deploy.test.ts"
 	},
 	"devDependencies": {
 		"@capacitor/assets": "^3.0.5",
@@ -50,7 +51,8 @@
 		"tsx": "^4.21.0",
 		"typescript": "^5.9.3",
 		"typescript-eslint": "^8.47.0",
-		"vite": "^8.0.2"
+		"vite": "^8.0.2",
+		"vitest": "^4.1.2"
 	},
 	"dependencies": {
 		"@capacitor/android": "^7.4.4",
@@ -62,9 +64,22 @@
 		"@hono/node-server": "^1.19.11",
 		"@supabase/supabase-js": "^2.86.0",
 		"@sveltejs/adapter-static": "^3.0.10",
+		"@tiptap/core": "^3.22.2",
+		"@tiptap/extension-code-block-lowlight": "^3.22.2",
+		"@tiptap/extension-image": "^3.22.2",
+		"@tiptap/extension-link": "^3.22.2",
+		"@tiptap/extension-placeholder": "^3.22.2",
+		"@tiptap/extension-task-item": "^3.22.2",
+		"@tiptap/extension-task-list": "^3.22.2",
+		"@tiptap/markdown": "^3.22.2",
+		"@tiptap/pm": "^3.22.2",
+		"@tiptap/starter-kit": "^3.22.2",
+		"@tiptap/suggestion": "^3.22.2",
 		"dompurify": "^3.3.3",
 		"dotenv": "^17.3.1",
+		"highlight.js": "^11.11.1",
 		"hono": "^4.12.8",
+		"lowlight": "^3.3.0",
 		"lucide-svelte": "^0.577.0",
 		"marked": "^17.0.5",
 		"sharp": "^0.34.5",

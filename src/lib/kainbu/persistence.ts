@@ -1,7 +1,14 @@
-import { DEFAULT_CHAT_HISTORY, DEFAULT_COLUMN_WIDTH, EMPTY_PROJECT } from '$lib/kainbu/constants';
+import {
+	DEFAULT_AI_SESSION_TITLE,
+	DEFAULT_CHAT_HISTORY,
+	DEFAULT_COLUMN_WIDTH,
+	EMPTY_PROJECT
+} from '$lib/kainbu/constants';
+import { DEFAULT_AI_MODEL_ID } from '$lib/kainbu/models';
 import { normalizeNullableBackgroundTheme } from '$lib/kainbu/backgrounds';
 import { invokeWorkspaceApi } from '$lib/kainbu/api';
 import { createId } from '$lib/kainbu/id';
+import { normalizeProjectStructure } from '$lib/kainbu/projectStructure';
 import { normalizeScratchpadData, serializeScratchpadData } from '$lib/kainbu/scratchpad';
 import { normalizeUserSettings } from '$lib/kainbu/settings';
 import { supabase } from '$lib/supabaseClient';
@@ -12,30 +19,43 @@ import type {
 	ChatTaskCard,
 	ProfileRow,
 	Project,
+	ProjectAiSession,
+	ProjectAiSessionRow,
+	ProjectBoard,
+	ProjectBoardRow,
 	ProjectColumnRow,
 	ProjectInvite,
 	ProjectInviteRow,
 	ProjectMembership,
 	ProjectMembershipRow,
+	ProjectPage,
+	ProjectPageRow,
 	ProjectRow,
 	ProjectTaskRow,
 	ProjectUserStateRow,
 	Tag,
 	Task,
+	UserProfile,
 	UserSettings,
-	WorkspaceAction
+	WorkspaceAction,
+	AiProgressEvent,
+	AiProgressEventKind
 } from '$lib/kainbu/types';
 
 const isObject = (value: unknown): value is Record<string, unknown> =>
 	typeof value === 'object' && value !== null;
 
 const PROFILE_SETTINGS_COLUMNS =
-	'user_id,email,default_show_checkbox,preferred_model_preset,preferred_chat_mode,background_theme';
+	'user_id,email,default_show_checkbox,preferred_ai_model_id,preferred_model_preset,background_theme';
 const PROFILE_SETTINGS_COLUMNS_LEGACY =
-	'user_id,email,default_show_checkbox,preferred_model_preset,preferred_chat_mode';
+	'user_id,email,default_show_checkbox,preferred_model_preset';
+const PROFILE_IDENTITY_COLUMNS = 'user_id,email,username';
+const PROFILE_IDENTITY_COLUMNS_LEGACY = 'user_id,email';
 
 let profileBackgroundThemeSupported: boolean | null = null;
+let profileUsernameSupported: boolean | null = null;
 let projectTaskAssignmentsSupported: boolean | null = null;
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 const toNumber = (value: unknown) => {
 	if (typeof value === 'number' && Number.isFinite(value)) return value;
@@ -145,14 +165,121 @@ const normalizeToolActions = (value: unknown): WorkspaceAction[] =>
 	Array.isArray(value)
 		? value.filter(
 				(action): action is WorkspaceAction =>
-					action === 'kanban' || action === 'scratchpad' || action === 'highlights'
+					action === 'kanban' ||
+					action === 'scratchpad' ||
+					action === 'highlights' ||
+					action === 'question'
 			)
 		: [];
+
+const VALID_PROGRESS_KINDS = new Set<AiProgressEventKind>([
+	'status',
+	'tool_call',
+	'tool_result',
+	'assistant_draft'
+]);
+
+const normalizeProgressEvents = (value: unknown): AiProgressEvent[] => {
+	if (!Array.isArray(value)) return [];
+	return value.flatMap((entry) => {
+		if (!isObject(entry)) return [];
+		if (typeof entry.id !== 'string' || typeof entry.message !== 'string') return [];
+		if (!VALID_PROGRESS_KINDS.has(entry.kind as AiProgressEventKind)) return [];
+		return [
+			{
+				id: entry.id,
+				kind: entry.kind as AiProgressEventKind,
+				message: entry.message,
+				...(typeof entry.detail === 'string' ? { detail: entry.detail } : {}),
+				timestamp: typeof entry.timestamp === 'number' ? entry.timestamp : 0
+			}
+		];
+	});
+};
+
+const normalizeQuestion = (value: unknown): ChatMessage['question'] | undefined => {
+	if (!isObject(value) || typeof value.prompt !== 'string' || !Array.isArray(value.options)) {
+		return undefined;
+	}
+
+	const options = value.options.flatMap((option, index) => {
+		if (!isObject(option) || typeof option.label !== 'string') {
+			return [];
+		}
+
+		return [
+			{
+				id: typeof option.id === 'string' && option.id.trim() ? option.id : `option-${index + 1}`,
+				label: option.label,
+				description:
+					typeof option.description === 'string' && option.description.trim()
+						? option.description
+						: undefined
+			}
+		];
+	});
+
+	if (!options.length) {
+		return undefined;
+	}
+
+	return {
+		id: typeof value.id === 'string' && value.id.trim() ? value.id : createId(),
+		prompt: value.prompt,
+		options,
+		allowFreeform: typeof value.allowFreeform === 'boolean' ? value.allowFreeform : undefined,
+		reason: typeof value.reason === 'string' ? value.reason : undefined,
+		status: value.status === 'answered' ? 'answered' : 'open',
+		answeredOptionId:
+			typeof value.answeredOptionId === 'string' ? value.answeredOptionId : undefined,
+		answerText: typeof value.answerText === 'string' ? value.answerText : undefined,
+		answeredAt: toNumber(value.answeredAt)
+	};
+};
+
+const normalizeUsage = (value: unknown): ChatMessage['usage'] | undefined => {
+	if (!isObject(value)) return undefined;
+
+	const modelTurnsUsed = toNumber(value.modelTurnsUsed);
+	const modelTurnsMax = toNumber(value.modelTurnsMax);
+	const toolCallsUsed = toNumber(value.toolCallsUsed);
+	const toolCallsMax = toNumber(value.toolCallsMax);
+	const kanbanReadsUsed = toNumber(value.kanbanReadsUsed);
+	const kanbanReadsMax = toNumber(value.kanbanReadsMax);
+	const scratchpadReadsUsed = toNumber(value.scratchpadReadsUsed);
+	const scratchpadReadsMax = toNumber(value.scratchpadReadsMax);
+
+	if (
+		modelTurnsUsed === undefined ||
+		modelTurnsMax === undefined ||
+		toolCallsUsed === undefined ||
+		toolCallsMax === undefined ||
+		kanbanReadsUsed === undefined ||
+		kanbanReadsMax === undefined ||
+		scratchpadReadsUsed === undefined ||
+		scratchpadReadsMax === undefined
+	) {
+		return undefined;
+	}
+
+	return {
+		modelTurnsUsed,
+		modelTurnsMax,
+		toolCallsUsed,
+		toolCallsMax,
+		kanbanReadsUsed,
+		kanbanReadsMax,
+		scratchpadReadsUsed,
+		scratchpadReadsMax,
+		capReached: typeof value.capReached === 'boolean' ? value.capReached : undefined
+	};
+};
 
 const normalizeMetadata = (value: unknown): ChatMessage['metadata'] | undefined => {
 	if (!isObject(value)) return undefined;
 
 	const model = typeof value.model === 'string' && value.model.trim() ? value.model : 'Legacy';
+	const modelId = typeof value.modelId === 'string' && value.modelId.trim() ? value.modelId : undefined;
 	const directLatency = toNumber(value.latencyMs);
 	const legacyLatency = toNumber(value.latency);
 	const latencyMs =
@@ -162,16 +289,15 @@ const normalizeMetadata = (value: unknown): ChatMessage['metadata'] | undefined 
 				? Math.round(legacyLatency * 1000)
 				: 0;
 	const tokens = toNumber(value.tokens);
-	const mode =
-		value.mode === 'auto' || value.mode === 'chat' || value.mode === 'edit'
-			? value.mode
-			: undefined;
 
 	return {
+		...(modelId ? { modelId } : {}),
 		model,
 		latencyMs,
-		...(tokens !== undefined ? { tokens } : {}),
-		...(mode ? { mode } : {})
+		...(typeof value.requestId === 'string' && value.requestId.trim()
+			? { requestId: value.requestId }
+			: {}),
+		...(tokens !== undefined ? { tokens } : {})
 	};
 };
 
@@ -183,9 +309,12 @@ const normalizeChatHistory = (history: unknown): ChatMessage[] => {
 
 		const timestamp = toNumber(entry.timestamp) ?? Date.now() + index;
 		const toolActions = normalizeToolActions(entry.toolActions);
+		const progressEvents = normalizeProgressEvents(entry.progressEvents);
 		const attachments = normalizeAttachments(entry);
 		const taskCards = normalizeTaskCards(entry.taskCards);
 		const metadata = normalizeMetadata(entry.metadata);
+		const question = normalizeQuestion(entry.question);
+		const usage = normalizeUsage(entry.usage);
 		const annotations = Array.isArray(entry.annotations)
 			? entry.annotations.filter(isObject).map((annotation) => ({
 					type: typeof annotation.type === 'string' ? annotation.type : undefined,
@@ -207,34 +336,67 @@ const normalizeChatHistory = (history: unknown): ChatMessage[] => {
 				...(attachments.length ? { attachments } : {}),
 				...(taskCards.length ? { taskCards } : {}),
 				...(metadata ? { metadata } : {}),
+				...(question ? { question } : {}),
+				...(usage ? { usage } : {}),
+				...(typeof entry.stoppedReason === 'string' && entry.stoppedReason.trim()
+					? { stoppedReason: entry.stoppedReason }
+					: {}),
 				...(annotations.length ? { annotations } : {}),
-				...(toolActions.length ? { toolActions } : {})
+				...(toolActions.length ? { toolActions } : {}),
+				...(progressEvents.length ? { progressEvents } : {})
 			}
 		];
 	});
 };
+
+const normalizeAiModelId = (value: unknown) =>
+	typeof value === 'string' && value.trim() ? value.trim() : DEFAULT_AI_MODEL_ID;
+
+const mapAiSessionRow = (row: ProjectAiSessionRow): ProjectAiSession => ({
+	id: row.id,
+	projectId: row.project_id,
+	title: row.title?.trim() || DEFAULT_AI_SESSION_TITLE,
+	modelId: normalizeAiModelId(row.model_id),
+	history: normalizeChatHistory(row.history),
+	createdAt: new Date(row.created_at).getTime(),
+	updatedAt: new Date(row.updated_at).getTime(),
+	lastMessageAt: new Date(row.last_message_at).getTime()
+});
 
 const mapSettingsRow = (row: ProfileRow | null): UserSettings =>
 	normalizeUserSettings(
 		row
 			? {
 					defaultShowCheckbox: row.default_show_checkbox,
-					preferredModelPreset: row.preferred_model_preset,
-					preferredChatMode: row.preferred_chat_mode,
+					preferredAiModelId: row.preferred_ai_model_id || row.preferred_model_preset,
 					backgroundTheme: row.background_theme
 				}
 			: null
 	);
 
+const normalizeUsernameValue = (value: string | null | undefined) =>
+	typeof value === 'string' && value.trim().length ? value.trim() : null;
+
+const mapProfileRow = (
+	row: Pick<ProfileRow, 'user_id' | 'email' | 'username'> | null,
+	userId: string
+): UserProfile => ({
+	userId: row?.user_id || userId,
+	email: row?.email || null,
+	username: normalizeUsernameValue(row?.username)
+});
+
 const mapMembershipRow = (
 	row: ProjectMembershipRow,
 	email: string | undefined,
+	username: string | null,
 	currentUserId: string
 ): ProjectMembership => ({
 	projectId: row.project_id,
 	userId: row.user_id,
 	role: row.role,
 	email,
+	username,
 	joinedAt: new Date(row.joined_at).getTime(),
 	lastOpenedAt: new Date(row.last_opened_at).getTime(),
 	isCurrentUser: row.user_id === currentUserId
@@ -253,6 +415,11 @@ const mapInviteRow = (row: ProjectInviteRow, projectName?: string): ProjectInvit
 	respondedAt: row.responded_at ? new Date(row.responded_at).getTime() : undefined
 });
 
+const compareProjects = (left: Project, right: Project) =>
+	left.name.localeCompare(right.name, undefined, { sensitivity: 'base' }) ||
+	right.updatedAt - left.updatedAt ||
+	left.id.localeCompare(right.id);
+
 const mapTaskRow = (row: ProjectTaskRow): Task => ({
 	id: row.id,
 	title: row.title,
@@ -264,7 +431,9 @@ const mapTaskRow = (row: ProjectTaskRow): Task => ({
 	completedAt: row.completed_at ?? undefined,
 	countdownAt: row.countdown_at ?? undefined,
 	alarmAt: row.alarm_at ?? undefined,
-	assignedTo: row.assigned_to ?? undefined
+	assignedTo: row.assigned_to ?? undefined,
+	createdAt: new Date(row.created_at).getTime(),
+	updatedAt: new Date(row.updated_at).getTime()
 });
 
 const buildKanbanData = (columns: ProjectColumnRow[], tasks: ProjectTaskRow[]) => {
@@ -287,6 +456,46 @@ const buildKanbanData = (columns: ProjectColumnRow[], tasks: ProjectTaskRow[]) =
 		}));
 };
 
+const mapBoardRow = (
+	row: ProjectBoardRow,
+	columns: ProjectColumnRow[],
+	tasks: ProjectTaskRow[]
+): ProjectBoard => ({
+	id: row.id,
+	projectId: row.project_id,
+	name: row.name,
+	position: row.position,
+	kanbanData: buildKanbanData(columns, tasks),
+	createdAt: new Date(row.created_at).getTime(),
+	updatedAt: new Date(row.updated_at).getTime()
+});
+
+const mapPageRow = (row: ProjectPageRow): ProjectPage => ({
+	id: row.id,
+	projectId: row.project_id,
+	name: row.name,
+	content: row.content || '',
+	position: row.position,
+	createdAt: new Date(row.created_at).getTime(),
+	updatedAt: new Date(row.updated_at).getTime()
+});
+
+const mapAiSessionUpsertRow = (
+	projectId: string,
+	userId: string,
+	session: ProjectAiSession
+) => ({
+	id: session.id,
+	project_id: projectId,
+	user_id: userId,
+	title: session.title,
+	model_id: normalizeAiModelId(session.modelId),
+	history: session.history,
+	created_at: new Date(session.createdAt).toISOString(),
+	updated_at: new Date(session.updatedAt).toISOString(),
+	last_message_at: new Date(session.lastMessageAt).toISOString()
+});
+
 const tagSignature = (tag: Tag) => `${tag.id}|${tag.label}|${tag.color}`;
 
 const areTasksEqual = (left: Task, right: Task) => {
@@ -308,10 +517,12 @@ const areTasksEqual = (left: Task, right: Task) => {
 
 const mapColumnUpsertRow = (
 	projectId: string,
+	boardId: string,
 	column: Project['kanbanData'][number],
 	position: number
 ) => ({
 	project_id: projectId,
+	board_id: boardId,
 	id: column.id,
 	title: column.title,
 	color: column.color || null,
@@ -319,8 +530,15 @@ const mapColumnUpsertRow = (
 	position
 });
 
-const mapTaskUpsertRow = (projectId: string, columnId: string, task: Task, position: number) => ({
+const mapTaskUpsertRow = (
+	projectId: string,
+	boardId: string,
+	columnId: string,
+	task: Task,
+	position: number
+) => ({
 	project_id: projectId,
+	board_id: boardId,
 	id: task.id,
 	column_id: columnId,
 	title: task.title,
@@ -332,13 +550,14 @@ const mapTaskUpsertRow = (projectId: string, columnId: string, task: Task, posit
 	completed_at: task.completedAt ?? null,
 	countdown_at: task.countdownAt ?? null,
 	alarm_at: task.alarmAt ?? null,
-	assigned_to: task.assignedTo ?? null,
+	assigned_to:
+		typeof task.assignedTo === 'string' && UUID_PATTERN.test(task.assignedTo.trim())
+			? task.assignedTo.trim()
+			: null,
 	position
 });
 
-const stripAssignedToFromTaskUpserts = (
-	rows: ReturnType<typeof mapTaskUpsertRow>[]
-) =>
+const stripAssignedToFromTaskUpserts = (rows: ReturnType<typeof mapTaskUpsertRow>[]) =>
 	rows.map(({ assigned_to: _assignedTo, ...row }) => row);
 
 const upsertProjectTasks = async (rows: ReturnType<typeof mapTaskUpsertRow>[]) => {
@@ -360,12 +579,11 @@ const upsertProjectTasks = async (rows: ReturnType<typeof mapTaskUpsertRow>[]) =
 		isMissingSchemaColumnError(result.error, 'project_tasks', 'assigned_to')
 	) {
 		projectTaskAssignmentsSupported = false;
-		const retry = await supabase.from('project_tasks').upsert(
-			stripAssignedToFromTaskUpserts(rows),
-			{
+		const retry = await supabase
+			.from('project_tasks')
+			.upsert(stripAssignedToFromTaskUpserts(rows), {
 				onConflict: 'project_id,id'
-			}
-		);
+			});
 
 		if (retry.error) throw retry.error;
 		return;
@@ -376,6 +594,7 @@ const upsertProjectTasks = async (rows: ReturnType<typeof mapTaskUpsertRow>[]) =
 
 const deriveBoardMutations = (
 	projectId: string,
+	boardId: string,
 	previous: Project['kanbanData'],
 	next: Project['kanbanData']
 ) => {
@@ -411,7 +630,7 @@ const deriveBoardMutations = (
 			(previousColumn.column.width ?? DEFAULT_COLUMN_WIDTH) !==
 				(column.width ?? DEFAULT_COLUMN_WIDTH)
 		) {
-			upsertColumns.push(mapColumnUpsertRow(projectId, column, index));
+			upsertColumns.push(mapColumnUpsertRow(projectId, boardId, column, index));
 		}
 
 		for (const [taskIndex, task] of column.tasks.entries()) {
@@ -423,7 +642,7 @@ const deriveBoardMutations = (
 				previousTask.position !== taskIndex ||
 				!areTasksEqual(previousTask.task, task)
 			) {
-				upsertTasks.push(mapTaskUpsertRow(projectId, column.id, task, taskIndex));
+				upsertTasks.push(mapTaskUpsertRow(projectId, boardId, column.id, task, taskIndex));
 			}
 		}
 	}
@@ -497,9 +716,12 @@ export const fetchWorkspace = async (userId: string) => {
 	const [
 		projectsResult,
 		allMembershipsResult,
+		boardsResult,
+		pagesResult,
 		columnsResult,
 		tasksResult,
 		userStatesResult,
+		aiSessionsResult,
 		incomingInvitesResult
 	] = await Promise.all([
 		accessibleProjectIds.length
@@ -507,6 +729,20 @@ export const fetchWorkspace = async (userId: string) => {
 			: Promise.resolve({ data: [], error: null }),
 		accessibleProjectIds.length
 			? supabase.from('project_memberships').select('*').in('project_id', accessibleProjectIds)
+			: Promise.resolve({ data: [], error: null }),
+		accessibleProjectIds.length
+			? supabase
+					.from('project_boards')
+					.select('*')
+					.in('project_id', accessibleProjectIds)
+					.order('position', { ascending: true })
+			: Promise.resolve({ data: [], error: null }),
+		accessibleProjectIds.length
+			? supabase
+					.from('project_pages')
+					.select('*')
+					.in('project_id', accessibleProjectIds)
+					.order('position', { ascending: true })
 			: Promise.resolve({ data: [], error: null }),
 		accessibleProjectIds.length
 			? supabase
@@ -529,6 +765,14 @@ export const fetchWorkspace = async (userId: string) => {
 					.eq('user_id', userId)
 					.in('project_id', accessibleProjectIds)
 			: Promise.resolve({ data: [], error: null }),
+		accessibleProjectIds.length
+			? supabase
+					.from('project_ai_sessions')
+					.select('*')
+					.eq('user_id', userId)
+					.in('project_id', accessibleProjectIds)
+					.order('updated_at', { ascending: true })
+			: Promise.resolve({ data: [], error: null }),
 		supabase
 			.from('project_invites')
 			.select('*, projects(name)')
@@ -538,16 +782,22 @@ export const fetchWorkspace = async (userId: string) => {
 
 	if (projectsResult.error) throw projectsResult.error;
 	if (allMembershipsResult.error) throw allMembershipsResult.error;
+	if (boardsResult.error) throw boardsResult.error;
+	if (pagesResult.error) throw pagesResult.error;
 	if (columnsResult.error) throw columnsResult.error;
 	if (tasksResult.error) throw tasksResult.error;
 	if (userStatesResult.error) throw userStatesResult.error;
+	if (aiSessionsResult.error) throw aiSessionsResult.error;
 	if (incomingInvitesResult.error) throw incomingInvitesResult.error;
 
 	const projectRows = (projectsResult.data || []) as ProjectRow[];
 	const allMembershipRows = (allMembershipsResult.data || []) as ProjectMembershipRow[];
+	const boardRows = (boardsResult.data || []) as ProjectBoardRow[];
+	const pageRows = (pagesResult.data || []) as ProjectPageRow[];
 	const columnRows = (columnsResult.data || []) as ProjectColumnRow[];
 	const taskRows = (tasksResult.data || []) as ProjectTaskRow[];
 	const userStateRows = (userStatesResult.data || []) as ProjectUserStateRow[];
+	const aiSessionRows = (aiSessionsResult.data || []) as ProjectAiSessionRow[];
 	const ownedProjectIds = projectRows
 		.filter((project) => project.user_id === userId)
 		.map((project) => project.id);
@@ -562,16 +812,40 @@ export const fetchWorkspace = async (userId: string) => {
 	if (ownerInvitesResult.error) throw ownerInvitesResult.error;
 
 	const profileIds = [...new Set(allMembershipRows.map((membership) => membership.user_id))];
-	const profilesResult = profileIds.length
-		? await supabase.from('profiles').select('user_id,email').in('user_id', profileIds)
-		: { data: [], error: null };
+	const useLegacyProfileColumns = profileUsernameSupported === false;
+	let loadedProfileUsernames = !useLegacyProfileColumns;
+	let profileRows: Pick<ProfileRow, 'user_id' | 'email' | 'username'>[] = [];
+	if (profileIds.length) {
+		let profilesQuery = (await supabase
+			.from('profiles')
+			.select(useLegacyProfileColumns ? PROFILE_IDENTITY_COLUMNS_LEGACY : PROFILE_IDENTITY_COLUMNS)
+			.in('user_id', profileIds)) as { data: unknown[] | null; error: unknown | null };
 
-	if (profilesResult.error) throw profilesResult.error;
+		if (
+			profilesQuery.error &&
+			!useLegacyProfileColumns &&
+			isMissingSchemaColumnError(profilesQuery.error, 'profiles', 'username')
+		) {
+			profileUsernameSupported = false;
+			loadedProfileUsernames = false;
+			profilesQuery = (await supabase
+				.from('profiles')
+				.select(PROFILE_IDENTITY_COLUMNS_LEGACY)
+				.in('user_id', profileIds)) as { data: unknown[] | null; error: unknown | null };
+		}
 
-	const profileEmailById = new Map(
-		((profilesResult.data || []) as Pick<ProfileRow, 'user_id' | 'email'>[]).map((profile) => [
+		if (profilesQuery.error) throw profilesQuery.error;
+		if (loadedProfileUsernames) profileUsernameSupported = true;
+		profileRows = (profilesQuery.data || []) as Pick<ProfileRow, 'user_id' | 'email' | 'username'>[];
+	}
+
+	const profileIdentityById = new Map(
+		profileRows.map((profile) => [
 			profile.user_id,
-			profile.email || undefined
+			{
+				email: profile.email || undefined,
+				username: normalizeUsernameValue(profile.username)
+			}
 		])
 	);
 	const ownMembershipByProjectId = new Map(
@@ -581,7 +855,15 @@ export const fetchWorkspace = async (userId: string) => {
 
 	for (const row of allMembershipRows) {
 		const current = membershipsByProjectId.get(row.project_id) || [];
-		current.push(mapMembershipRow(row, profileEmailById.get(row.user_id), userId));
+		const profileIdentity = profileIdentityById.get(row.user_id);
+		current.push(
+			mapMembershipRow(
+				row,
+				profileIdentity?.email,
+				profileIdentity?.username || null,
+				userId
+			)
+		);
 		membershipsByProjectId.set(row.project_id, current);
 	}
 
@@ -590,6 +872,20 @@ export const fetchWorkspace = async (userId: string) => {
 		const current = columnsByProjectId.get(row.project_id) || [];
 		current.push(row);
 		columnsByProjectId.set(row.project_id, current);
+	}
+
+	const boardsByProjectId = new Map<string, ProjectBoardRow[]>();
+	for (const row of boardRows) {
+		const current = boardsByProjectId.get(row.project_id) || [];
+		current.push(row);
+		boardsByProjectId.set(row.project_id, current);
+	}
+
+	const pagesByProjectId = new Map<string, ProjectPageRow[]>();
+	for (const row of pageRows) {
+		const current = pagesByProjectId.get(row.project_id) || [];
+		current.push(row);
+		pagesByProjectId.set(row.project_id, current);
 	}
 
 	const tasksByProjectId = new Map<string, ProjectTaskRow[]>();
@@ -603,11 +899,18 @@ export const fetchWorkspace = async (userId: string) => {
 		userStateRows.map((row) => [
 			row.project_id,
 			{
-				chatHistory: normalizeChatHistory(row.chat_history),
+				activeAiSessionId: row.active_ai_session_id || undefined,
 				updatedAt: new Date(row.updated_at).getTime()
 			}
 		])
 	);
+
+	const aiSessionsByProjectId = new Map<string, ProjectAiSession[]>();
+	for (const row of aiSessionRows) {
+		const current = aiSessionsByProjectId.get(row.project_id) || [];
+		current.push(mapAiSessionRow(row));
+		aiSessionsByProjectId.set(row.project_id, current);
+	}
 
 	const ownerInvitesByProjectId = new Map<string, ProjectInvite[]>();
 	for (const row of (ownerInvitesResult.data || []) as ProjectInviteRow[]) {
@@ -622,36 +925,56 @@ export const fetchWorkspace = async (userId: string) => {
 			if (!ownMembership) return [];
 
 			const userState = userStateByProjectId.get(row.id);
+			const projectBoards = (boardsByProjectId.get(row.id) || []).sort(
+				(left, right) => left.position - right.position || left.created_at.localeCompare(right.created_at)
+			);
+			const fallbackBoard = projectBoards[0]?.id || '';
+			const boards = projectBoards.length
+				? projectBoards.map((boardRow) =>
+						mapBoardRow(
+							boardRow,
+							(columnsByProjectId.get(row.id) || []).filter(
+								(columnRow) => (columnRow.board_id || fallbackBoard) === boardRow.id
+							),
+							(tasksByProjectId.get(row.id) || []).filter(
+								(taskRow) => (taskRow.board_id || fallbackBoard) === boardRow.id
+							)
+						)
+				  )
+				: [];
+			const pages = (pagesByProjectId.get(row.id) || []).map(mapPageRow);
+			const aiSessions = aiSessionsByProjectId.get(row.id) || [];
+			const normalizedProject = normalizeProjectStructure({
+				id: row.id,
+				ownerUserId: row.user_id,
+				accessRole: ownMembership.role,
+				name: row.name,
+				backgroundTheme: normalizeNullableBackgroundTheme(row.background_theme),
+				boards,
+				pages,
+				activeBoardId: boards[0]?.id || '',
+				activePageId: pages[0]?.id || '',
+				kanbanData: boards[0]?.kanbanData || [],
+				scratchpadData: normalizeScratchpadData(pages[0]?.content || row.scratchpad_data),
+				scratchpadRev: row.scratchpad_rev,
+				aiSessions,
+				activeAiSessionId: userState?.activeAiSessionId || aiSessions[0]?.id || '',
+				chatHistory: structuredClone(DEFAULT_CHAT_HISTORY),
+				members: (membershipsByProjectId.get(row.id) || []).sort(
+					(left, right) => right.lastOpenedAt - left.lastOpenedAt
+				),
+				invites: (ownerInvitesByProjectId.get(row.id) || []).sort(
+					(left, right) => right.createdAt - left.createdAt
+				),
+				createdAt: new Date(row.created_at).getTime(),
+				updatedAt: new Date(row.updated_at).getTime(),
+				viewerLastOpenedAt: new Date(ownMembership.last_opened_at).getTime()
+			});
 			return [
-				{
-					id: row.id,
-					ownerUserId: row.user_id,
-					accessRole: ownMembership.role,
-					name: row.name,
-					backgroundTheme: normalizeNullableBackgroundTheme(row.background_theme),
-					kanbanData: buildKanbanData(
-						columnsByProjectId.get(row.id) || [],
-						tasksByProjectId.get(row.id) || []
-					),
-					scratchpadData: normalizeScratchpadData(row.scratchpad_data),
-					scratchpadRev: row.scratchpad_rev,
-					chatHistory: userState ? userState.chatHistory : structuredClone(DEFAULT_CHAT_HISTORY),
-					members: (membershipsByProjectId.get(row.id) || []).sort(
-						(left, right) => right.lastOpenedAt - left.lastOpenedAt
-					),
-					invites: (ownerInvitesByProjectId.get(row.id) || []).sort(
-						(left, right) => right.createdAt - left.createdAt
-					),
-					createdAt: new Date(row.created_at).getTime(),
-					updatedAt: new Date(row.updated_at).getTime(),
-					viewerLastOpenedAt: new Date(ownMembership.last_opened_at).getTime()
-				} satisfies Project
+				normalizedProject satisfies Project
 			];
 		})
-		.sort(
-			(left, right) =>
-				right.viewerLastOpenedAt - left.viewerLastOpenedAt || right.updatedAt - left.updatedAt
-		);
+		.sort(compareProjects);
 
 	const incomingInvites = (
 		(incomingInvitesResult.data || []) as Array<
@@ -675,33 +998,71 @@ export const createProject = async (
 	seedProject?: Partial<Project>
 ) => {
 	const seed = {
-		...EMPTY_PROJECT(userId, name),
+		...normalizeProjectStructure(EMPTY_PROJECT(userId, name)),
 		...(seedProject || {}),
 		name: seedProject?.name || name,
 		ownerUserId: userId,
 		accessRole: 'owner' as const
 	};
+	const normalizedSeed = normalizeProjectStructure(seed as Project);
 
 	const { error } = await supabase.from('projects').insert({
-		id: seed.id,
+		id: normalizedSeed.id,
 		user_id: userId,
-		name: seed.name,
-		background_theme: seed.backgroundTheme,
-		scratchpad_data: serializeScratchpadData(seed.scratchpadData),
-		scratchpad_rev: seed.scratchpadRev,
-		created_at: new Date(seed.createdAt).toISOString(),
-		updated_at: new Date(seed.updatedAt).toISOString(),
-		last_opened_at: new Date(seed.viewerLastOpenedAt).toISOString()
+		name: normalizedSeed.name,
+		background_theme: normalizedSeed.backgroundTheme,
+		scratchpad_data: serializeScratchpadData(normalizedSeed.scratchpadData),
+		scratchpad_rev: normalizedSeed.scratchpadRev,
+		created_at: new Date(normalizedSeed.createdAt).toISOString(),
+		updated_at: new Date(normalizedSeed.updatedAt).toISOString(),
+		last_opened_at: new Date(normalizedSeed.viewerLastOpenedAt).toISOString()
 	});
 
 	if (error) throw error;
 
-	await applyBoardMutations(seed.id, deriveBoardMutations(seed.id, [], seed.kanbanData));
-	await saveProjectChatHistory(seed.id, userId, seed.chatHistory);
-	await touchProjectLastOpened(seed.id);
+	const boardPayload = normalizedSeed.boards.map((board) => ({
+		id: board.id,
+		project_id: normalizedSeed.id,
+		name: board.name,
+		position: board.position,
+		created_at: new Date(board.createdAt).toISOString(),
+		updated_at: new Date(board.updatedAt).toISOString()
+	}));
+	if (boardPayload.length) {
+		const boardInsert = await supabase.from('project_boards').insert(boardPayload);
+		if (boardInsert.error) throw boardInsert.error;
+	}
+
+	const pagePayload = normalizedSeed.pages.map((page) => ({
+		id: page.id,
+		project_id: normalizedSeed.id,
+		name: page.name,
+		content: page.content,
+		position: page.position,
+		created_at: new Date(page.createdAt).toISOString(),
+		updated_at: new Date(page.updatedAt).toISOString()
+	}));
+	if (pagePayload.length) {
+		const pageInsert = await supabase.from('project_pages').insert(pagePayload);
+		if (pageInsert.error) throw pageInsert.error;
+	}
+
+	for (const board of normalizedSeed.boards) {
+		await applyBoardMutations(
+			normalizedSeed.id,
+			deriveBoardMutations(normalizedSeed.id, board.id, [], board.kanbanData)
+		);
+	}
+	await saveProjectAiState(
+		normalizedSeed.id,
+		userId,
+		normalizedSeed.aiSessions,
+		normalizedSeed.activeAiSessionId
+	);
+	await touchProjectLastOpened(normalizedSeed.id);
 
 	const workspace = await fetchWorkspace(userId);
-	return workspace.projects.find((project) => project.id === seed.id) || seed;
+	return workspace.projects.find((project) => project.id === normalizedSeed.id) || normalizedSeed;
 };
 
 export const renameProject = async (projectId: string, nextName: string) => {
@@ -711,15 +1072,108 @@ export const renameProject = async (projectId: string, nextName: string) => {
 
 export const syncProjectBoard = async (
 	projectId: string,
+	boardId: string,
 	previous: Project['kanbanData'],
 	next: Project['kanbanData']
 ) => {
-	const mutations = deriveBoardMutations(projectId, previous, next);
+	const mutations = deriveBoardMutations(projectId, boardId, previous, next);
 	await applyBoardMutations(projectId, mutations);
 };
 
-export const replaceProjectBoard = async (projectId: string, next: Project['kanbanData']) => {
-	await applyBoardMutations(projectId, deriveBoardMutations(projectId, [], next));
+export const replaceProjectBoard = async (
+	projectId: string,
+	boardId: string,
+	next: Project['kanbanData']
+) => {
+	await applyBoardMutations(projectId, deriveBoardMutations(projectId, boardId, [], next));
+};
+
+export const createProjectBoard = async (projectId: string, name: string, position: number) => {
+	const { data, error } = await supabase
+		.from('project_boards')
+		.insert({
+			project_id: projectId,
+			name,
+			position
+		})
+		.select('*')
+		.single();
+
+	if (error) throw error;
+	return mapBoardRow(data as ProjectBoardRow, [], []);
+};
+
+export const createProjectPage = async (projectId: string, name: string, position: number) => {
+	const { data, error } = await supabase
+		.from('project_pages')
+		.insert({
+			project_id: projectId,
+			name,
+			content: '',
+			position
+		})
+		.select('*')
+		.single();
+
+	if (error) throw error;
+	return mapPageRow(data as ProjectPageRow);
+};
+
+export const renameProjectBoard = async (projectId: string, boardId: string, name: string) => {
+	const { error } = await supabase
+		.from('project_boards')
+		.update({ name, updated_at: new Date().toISOString() })
+		.eq('project_id', projectId)
+		.eq('id', boardId);
+
+	if (error) throw error;
+};
+
+export const deleteProjectBoard = async (projectId: string, boardId: string) => {
+	const { error } = await supabase
+		.from('project_boards')
+		.delete()
+		.eq('project_id', projectId)
+		.eq('id', boardId);
+
+	if (error) throw error;
+};
+
+export const renameProjectPage = async (projectId: string, pageId: string, name: string) => {
+	const { error } = await supabase
+		.from('project_pages')
+		.update({ name, updated_at: new Date().toISOString() })
+		.eq('project_id', projectId)
+		.eq('id', pageId);
+
+	if (error) throw error;
+};
+
+export const deleteProjectPage = async (projectId: string, pageId: string) => {
+	const { error } = await supabase
+		.from('project_pages')
+		.delete()
+		.eq('project_id', projectId)
+		.eq('id', pageId);
+
+	if (error) throw error;
+};
+
+export const updateProjectPageContent = async (
+	projectId: string,
+	pageId: string,
+	content: string
+) => {
+	const { error } = await supabase
+		.from('project_pages')
+		.update({
+			content,
+			updated_at: new Date().toISOString()
+		})
+		.eq('project_id', projectId)
+		.eq('id', pageId);
+
+	if (error) throw error;
 };
 
 export const updateProjectScratchpad = async (
@@ -748,19 +1202,62 @@ export const updateProjectScratchpad = async (
 	};
 };
 
-export const saveProjectChatHistory = async (
+export const saveProjectAiState = async (
 	projectId: string,
 	userId: string,
-	history: ChatMessage[]
+	aiSessions: ProjectAiSession[],
+	activeAiSessionId: string
 ) => {
-	const { error } = await supabase.from('project_user_state').upsert({
+	const { error: userStateError } = await supabase.from('project_user_state').upsert({
 		project_id: projectId,
 		user_id: userId,
-		chat_history: history,
+		active_ai_session_id: activeAiSessionId,
 		updated_at: new Date().toISOString()
 	});
 
-	if (error) throw error;
+	if (userStateError) throw userStateError;
+
+	const normalizedSessions = aiSessions.length
+		? aiSessions
+		: [
+				{
+					...EMPTY_PROJECT(userId).aiSessions[0],
+					projectId
+				}
+			];
+
+	const { error: upsertSessionsError } = await supabase.from('project_ai_sessions').upsert(
+		normalizedSessions.map((session) => mapAiSessionUpsertRow(projectId, userId, session)),
+		{
+			onConflict: 'id'
+		}
+	);
+
+	if (upsertSessionsError) throw upsertSessionsError;
+
+	const { data: existingSessions, error: existingSessionsError } = await supabase
+		.from('project_ai_sessions')
+		.select('id')
+		.eq('project_id', projectId)
+		.eq('user_id', userId);
+
+	if (existingSessionsError) throw existingSessionsError;
+
+	const nextSessionIds = new Set(normalizedSessions.map((session) => session.id));
+	const staleSessionIds = ((existingSessions || []) as Array<{ id: string }>).flatMap((session) =>
+		nextSessionIds.has(session.id) ? [] : [session.id]
+	);
+
+	if (staleSessionIds.length) {
+		const { error: deleteSessionsError } = await supabase
+			.from('project_ai_sessions')
+			.delete()
+			.eq('project_id', projectId)
+			.eq('user_id', userId)
+			.in('id', staleSessionIds);
+
+		if (deleteSessionsError) throw deleteSessionsError;
+	}
 };
 
 export const touchProjectLastOpened = async (projectId: string) => {
@@ -860,12 +1357,64 @@ export const fetchUserSettings = async (userId: string) => {
 	return mapSettingsRow(data as ProfileRow | null);
 };
 
+export const fetchUserProfile = async (userId: string) => {
+	const useLegacyColumns = profileUsernameSupported === false;
+	const { data, error } = await supabase
+		.from('profiles')
+		.select(useLegacyColumns ? PROFILE_IDENTITY_COLUMNS_LEGACY : PROFILE_IDENTITY_COLUMNS)
+		.eq('user_id', userId)
+		.maybeSingle();
+
+	if (error && !useLegacyColumns && isMissingSchemaColumnError(error, 'profiles', 'username')) {
+		profileUsernameSupported = false;
+		const legacyResult = await supabase
+			.from('profiles')
+			.select(PROFILE_IDENTITY_COLUMNS_LEGACY)
+			.eq('user_id', userId)
+			.maybeSingle();
+
+		if (legacyResult.error) throw legacyResult.error;
+		return mapProfileRow(
+			legacyResult.data as Pick<ProfileRow, 'user_id' | 'email' | 'username'> | null,
+			userId
+		);
+	}
+
+	if (error) throw error;
+	if (!useLegacyColumns) profileUsernameSupported = true;
+	return mapProfileRow(data as Pick<ProfileRow, 'user_id' | 'email' | 'username'> | null, userId);
+};
+
+export const checkUsernameAvailability = async (username: string) => {
+	const { data, error } = await supabase.rpc('check_username_available', {
+		candidate_username: username
+	});
+
+	if (error) throw error;
+	return data === true;
+};
+
+export const updateUsername = async (userId: string, username: string) => {
+	const { data, error } = await supabase
+		.from('profiles')
+		.update({
+			username,
+			updated_at: new Date().toISOString()
+		})
+		.eq('user_id', userId)
+		.select(PROFILE_IDENTITY_COLUMNS)
+		.single();
+
+	if (error) throw error;
+	profileUsernameSupported = true;
+	return mapProfileRow(data as Pick<ProfileRow, 'user_id' | 'email' | 'username'>, userId);
+};
+
 export const upsertUserSettings = async (userId: string, settings: UserSettings) => {
 	const basePayload = {
 		user_id: userId,
 		default_show_checkbox: settings.defaultShowCheckbox,
-		preferred_model_preset: settings.preferredModelPreset,
-		preferred_chat_mode: settings.preferredChatMode,
+		preferred_ai_model_id: settings.preferredAiModelId,
 		updated_at: new Date().toISOString()
 	};
 	const useLegacyPayload = profileBackgroundThemeSupported === false;
@@ -903,8 +1452,12 @@ export const subscribeToWorkspaceChanges = (userId: string, onChange: () => void
 			onChange
 		)
 		.on('postgres_changes', { event: '*', schema: 'public', table: 'project_invites' }, onChange)
+		.on('postgres_changes', { event: '*', schema: 'public', table: 'project_boards' }, onChange)
+		.on('postgres_changes', { event: '*', schema: 'public', table: 'project_pages' }, onChange)
 		.on('postgres_changes', { event: '*', schema: 'public', table: 'project_columns' }, onChange)
 		.on('postgres_changes', { event: '*', schema: 'public', table: 'project_tasks' }, onChange)
+		.on('postgres_changes', { event: '*', schema: 'public', table: 'project_user_state' }, onChange)
+		.on('postgres_changes', { event: '*', schema: 'public', table: 'project_ai_sessions' }, onChange)
 		.subscribe();
 
 	return () => {

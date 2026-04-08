@@ -23,14 +23,7 @@
 		justify-content: center;
 		flex-shrink: 0;
 	}
-
-	.brand-mark--framed {
-		border: 1px solid rgba(255, 255, 255, 0.08);
-		border-radius: calc(var(--brand-mark-size) * 0.24);
-		background: #2d2d2d;
-		box-shadow: 0 18px 42px -24px rgba(0, 0, 0, 0.72);
-	}
-
+	
 	.brand-mark__image {
 		height: 68%;
 		width: 68%;

@@ -85,7 +85,7 @@ const getApiErrorMessage = (payload: unknown, responseText: string, path: string
 	return 'Workspace request failed.';
 };
 
-export const invokeWorkspaceApi = async <T>(path: string, options: WorkspaceApiOptions = {}) => {
+export const getWorkspaceApiAccessToken = async () => {
 	const {
 		data: { session }
 	} = await supabase.auth.getSession();
@@ -94,11 +94,19 @@ export const invokeWorkspaceApi = async <T>(path: string, options: WorkspaceApiO
 		throw new Error('You need to sign in again before using workspace actions.');
 	}
 
-	const response = await fetch(`${apiBaseUrl}${path}`, {
+	return session.access_token;
+};
+
+export const resolveWorkspaceApiUrl = (path: string) => `${apiBaseUrl}${path}`;
+
+export const invokeWorkspaceApi = async <T>(path: string, options: WorkspaceApiOptions = {}) => {
+	const accessToken = await getWorkspaceApiAccessToken();
+
+	const response = await fetch(resolveWorkspaceApiUrl(path), {
 		method: options.method || 'POST',
 		headers: {
 			'Content-Type': 'application/json',
-			Authorization: `Bearer ${session.access_token}`
+			Authorization: `Bearer ${accessToken}`
 		},
 		...(options.body !== undefined ? { body: JSON.stringify(options.body) } : {})
 	});

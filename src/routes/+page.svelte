@@ -5,6 +5,7 @@
 		LayoutDashboard,
 		LoaderCircle,
 		LogOut,
+		Menu,
 		MessageSquare,
 		NotebookPen,
 		Redo2,
@@ -17,12 +18,13 @@
 	import ChatPane from '$lib/components/ChatPane.svelte';
 	import DashboardView from '$lib/components/DashboardView.svelte';
 	import KanbanBoard from '$lib/components/KanbanBoard.svelte';
+	import PagePane from '$lib/components/PagePane.svelte';
 	import ProjectRail from '$lib/components/ProjectRail.svelte';
 	import ProjectSheet from '$lib/components/ProjectSheet.svelte';
-	import ScratchpadPane from '$lib/components/ScratchpadPane.svelte';
 	import SettingsView from '$lib/components/SettingsView.svelte';
 	import SyncBadge from '$lib/components/SyncBadge.svelte';
 	import ThemedBackdrop from '$lib/components/ThemedBackdrop.svelte';
+	import UsernameModal from '$lib/components/UsernameModal.svelte';
 	import {
 		BACKGROUND_SIGNED_URL_REFRESH_BUFFER_MS,
 		BACKGROUND_SIGNED_URL_TTL_SECONDS,
@@ -42,59 +44,97 @@
 		DESKTOP_CHAT_MIN,
 		DESKTOP_CHAT_WIDTH
 	} from '$lib/kainbu/constants';
-	import { invokeWorkspaceAi } from '$lib/kainbu/ai';
+	import { fetchWorkspaceAiModels, generateSessionTitle, invokeWorkspaceAi } from '$lib/kainbu/ai';
 	import { exportProjectsToFile, parseProjectsImport } from '$lib/kainbu/backup';
+	import { getKanbanFingerprint, getScratchpadFingerprint } from '$lib/kainbu/fingerprint';
 	import { createId } from '$lib/kainbu/id';
+	import {
+		addProjectAiSession,
+		buildAiSessionTitle,
+		deleteProjectAiSession,
+		getActiveProjectAiSession,
+		isDefaultAiSessionTitle,
+		renameProjectAiSession,
+		resolveAiModelId,
+		setActiveProjectAiSession,
+		syncProjectAiModelIds,
+		updateActiveProjectAiSession
+	} from '$lib/kainbu/aiSessions';
 	import {
 		clearWorkspaceSnapshot,
 		loadWorkspaceSnapshot,
 		saveWorkspaceSnapshot
 	} from '$lib/kainbu/localSnapshot';
+	import { DEFAULT_AI_MODEL_CONFIGS, DEFAULT_AI_MODEL_ID } from '$lib/kainbu/models';
 	import {
+		checkUsernameAvailability,
 		cancelProjectInvite,
 		createProject as createProjectRemote,
+		createProjectBoard,
+		createProjectPage,
 		createProjectInvite,
+		deleteProjectBoard as deleteProjectBoardRemote,
+		deleteProjectPage as deleteProjectPageRemote,
 		deleteProjectRemote,
+		fetchUserProfile,
 		fetchUserSettings,
 		fetchWorkspace,
 		leaveProject,
 		removeProjectMember,
 		renameProject as renameProjectRemote,
+		renameProjectBoard as renameProjectBoardRemote,
+		renameProjectPage as renameProjectPageRemote,
 		respondToProjectInvite,
-		saveProjectChatHistory,
+		saveProjectAiState,
 		supportsProfileBackgroundTheme,
 		subscribeToWorkspaceChanges,
 		syncProjectBoard,
 		touchProjectLastOpened,
 		updateProjectBackground,
-		updateProjectScratchpad,
+		updateProjectPageContent as syncProjectPageContent,
+		updateUsername,
 		upsertUserSettings
 	} from '$lib/kainbu/persistence';
+	import { getProjectMemberDisplayName, getProjectMemberSearchText } from '$lib/kainbu/members';
 	import {
-		addScratchpadPad,
-		deleteScratchpadPad,
+		getProjectPage,
+		normalizeProjectStructure,
+		setProjectActiveBoard,
+		setProjectActivePage,
+		updateProjectBoardData,
+		updateProjectPageContent as updateProjectPageState
+	} from '$lib/kainbu/projectStructure';
+	import {
 		getActiveScratchpadPad,
 		getScratchpadPad,
-		setActiveScratchpadPad,
-		updateScratchpadPadContent
 	} from '$lib/kainbu/scratchpad';
-	import { buildTimedTasks } from '$lib/kainbu/timing';
+	import type { TaskReferenceOption } from '$lib/kainbu/taskMarkdown';
+	import { buildTimedTasks, clearTaskDueAt } from '$lib/kainbu/timing';
 	import type {
+		AiModelConfig,
+		AiModelId,
+		AiProposal,
+		AiProgressEvent,
+		AiQuestionAnswer,
+		BoundTarget,
 		BackgroundTheme,
 		ChatAttachment,
 		ChatMessage,
 		ChatTaskCard,
 		Column,
 		LocalWorkspaceSnapshot,
-		ModelPreset,
 		PendingProposal,
 		Project,
 		ProjectInvite,
 		ProjectRevisionState,
 		ProposalTarget,
+		SettingsSection,
 		SyncStatus,
 		Task,
+		UserProfile,
 		UserSettings,
+		UsernameAvailabilityState,
+		WorkspaceSummary,
 		WorkspaceTab
 	} from '$lib/kainbu/types';
 	import { isSupabaseConfigured, supabase } from '$lib/supabaseClient';
@@ -111,12 +151,6 @@
 		nextLastSuccessfulSyncAt?: number;
 	};
 
-	type ScratchpadConflictState = {
-		projectId: string;
-		remoteData: Project['scratchpadData'];
-		remoteRev: number;
-	};
-
 	type BackgroundImageScope = 'personal' | 'project';
 	type BoardHistoryState = {
 		past: Project['kanbanData'][];
@@ -128,29 +162,34 @@
 	let incomingInvites: ProjectInvite[] = [];
 	let currentProjectId = '';
 	let settings: UserSettings = structuredClone(DEFAULT_SETTINGS);
+	let aiModels: AiModelConfig[] = structuredClone(DEFAULT_AI_MODEL_CONFIGS);
+	let aiThinkingLevel: import('$lib/kainbu/types').AiThinkingLevel = 'none';
+	let profile: UserProfile | null = null;
 	let desktopWorkspaceTab: WorkspaceTab = 'dashboard';
 	let mobileTab: WorkspaceTab = 'dashboard';
+	let settingsSection: SettingsSection = 'appearance';
 	let authHydrating = true;
 	let workspaceHydrating = false;
 	let isRestoring = false;
 	let isAiProcessing = false;
+	let aiProgressEvents: AiProgressEvent[] = [];
 	let isAuthLoading = false;
 	let authInfoMessage = '';
 	let authErrorMessage = '';
 	let workspaceError = '';
 	let syncErrorMessage = '';
 	let syncStatus: SyncStatus = 'idle';
-	let pendingProposal: PendingProposal | null = null;
+	let pendingProposals: PendingProposal[] = [];
 	let highlightedTaskIds: string[] = [];
-	let projectRailExpanded = true;
+	let projectRailCompact = true;
 	let showProjectSheet = false;
 	let desktopChatWidth = DESKTOP_CHAT_WIDTH;
 	let desktopChatCollapsed = true;
 	let composerDraft = '';
 	let queuedAttachments: ChatAttachment[] = [];
 	let queuedTaskCards: ChatTaskCard[] = [];
+	let activeTaskContext: { taskId: string; columnId: string } | null = null;
 	let viewportWidth = 0;
-	let scratchpadConflict: ScratchpadConflictState | null = null;
 	let saveFeedbackTimeout: ReturnType<typeof setTimeout> | null = null;
 	let settingsSyncTimeout: ReturnType<typeof setTimeout> | null = null;
 	let localSnapshotTimeout: ReturnType<typeof setTimeout> | null = null;
@@ -172,6 +211,20 @@
 	let personalBackgroundUploading = false;
 	let projectBackgroundUploading = false;
 	let boardSessionHistory: Record<string, BoardHistoryState> = {};
+	let usernameDraft = '';
+	let usernameAvailability: UsernameAvailabilityState = 'idle';
+	let usernameFeedback = '';
+	let usernameSaving = false;
+	let usernameCheckTimeout: ReturnType<typeof setTimeout> | null = null;
+	let usernameCheckSequence = 0;
+	let projectRailActiveSurface: 'board' | 'page' | 'none' = 'none';
+
+	let nameModalState: {
+		kind: 'create-project' | 'create-board' | 'create-page' | 'rename-board' | 'rename-page';
+		projectId?: string;
+		itemId?: string;
+		value: string;
+	} | null = null;
 
 	const STARTUP_TIMEOUT_MS = 12000;
 	const LOCAL_SNAPSHOT_DEBOUNCE_MS = 140;
@@ -179,19 +232,29 @@
 	const BOARD_SYNC_DEBOUNCE_MS = 320;
 	const SCRATCHPAD_SYNC_DEBOUNCE_MS = 440;
 	const CHAT_SYNC_DEBOUNCE_MS = 520;
+	const AI_HISTORY_WINDOW = 12;
 	const SETTINGS_SYNC_DEBOUNCE_MS = 350;
 	const REMOTE_REFRESH_DEBOUNCE_MS = 160;
 	const SYNC_FEEDBACK_MS = 1400;
+	const USERNAME_CHECK_DEBOUNCE_MS = 260;
+	const USERNAME_REGEX = /^[a-z0-9_]{3,32}$/;
+
+	const focusOnMount = (node: HTMLElement) => { node.focus(); };
 
 	const boardSyncTimeouts = new Map<string, ReturnType<typeof setTimeout>>();
 	const pendingBoardSyncs = new Map<
 		string,
-		{ previousKanbanData: Project['kanbanData']; nextKanbanData: Project['kanbanData'] }
+		{
+			projectId: string;
+			boardId: string;
+			previousKanbanData: Project['kanbanData'];
+			nextKanbanData: Project['kanbanData'];
+		}
 	>();
 	const scratchpadSyncTimeouts = new Map<string, ReturnType<typeof setTimeout>>();
 	const pendingScratchpadSyncs = new Map<
 		string,
-		{ scratchpadData: Project['scratchpadData']; expectedRev: number }
+		{ projectId: string; pageId: string; content: string }
 	>();
 	const chatSyncTimeouts = new Map<string, ReturnType<typeof setTimeout>>();
 	const pendingChatSyncs = new Set<string>();
@@ -203,56 +266,84 @@
 
 	$: isMobile = viewportWidth > 0 && viewportWidth < 768;
 	$: currentProject = projects.find((project) => project.id === currentProjectId) || null;
-	$: currentBoardHistory = currentProject ? boardSessionHistory[currentProject.id] || null : null;
+	$: activeAiSession = currentProject ? getActiveProjectAiSession(currentProject) : null;
+	$: activeAiModelId = activeAiSession?.modelId || settings.preferredAiModelId || DEFAULT_AI_MODEL_ID;
+	$: currentBoardId = currentProject?.activeBoardId || '';
+	$: currentPageId = currentProject?.activePageId || '';
+	$: currentPage = currentProject ? getProjectPage(currentProject, currentPageId) : null;
+	$: if (
+		activeTaskContext &&
+		(!currentProject ||
+			!currentProject.kanbanData.some(
+				(column) =>
+					column.id === activeTaskContext?.columnId &&
+					column.tasks.some((task) => task.id === activeTaskContext?.taskId)
+			))
+	) {
+		activeTaskContext = null;
+	}
+	$: currentBoardHistory =
+		currentProject && currentBoardId
+			? boardSessionHistory[getBoardHistoryKey(currentProject.id, currentBoardId)] || null
+			: null;
 	$: desktopTitle = getWorkspaceTitle(desktopWorkspaceTab, currentProject);
 	$: mobileTitle = getWorkspaceTitle(mobileTab, currentProject);
 	$: currentScratchpadPad = currentProject
 		? getActiveScratchpadPad(currentProject.scratchpadData)
 		: null;
-	$: activePendingProposal =
-		pendingProposal && pendingProposal.projectId === currentProjectId ? pendingProposal : null;
+	$: activePendingProposals = pendingProposals.filter(
+		(proposal) => proposal.projectId === currentProjectId
+	);
+	$: if (
+		proposalPreviewTarget &&
+		!activePendingProposals.some((proposal) => proposal.target === proposalPreviewTarget)
+	) {
+		proposalPreviewTarget = null;
+	}
+	$: previewProposal = proposalPreviewTarget
+		? activePendingProposals.find((proposal) => proposal.target === proposalPreviewTarget) || null
+		: null;
+	$: visibleScratchpadState =
+		previewProposal?.target === 'scratchpad'
+			? previewProposal.preview.scratchpadState
+			: currentProject?.scratchpadData || null;
 	$: visibleScratchpadPad =
-		currentProject &&
-		proposalPreviewTarget === 'scratchpad' &&
-		activePendingProposal?.proposal.kind === 'scratchpad'
+		visibleScratchpadState && previewProposal?.target === 'scratchpad'
 			? getScratchpadPad(
-					currentProject.scratchpadData,
-					activePendingProposal.scratchpadPadId || ''
-				) || currentScratchpadPad
+					visibleScratchpadState,
+					previewProposal.padId || visibleScratchpadState.activePadId
+				) || getActiveScratchpadPad(visibleScratchpadState)
 			: currentScratchpadPad;
 	$: scratchpadContent =
-		proposalPreviewTarget === 'scratchpad' &&
-		activePendingProposal?.proposal.kind === 'scratchpad' &&
-		activePendingProposal.proposal.scratchpadData !== undefined
-			? activePendingProposal.proposal.scratchpadData
+		previewProposal?.target === 'scratchpad' && visibleScratchpadPad
+			? visibleScratchpadPad.content
 			: currentScratchpadPad?.content || '';
 	$: scratchpadComparisonContent =
-		proposalPreviewTarget === 'scratchpad' && activePendingProposal?.proposal.kind === 'scratchpad'
-			? activePendingProposal.originalScratchpadData
+		previewProposal?.target === 'scratchpad' && visibleScratchpadPad
+			? getScratchpadPad(previewProposal.originalScratchpadState, visibleScratchpadPad.id)
+					?.content || ''
 			: undefined;
 	$: kanbanData =
-		proposalPreviewTarget === 'kanban' &&
-		activePendingProposal?.proposal.kind === 'kanban' &&
-		activePendingProposal.proposal.kanbanData
-			? activePendingProposal.proposal.kanbanData
+		previewProposal?.target === 'kanban'
+			? previewProposal.preview.kanbanData
 			: currentProject?.kanbanData || [];
 	$: kanbanComparisonData =
-		proposalPreviewTarget === 'kanban' && activePendingProposal?.proposal.kind === 'kanban'
-			? activePendingProposal.originalKanbanData
-			: undefined;
+		previewProposal?.target === 'kanban' ? previewProposal.originalKanbanData : undefined;
 	$: timedTasks = buildTimedTasks(projects);
-	$: activeScratchpadConflict =
-		scratchpadConflict && scratchpadConflict.projectId === currentProjectId
-			? scratchpadConflict
-			: null;
 	$: visibleWorkspaceTab = isMobile ? mobileTab : desktopWorkspaceTab;
+	$: projectRailActiveSurface =
+		visibleWorkspaceTab === 'scratchpad'
+			? 'page'
+			: visibleWorkspaceTab === 'kanban' || visibleWorkspaceTab === 'chat'
+				? 'board'
+				: 'none';
 	$: canUndoBoardHistory = Boolean(currentBoardHistory?.past.length);
 	$: canRedoBoardHistory = Boolean(currentBoardHistory?.future.length);
 	$: showBoardHistoryControls = Boolean(
 		currentProject &&
-			isBoardWorkspaceTab(visibleWorkspaceTab) &&
-			currentBoardHistory &&
-			(currentBoardHistory.past.length || currentBoardHistory.future.length)
+		isBoardWorkspaceTab(visibleWorkspaceTab) &&
+		currentBoardHistory &&
+		(currentBoardHistory.past.length || currentBoardHistory.future.length)
 	);
 	$: boardBackgroundActive = Boolean(
 		currentProject?.backgroundTheme && isBoardWorkspaceTab(visibleWorkspaceTab)
@@ -264,12 +355,41 @@
 	$: activeBackgroundImageUrl = boardBackgroundActive
 		? projectBackgroundImageUrl
 		: personalBackgroundImageUrl;
+	$: profileEmail = profile?.email || user?.email || null;
+	$: scratchpadReferenceOptions = (() => {
+		if (!currentProject) return [] as TaskReferenceOption[];
+		const taskRefs: TaskReferenceOption[] = kanbanData.flatMap((column) =>
+			column.tasks.map((task) => ({
+				kind: 'task' as const,
+				id: task.id,
+				label: task.title,
+				description: column.title,
+				searchText: `${task.title} ${column.title} ${(task.tags || []).map((t) => t.label).join(' ')}`,
+				columnId: column.id,
+				columnTitle: column.title,
+				tags: [...(task.tags || [])],
+				checked: Boolean(task.checked)
+			}))
+		);
+		const memberRefs: TaskReferenceOption[] = currentProject.members.map((member) => ({
+			kind: 'member' as const,
+			id: member.userId,
+			label: getProjectMemberDisplayName(member),
+			description: member.role,
+			searchText: getProjectMemberSearchText(member)
+		}));
+		const columnRefs: TaskReferenceOption[] = kanbanData.map((column) => ({
+			kind: 'column' as const,
+			id: column.id,
+			label: column.title,
+			description: 'Column',
+			searchText: `${column.title} column`
+		}));
+		return [...taskRefs, ...memberRefs, ...columnRefs];
+	})();
+	$: requiresUsername = false;
 	$: void ensureBackgroundSignedUrl('personal', settings.backgroundTheme);
 	$: void ensureBackgroundSignedUrl('project', currentProject?.backgroundTheme ?? null);
-	$: if (!activePendingProposal && proposalPreviewTarget) {
-		proposalPreviewTarget = null;
-	}
-
 	function isBoardWorkspaceTab(tab: WorkspaceTab) {
 		return tab === 'kanban' || tab === 'scratchpad' || tab === 'chat';
 	}
@@ -281,18 +401,41 @@
 	}
 	const getProjectRevisionState = (projectId: string): ProjectRevisionState =>
 		projectRevisions[projectId] || { kanban: 0, scratchpad: 0 };
-	const sortProjects = (nextProjects: Project[]) =>
-		[...nextProjects].sort(
-			(left, right) =>
-				right.viewerLastOpenedAt - left.viewerLastOpenedAt || right.updatedAt - left.updatedAt
-		);
+	const getBoardHistoryKey = (projectId: string, boardId: string) => `${projectId}::board::${boardId}`;
+	const getPageSyncKey = (projectId: string, pageId: string) => `${projectId}::page::${pageId}`;
+	const hasKeyWithPrefix = (keys: Iterable<string>, prefix: string) => {
+		for (const key of keys) {
+			if (key.startsWith(prefix)) {
+				return true;
+			}
+		}
+
+		return false;
+	};
+	const getBoardSyncKeysForProject = (projectId: string) => {
+		const prefix = `${projectId}::board::`;
+		return [...pendingBoardSyncs.keys()].filter((key) => key.startsWith(prefix));
+	};
+	const getPageSyncKeysForProject = (projectId: string) => {
+		const prefix = `${projectId}::page::`;
+		return [...pendingScratchpadSyncs.keys()].filter((key) => key.startsWith(prefix));
+	};
+	const hasPendingBoardSyncForProject = (projectId: string) =>
+		hasKeyWithPrefix(pendingBoardSyncs.keys(), `${projectId}::board::`);
+	const hasPendingPageSyncForProject = (projectId: string) =>
+		hasKeyWithPrefix(pendingScratchpadSyncs.keys(), `${projectId}::page::`);
+	const compareProjects = (left: Project, right: Project) =>
+		left.name.localeCompare(right.name, undefined, { sensitivity: 'base' }) ||
+		right.updatedAt - left.updatedAt ||
+		left.id.localeCompare(right.id);
+	const sortProjects = (nextProjects: Project[]) => [...nextProjects].sort(compareProjects);
 	const resolveCurrentProjectId = (nextProjects: Project[], preferredProjectId: string) =>
 		nextProjects.some((project) => project.id === preferredProjectId)
 			? preferredProjectId
 			: nextProjects[0]?.id || '';
 	const isProjectPending = (projectId: string) =>
-		pendingBoardSyncs.has(projectId) ||
-		pendingScratchpadSyncs.has(projectId) ||
+		hasPendingBoardSyncForProject(projectId) ||
+		hasPendingPageSyncForProject(projectId) ||
 		pendingChatSyncs.has(projectId);
 	const hasPendingLocalChanges = () =>
 		pendingBoardSyncs.size > 0 ||
@@ -309,30 +452,273 @@
 	const clearActiveViewState = () => {
 		highlightedTaskIds = [];
 		proposalPreviewTarget = null;
+		activeTaskContext = null;
 	};
 
 	const getScratchpadPadForProject = (project: Project, padId?: string) =>
 		(padId ? getScratchpadPad(project.scratchpadData, padId) : undefined) ||
 		getActiveScratchpadPad(project.scratchpadData);
 
-	const formatTaskCardsForPrompt = (taskCards: ChatTaskCard[]) =>
-		taskCards
-			.map((taskCard, index) => {
-				const lines = [
-					`Task card ${index + 1}:`,
-					`Column: ${taskCard.columnTitle}`,
-					`Title: ${taskCard.title}`
-				];
+	const uniqueIds = (values: string[]) => [
+		...new Set(values.map((value) => value.trim()).filter(Boolean))
+	];
+	const getAvailableAiModelIds = () => aiModels.map((model) => model.id);
+	const getFallbackAiModelId = () => aiModels[0]?.id || DEFAULT_AI_MODEL_ID;
+	const normalizePreferredAiModelId = (modelId: string | null | undefined) =>
+		resolveAiModelId(modelId, getAvailableAiModelIds(), getFallbackAiModelId());
+	const normalizeAiSettings = (nextSettings: UserSettings): UserSettings => ({
+		...nextSettings,
+		preferredAiModelId: normalizePreferredAiModelId(nextSettings.preferredAiModelId)
+	});
+	const normalizeUsername = (value: string | null | undefined) => value?.trim().toLowerCase() || '';
+	const createFallbackUserProfile = (currentUser: User): UserProfile => ({
+		userId: currentUser.id,
+		email: currentUser.email || null,
+		username: null
+	});
+	const setUsernameStatus = (state: UsernameAvailabilityState, message: string) => {
+		usernameAvailability = state;
+		usernameFeedback = message;
+	};
+	const clearUsernameAvailabilityCheck = () => {
+		if (usernameCheckTimeout) {
+			clearTimeout(usernameCheckTimeout);
+			usernameCheckTimeout = null;
+		}
+		usernameCheckSequence += 1;
+	};
+	const syncUsernameDraftFromProfile = (nextProfile: UserProfile | null) => {
+		profile = nextProfile;
+		const normalizedCurrent = normalizeUsername(nextProfile?.username);
+		const normalizedDraft = normalizeUsername(usernameDraft);
 
-				if (taskCard.description) lines.push(`Description:\n${taskCard.description}`);
-				if (taskCard.tags.length) {
-					lines.push(`Tags: ${taskCard.tags.map((tag) => tag.label).join(', ')}`);
+		if (!normalizedDraft || normalizedDraft === normalizedCurrent) {
+			usernameDraft = nextProfile?.username || '';
+		}
+
+		if (normalizedCurrent) {
+			setUsernameStatus('idle', '');
+			return;
+		}
+
+		if (!usernameDraft.trim()) {
+			setUsernameStatus('idle', 'Use 3-32 lowercase letters, numbers, or underscores.');
+		}
+	};
+	const validateUsernameDraft = (value: string) => {
+		const normalized = normalizeUsername(value);
+		if (!normalized) {
+			setUsernameStatus('idle', 'Choose a username to continue.');
+			return null;
+		}
+
+		if (!USERNAME_REGEX.test(normalized)) {
+			setUsernameStatus(
+				'invalid',
+				'Use 3-32 lowercase letters, numbers, or underscores.'
+			);
+			return null;
+		}
+
+		return normalized;
+	};
+	const scheduleUsernameAvailabilityCheck = (value: string) => {
+		clearUsernameAvailabilityCheck();
+		const normalized = validateUsernameDraft(value);
+		if (!normalized) return;
+
+		const currentUsername = normalizeUsername(profile?.username);
+		if (normalized === currentUsername && currentUsername) {
+			setUsernameStatus('available', 'This is your current username.');
+			return;
+		}
+
+		setUsernameStatus('checking', 'Checking availability...');
+		const requestSequence = usernameCheckSequence;
+		usernameCheckTimeout = setTimeout(async () => {
+			try {
+				const isAvailable = await checkUsernameAvailability(normalized);
+				if (requestSequence !== usernameCheckSequence) return;
+				setUsernameStatus(
+					isAvailable ? 'available' : 'taken',
+					isAvailable ? 'Username is available.' : 'That username is already taken.'
+				);
+			} catch (error) {
+				console.error(error);
+				if (requestSequence !== usernameCheckSequence) return;
+				setUsernameStatus('invalid', 'Unable to verify availability right now.');
+			} finally {
+				if (requestSequence === usernameCheckSequence) {
+					usernameCheckTimeout = null;
 				}
-				if (taskCard.checked) lines.push('Status: completed');
+			}
+		}, USERNAME_CHECK_DEBOUNCE_MS);
+	};
+	const handleUsernameDraftChange = (value: string) => {
+		usernameDraft = value.toLowerCase();
+		scheduleUsernameAvailabilityCheck(usernameDraft);
+	};
+	const handleUsernameSubmit = async () => {
+		const currentUser = user;
+		if (!currentUser) return;
+		const normalized = validateUsernameDraft(usernameDraft);
+		if (!normalized || usernameAvailability !== 'available') return;
+		if (normalizeUsername(profile?.username) === normalized) return;
 
-				return lines.join('\n');
-			})
-			.join('\n\n');
+		usernameSaving = true;
+		try {
+			const updatedProfile = await runSyncAction(
+				() => updateUsername(currentUser.id, normalized),
+				'Unable to save your username right now.'
+			);
+			syncUsernameDraftFromProfile(updatedProfile);
+			setUsernameStatus('available', 'Username saved.');
+		} catch (error) {
+			console.error(error);
+			setUsernameStatus(
+				'invalid',
+				error instanceof Error ? error.message : 'Unable to save your username right now.'
+			);
+		} finally {
+			usernameSaving = false;
+		}
+	};
+	const handleSettingsSectionChange = (nextSection: SettingsSection) => {
+		settingsSection = nextSection;
+	};
+	const isProposalStaleForProject = (proposal: PendingProposal, project: Project) => {
+		const currentRevision = getProjectRevisionState(project.id);
+
+		if (proposal.target === 'kanban') {
+			return (
+				currentRevision.kanban > proposal.baseRevision ||
+				getKanbanFingerprint(project.kanbanData) !== proposal.baseFingerprint
+			);
+		}
+
+		return (
+			currentRevision.scratchpad > proposal.baseRevision ||
+			getScratchpadFingerprint(project.scratchpadData) !== proposal.baseFingerprint
+		);
+	};
+	const refreshPendingProposalStaleness = (nextProjects = projects) => {
+		pendingProposals = pendingProposals.map((proposal) => {
+			const project = nextProjects.find((entry) => entry.id === proposal.projectId);
+			if (!project) {
+				return proposal;
+			}
+
+			const stale = isProposalStaleForProject(proposal, project);
+			return stale === proposal.stale ? proposal : { ...proposal, stale };
+		});
+	};
+	const buildBoundTargetHint = (
+		project: Project,
+		taskCards: ChatTaskCard[],
+		activeTask: { taskId: string; columnId: string } | null
+	): BoundTarget => {
+		if (activeTask?.taskId) {
+			return {
+				kind: 'task',
+				id: activeTask.taskId,
+				source: 'open_task',
+				locked: true
+			};
+		}
+
+		const selectedTaskIds = uniqueIds(taskCards.map((taskCard) => taskCard.taskId));
+		if (selectedTaskIds.length === 1) {
+			return {
+				kind: 'task',
+				id: selectedTaskIds[0],
+				source: 'queued_card',
+				locked: true
+			};
+		}
+
+		const selectedColumnIds = uniqueIds(taskCards.map((taskCard) => taskCard.columnId));
+		if (!selectedTaskIds.length && selectedColumnIds.length === 1) {
+			return {
+				kind: 'column',
+				id: selectedColumnIds[0],
+				source: 'selected_column',
+				locked: true
+			};
+		}
+
+		if (visibleWorkspaceTab === 'scratchpad') {
+			const activePadId =
+				getScratchpadPadForProject(project)?.id || project.scratchpadData.activePadId;
+			if (activePadId) {
+				return {
+					kind: 'pad',
+					id: activePadId,
+					source: 'active_pad',
+					locked: true
+				};
+			}
+		}
+
+		return {
+			kind: 'none',
+			source: 'none',
+			locked: false
+		};
+	};
+	const SELF_ASSIGNEE_ALIASES = new Set([
+		'me',
+		'you',
+		'myself',
+		'self',
+		'current user',
+		'current-user'
+	]);
+
+	const normalizeAssignedToForProject = (project: Project, assignedTo?: string) => {
+		const normalizedAssignedTo = assignedTo?.trim();
+		if (!normalizedAssignedTo) {
+			return undefined;
+		}
+
+		const normalizedSearch = normalizedAssignedTo.toLowerCase();
+		if (SELF_ASSIGNEE_ALIASES.has(normalizedSearch)) {
+			const currentUserId = user?.id;
+			return currentUserId && project.members.some((member) => member.userId === currentUserId)
+				? currentUserId
+				: undefined;
+		}
+
+		const directMemberMatch = project.members.find(
+			(member) => member.userId === normalizedAssignedTo
+		);
+		if (directMemberMatch) {
+			return directMemberMatch.userId;
+		}
+
+		const emailMatch = project.members.find(
+			(member) => member.email?.trim().toLowerCase() === normalizedSearch
+		);
+		return emailMatch?.userId;
+	};
+
+	const normalizeKanbanAssignments = (project: Project, kanbanData: Project['kanbanData']) =>
+		kanbanData.map((column) => ({
+			...column,
+			tasks: column.tasks.map((task) => ({
+				...task,
+				assignedTo: normalizeAssignedToForProject(project, task.assignedTo)
+			}))
+		}));
+
+	const appendAiProgressEvent = (event: AiProgressEvent) => {
+		aiProgressEvents =
+			event.kind === 'status'
+				? [
+						...aiProgressEvents.filter((existingEvent) => existingEvent.kind !== 'status'),
+						event
+					].slice(-12)
+				: [...aiProgressEvents, event].slice(-12);
+	};
 
 	const getAttachmentSignature = (attachment: ChatAttachment) =>
 		[attachment.kind, attachment.name, attachment.mimeType, attachment.content].join(':');
@@ -355,14 +741,87 @@
 	};
 
 	const cloneKanbanData = (kanbanData: Project['kanbanData']) => structuredClone(kanbanData);
-	const areKanbanDataEqual = (
-		left: Project['kanbanData'],
-		right: Project['kanbanData']
-	) => JSON.stringify(left) === JSON.stringify(right);
-	const getBoardHistoryState = (projectId: string): BoardHistoryState =>
-		boardSessionHistory[projectId] || { past: [], future: [] };
-	const setBoardHistoryState = (projectId: string, nextHistory: BoardHistoryState) => {
-		const { [projectId]: _discarded, ...remainingHistory } = boardSessionHistory;
+	const areKanbanDataEqual = (left: Project['kanbanData'], right: Project['kanbanData']) =>
+		JSON.stringify(left) === JSON.stringify(right);
+	const shortHash = (value: string) => {
+		let hash = 2166136261;
+		for (let index = 0; index < value.length; index += 1) {
+			hash ^= value.charCodeAt(index);
+			hash = Math.imul(hash, 16777619);
+		}
+
+		return (hash >>> 0).toString(16).padStart(8, '0');
+	};
+	const summarizeFingerprint = (value: string) => ({
+		hash: shortHash(value),
+		bytes: new TextEncoder().encode(value).length
+	});
+	const logWorkspaceAiProposalDebug = (
+		phase: string,
+		projectId: string,
+		proposal: AiProposal | PendingProposal,
+		extra: Record<string, unknown> = {}
+	) => {
+		if (proposal.target === 'kanban') {
+			const previewFingerprint = getKanbanFingerprint(proposal.preview.kanbanData);
+			console.info('[workspace-ai-proposal]', {
+				phase,
+				projectId,
+				proposalId: proposal.id,
+				target: proposal.target,
+				scope: proposal.scope,
+				summary: proposal.summary,
+				editCallCount: proposal.editCallCount,
+				opTypes: proposal.ops.map((op) => op.type),
+				opCount: proposal.ops.length,
+				baseRevision: proposal.baseRevision,
+				baseFingerprint: summarizeFingerprint(proposal.baseFingerprint),
+				previewFingerprint: summarizeFingerprint(previewFingerprint),
+				proposalSafety: proposal.proposalSafety,
+				columnCount: proposal.preview.kanbanData.length,
+				taskCount: proposal.preview.kanbanData.reduce(
+					(total, column) => total + column.tasks.length,
+					0
+				),
+				ops: proposal.ops,
+				...extra
+			});
+			return;
+		}
+
+		const targetPadId = proposal.padId || proposal.preview.scratchpadState.activePadId;
+		const targetPad =
+			getScratchpadPad(proposal.preview.scratchpadState, targetPadId) ||
+			getActiveScratchpadPad(proposal.preview.scratchpadState);
+		const previewFingerprint = getScratchpadFingerprint(proposal.preview.scratchpadState);
+		console.info('[workspace-ai-proposal]', {
+			phase,
+			projectId,
+			proposalId: proposal.id,
+			target: proposal.target,
+			scope: proposal.scope,
+			summary: proposal.summary,
+			editCallCount: proposal.editCallCount,
+			opTypes: proposal.ops.map((op) => op.type),
+			opCount: proposal.ops.length,
+			baseRevision: proposal.baseRevision,
+			baseFingerprint: summarizeFingerprint(proposal.baseFingerprint),
+			previewFingerprint: summarizeFingerprint(previewFingerprint),
+			proposalSafety: proposal.proposalSafety,
+			padId: proposal.padId,
+			activePadId: proposal.preview.scratchpadState.activePadId,
+			targetPadId,
+			targetPadName: targetPad?.name,
+			targetPadContentLength: targetPad?.content.length || 0,
+			ops: proposal.ops,
+			...extra
+		});
+	};
+	const getBoardHistoryState = (boardHistoryKey: string): BoardHistoryState =>
+		boardSessionHistory[boardHistoryKey] || { past: [], future: [] };
+	const setBoardHistoryState = (boardHistoryKey: string, nextHistory: BoardHistoryState) => {
+		const remainingHistory = { ...boardSessionHistory };
+		delete remainingHistory[boardHistoryKey];
 
 		if (!nextHistory.past.length && !nextHistory.future.length) {
 			boardSessionHistory = remainingHistory;
@@ -371,11 +830,11 @@
 
 		boardSessionHistory = {
 			...remainingHistory,
-			[projectId]: nextHistory
+			[boardHistoryKey]: nextHistory
 		};
 	};
 	const recordBoardHistory = (
-		projectId: string,
+		boardHistoryKey: string,
 		previousKanbanData: Project['kanbanData'],
 		nextKanbanData: Project['kanbanData']
 	) => {
@@ -383,14 +842,14 @@
 			return;
 		}
 
-		const currentHistory = getBoardHistoryState(projectId);
+		const currentHistory = getBoardHistoryState(boardHistoryKey);
 		const latestPast = currentHistory.past.at(-1);
 		const nextPast =
 			latestPast && areKanbanDataEqual(latestPast, previousKanbanData)
 				? currentHistory.past
 				: [...currentHistory.past, cloneKanbanData(previousKanbanData)].slice(-BOARD_HISTORY_LIMIT);
 
-		setBoardHistoryState(projectId, {
+		setBoardHistoryState(boardHistoryKey, {
 			past: nextPast,
 			future: []
 		});
@@ -403,28 +862,38 @@
 			syncDelay?: number;
 		} = {}
 	) => {
+		const boardId = project.activeBoardId;
+		if (!boardId) return false;
+
 		const previousKanbanData = cloneKanbanData(project.kanbanData);
-		const normalizedNextKanbanData = cloneKanbanData(nextKanbanData);
+		const normalizedNextKanbanData = normalizeKanbanAssignments(
+			project,
+			cloneKanbanData(nextKanbanData)
+		);
 
 		if (areKanbanDataEqual(previousKanbanData, normalizedNextKanbanData)) {
 			return false;
 		}
 
-		const updateResult = updateProjectLocal(project.id, (currentProject) => ({
-			...currentProject,
-			kanbanData: normalizedNextKanbanData
-		}));
+		const updateResult = updateProjectLocal(project.id, (currentProject) =>
+			updateProjectBoardData(currentProject, boardId, normalizedNextKanbanData)
+		);
 
 		if (!updateResult) return false;
 
 		if (options.recordHistory !== false) {
-			recordBoardHistory(project.id, previousKanbanData, normalizedNextKanbanData);
+			recordBoardHistory(
+				getBoardHistoryKey(project.id, boardId),
+				previousKanbanData,
+				normalizedNextKanbanData
+			);
 		}
 
 		highlightedTaskIds = [];
 		bumpProjectRevision(project.id, 'kanban');
 		scheduleBoardSync(
 			project.id,
+			boardId,
 			previousKanbanData,
 			normalizedNextKanbanData,
 			options.syncDelay ?? BOARD_SYNC_DEBOUNCE_MS
@@ -470,7 +939,7 @@
 		if (!user) return null;
 
 		return {
-			version: 2,
+			version: 3,
 			userId: user.id,
 			currentProjectId,
 			projects,
@@ -478,6 +947,8 @@
 			dirtySettings,
 			projectRevisions,
 			lastProjectSyncAt,
+			desktopWorkspaceTab,
+			mobileTab,
 			lastSettingsSyncAt,
 			lastSuccessfulSyncAt
 		};
@@ -509,7 +980,16 @@
 		nextLastSettingsSyncAt = lastSettingsSyncAt,
 		nextLastSuccessfulSyncAt = lastSuccessfulSyncAt
 	}: WorkspaceStateInput) => {
-		const sortedProjects = sortProjects(nextProjects);
+		const normalizedSettings = normalizeAiSettings(nextSettings);
+		const sortedProjects = sortProjects(
+			nextProjects.map((project) =>
+				syncProjectAiModelIds(
+					normalizeProjectStructure(project),
+					getAvailableAiModelIds(),
+					getFallbackAiModelId()
+				)
+			)
+		);
 		const resolvedProjectId = resolveCurrentProjectId(sortedProjects, preferredProjectId);
 		const normalizedRevisions: Record<string, ProjectRevisionState> = {};
 		const normalizedLastProjectSyncAt: Record<string, number> = {};
@@ -525,15 +1005,18 @@
 				normalizedLastProjectSyncAt[project.id] = nextLastProjectSyncAt[project.id];
 			}
 
-			if (boardSessionHistory[project.id]) {
-				nextBoardSessionHistory[project.id] = boardSessionHistory[project.id];
+			for (const board of project.boards) {
+				const boardHistoryKey = getBoardHistoryKey(project.id, board.id);
+				if (boardSessionHistory[boardHistoryKey]) {
+					nextBoardSessionHistory[boardHistoryKey] = boardSessionHistory[boardHistoryKey];
+				}
 			}
 		}
 
 		projects = sortedProjects;
 		incomingInvites = nextIncomingInvites;
 		currentProjectId = resolvedProjectId;
-		settings = nextSettings;
+		settings = normalizedSettings;
 		dirtySettings = nextDirtySettings;
 		projectRevisions = normalizedRevisions;
 		lastProjectSyncAt = normalizedLastProjectSyncAt;
@@ -541,32 +1024,28 @@
 		lastSuccessfulSyncAt = nextLastSuccessfulSyncAt;
 		boardSessionHistory = nextBoardSessionHistory;
 
-		const activePendingProposal = pendingProposal;
-		if (
-			activePendingProposal &&
-			!sortedProjects.some((project) => project.id === activePendingProposal.projectId)
-		) {
-			pendingProposal = null;
+		const hasPendingProposalForMissingProject = pendingProposals.some(
+			(proposal) => !sortedProjects.some((project) => project.id === proposal.projectId)
+		);
+		if (hasPendingProposalForMissingProject) {
+			pendingProposals = pendingProposals.filter((proposal) =>
+				sortedProjects.some((project) => project.id === proposal.projectId)
+			);
 			proposalPreviewTarget = null;
 		}
 
-		if (pendingProposal?.projectId !== resolvedProjectId) {
+		if (!pendingProposals.some((proposal) => proposal.projectId === resolvedProjectId)) {
 			proposalPreviewTarget = null;
 		}
 
-		const activeConflict = scratchpadConflict;
-		if (
-			activeConflict &&
-			!sortedProjects.some((project) => project.id === activeConflict.projectId)
-		) {
-			scratchpadConflict = null;
-		}
+		refreshPendingProposalStaleness(sortedProjects);
 
 		refreshSyncStatus();
 		scheduleSnapshotPersist();
 	};
 
 	const resetWorkspaceState = () => {
+		clearUsernameAvailabilityCheck();
 		if (authStateReloadTimeout) {
 			clearTimeout(authStateReloadTimeout);
 			authStateReloadTimeout = null;
@@ -601,13 +1080,18 @@
 		incomingInvites = [];
 		currentProjectId = '';
 		settings = structuredClone(DEFAULT_SETTINGS);
+		profile = null;
+		settingsSection = 'appearance';
 		dirtySettings = false;
+		usernameDraft = '';
+		usernameAvailability = 'idle';
+		usernameFeedback = '';
+		usernameSaving = false;
 		projectRevisions = {};
 		lastProjectSyncAt = {};
 		lastSettingsSyncAt = undefined;
 		lastSuccessfulSyncAt = undefined;
-		pendingProposal = null;
-		scratchpadConflict = null;
+		pendingProposals = [];
 		boardSessionHistory = {};
 		workspaceError = '';
 		syncErrorMessage = '';
@@ -733,18 +1217,7 @@
 			...projectRevisions,
 			[projectId]: nextRevision
 		};
-		if (
-			pendingProposal &&
-			pendingProposal.projectId === projectId &&
-			pendingProposal.target === target &&
-			!pendingProposal.stale &&
-			nextRevision[target] > pendingProposal.baseRevision
-		) {
-			pendingProposal = {
-				...pendingProposal,
-				stale: true
-			};
-		}
+		refreshPendingProposalStaleness();
 		scheduleSnapshotPersist();
 	};
 
@@ -773,10 +1246,10 @@
 		const current = projects.find((entry) => entry.id === projectId);
 		if (!current) return null;
 
-		const nextProject = {
+		const nextProject = normalizeProjectStructure({
 			...updater(current),
 			updatedAt: Date.now()
-		};
+		});
 		applyWorkspaceState({
 			nextProjects: projects.map((project) => (project.id === projectId ? nextProject : project))
 		});
@@ -788,25 +1261,29 @@
 
 	const scheduleBoardSync = (
 		projectId: string,
+		boardId: string,
 		previousKanbanData: Project['kanbanData'],
 		nextKanbanData: Project['kanbanData'],
 		delay = BOARD_SYNC_DEBOUNCE_MS
 	) => {
-		const current = pendingBoardSyncs.get(projectId);
-		pendingBoardSyncs.set(projectId, {
+		const syncKey = getBoardHistoryKey(projectId, boardId);
+		const current = pendingBoardSyncs.get(syncKey);
+		pendingBoardSyncs.set(syncKey, {
+			projectId,
+			boardId,
 			previousKanbanData: current?.previousKanbanData || previousKanbanData,
 			nextKanbanData
 		});
 
-		if (boardSyncTimeouts.has(projectId)) {
-			clearTimeout(boardSyncTimeouts.get(projectId));
+		if (boardSyncTimeouts.has(syncKey)) {
+			clearTimeout(boardSyncTimeouts.get(syncKey));
 		}
 
 		boardSyncTimeouts.set(
-			projectId,
+			syncKey,
 			setTimeout(() => {
-				boardSyncTimeouts.delete(projectId);
-				void flushBoardSync(projectId);
+				boardSyncTimeouts.delete(syncKey);
+				void flushBoardSync(syncKey);
 			}, delay)
 		);
 
@@ -814,20 +1291,41 @@
 		scheduleSnapshotPersist();
 	};
 
-	const flushBoardSync = async (projectId: string) => {
+	const flushBoardSync = async (syncKey: string) => {
 		if (!user) return;
-		const pending = pendingBoardSyncs.get(projectId);
+		const pending = pendingBoardSyncs.get(syncKey);
 		if (!pending) return;
+		const project = projects.find((entry) => entry.id === pending.projectId);
+		const normalizedPreviousKanbanData = project
+			? normalizeKanbanAssignments(project, cloneKanbanData(pending.previousKanbanData))
+			: pending.previousKanbanData;
+		const normalizedNextKanbanData = project
+			? normalizeKanbanAssignments(project, cloneKanbanData(pending.nextKanbanData))
+			: pending.nextKanbanData;
+
+		if (project && !areKanbanDataEqual(project.kanbanData, normalizedNextKanbanData)) {
+			updateProjectLocal(pending.projectId, (currentProject) =>
+				updateProjectBoardData(currentProject, pending.boardId, normalizedNextKanbanData)
+			);
+		}
 
 		try {
 			await runSyncAction(
-				() => syncProjectBoard(projectId, pending.previousKanbanData, pending.nextKanbanData),
+				() =>
+					syncProjectBoard(
+						pending.projectId,
+						pending.boardId,
+						normalizedPreviousKanbanData,
+						normalizedNextKanbanData
+					),
 				'Unable to sync the board right now.'
 			);
-			pendingBoardSyncs.delete(projectId);
+			if (pendingBoardSyncs.get(syncKey) === pending) {
+				pendingBoardSyncs.delete(syncKey);
+			}
 			lastProjectSyncAt = {
 				...lastProjectSyncAt,
-				[projectId]: Date.now()
+				[pending.projectId]: Date.now()
 			};
 		} finally {
 			refreshSyncStatus(syncErrorMessage.length === 0 && !hasPendingLocalChanges());
@@ -836,25 +1334,26 @@
 
 	const scheduleScratchpadSync = (
 		projectId: string,
-		scratchpadData: Project['scratchpadData'],
-		expectedRev: number,
+		pageId: string,
+		content: string,
 		delay = SCRATCHPAD_SYNC_DEBOUNCE_MS
 	) => {
-		const current = pendingScratchpadSyncs.get(projectId);
-		pendingScratchpadSyncs.set(projectId, {
-			scratchpadData,
-			expectedRev: current?.expectedRev ?? expectedRev
+		const syncKey = getPageSyncKey(projectId, pageId);
+		pendingScratchpadSyncs.set(syncKey, {
+			projectId,
+			pageId,
+			content
 		});
 
-		if (scratchpadSyncTimeouts.has(projectId)) {
-			clearTimeout(scratchpadSyncTimeouts.get(projectId));
+		if (scratchpadSyncTimeouts.has(syncKey)) {
+			clearTimeout(scratchpadSyncTimeouts.get(syncKey));
 		}
 
 		scratchpadSyncTimeouts.set(
-			projectId,
+			syncKey,
 			setTimeout(() => {
-				scratchpadSyncTimeouts.delete(projectId);
-				void flushScratchpadSync(projectId);
+				scratchpadSyncTimeouts.delete(syncKey);
+				void flushScratchpadSync(syncKey);
 			}, delay)
 		);
 
@@ -862,41 +1361,23 @@
 		scheduleSnapshotPersist();
 	};
 
-	const flushScratchpadSync = async (projectId: string) => {
-		const pending = pendingScratchpadSyncs.get(projectId);
+	const flushScratchpadSync = async (syncKey: string) => {
+		const pending = pendingScratchpadSyncs.get(syncKey);
 		if (!pending) return;
 
 		try {
-			const result = await runSyncAction(
-				() => updateProjectScratchpad(projectId, pending.scratchpadData, pending.expectedRev),
-				'Unable to sync the shared notes right now.'
+			await runSyncAction(
+				() => syncProjectPageContent(pending.projectId, pending.pageId, pending.content),
+				'Unable to sync the page right now.'
 			);
 
-			if (result.ok) {
-				pendingScratchpadSyncs.delete(projectId);
-				scratchpadConflict = null;
-				updateProjectLocal(projectId, (project) => ({
-					...project,
-					scratchpadRev: result.scratchpadRev,
-					updatedAt: result.updatedAt
-				}));
-				lastProjectSyncAt = {
-					...lastProjectSyncAt,
-					[projectId]: Date.now()
-				};
-				return;
+			if (pendingScratchpadSyncs.get(syncKey) === pending) {
+				pendingScratchpadSyncs.delete(syncKey);
 			}
-
-			pendingScratchpadSyncs.delete(projectId);
-			scratchpadConflict = {
-				projectId,
-				remoteData: result.scratchpadData,
-				remoteRev: result.scratchpadRev
+			lastProjectSyncAt = {
+				...lastProjectSyncAt,
+				[pending.projectId]: Date.now()
 			};
-			updateProjectLocal(projectId, (project) => ({
-				...project,
-				scratchpadRev: result.scratchpadRev
-			}));
 		} finally {
 			refreshSyncStatus(syncErrorMessage.length === 0 && !hasPendingLocalChanges());
 		}
@@ -928,10 +1409,18 @@
 
 		try {
 			await runSyncAction(
-				() => saveProjectChatHistory(projectId, currentUser.id, project.chatHistory),
+				() =>
+					saveProjectAiState(
+						projectId,
+						currentUser.id,
+						project.aiSessions,
+						project.activeAiSessionId
+					),
 				'Unable to sync your private chat right now.'
 			);
-			pendingChatSyncs.delete(projectId);
+			if (pendingChatSyncs.has(projectId) && !chatSyncTimeouts.has(projectId)) {
+				pendingChatSyncs.delete(projectId);
+			}
 			lastProjectSyncAt = {
 				...lastProjectSyncAt,
 				[projectId]: Date.now()
@@ -981,27 +1470,42 @@
 			}
 
 			const preferLocalFallback = localProject.updatedAt > remoteProject.updatedAt;
+			const preferLocalBoardState =
+				preferLocalFallback || hasPendingBoardSyncForProject(remoteProject.id);
+			const preferLocalPageState =
+				preferLocalFallback || hasPendingPageSyncForProject(remoteProject.id);
+			const preferLocalAiState = pendingChatSyncs.has(remoteProject.id) || preferLocalFallback;
 			merged.push({
 				...remoteProject,
 				backgroundTheme: preferLocalFallback
 					? localProject.backgroundTheme
 					: remoteProject.backgroundTheme,
+				boards: preferLocalBoardState ? localProject.boards : remoteProject.boards,
+				activeBoardId: preferLocalBoardState
+					? localProject.activeBoardId
+					: remoteProject.activeBoardId,
 				kanbanData:
-					pendingBoardSyncs.has(remoteProject.id) || preferLocalFallback
+					preferLocalBoardState
 						? localProject.kanbanData
 						: remoteProject.kanbanData,
+				pages: preferLocalPageState ? localProject.pages : remoteProject.pages,
+				activePageId: preferLocalPageState
+					? localProject.activePageId
+					: remoteProject.activePageId,
 				scratchpadData:
-					pendingScratchpadSyncs.has(remoteProject.id) || preferLocalFallback
+					preferLocalPageState
 						? localProject.scratchpadData
 						: remoteProject.scratchpadData,
 				scratchpadRev:
-					pendingScratchpadSyncs.has(remoteProject.id) || preferLocalFallback
+					preferLocalPageState
 						? localProject.scratchpadRev
 						: remoteProject.scratchpadRev,
-				chatHistory:
-					pendingChatSyncs.has(remoteProject.id) || preferLocalFallback
-						? localProject.chatHistory
-						: remoteProject.chatHistory,
+				aiSessions: preferLocalAiState ? localProject.aiSessions : remoteProject.aiSessions,
+				activeAiSessionId:
+					preferLocalAiState
+						? localProject.activeAiSessionId
+						: remoteProject.activeAiSessionId,
+				chatHistory: preferLocalAiState ? localProject.chatHistory : remoteProject.chatHistory,
 				updatedAt: Math.max(remoteProject.updatedAt, localProject.updatedAt)
 			});
 		}
@@ -1020,6 +1524,7 @@
 		workspaceHydrating = true;
 		workspaceError = '';
 		const localSnapshot = loadWorkspaceSnapshot(currentUser.id);
+		syncUsernameDraftFromProfile(createFallbackUserProfile(currentUser));
 
 		if (localSnapshot) {
 			applyWorkspaceState({
@@ -1032,11 +1537,13 @@
 				nextLastSettingsSyncAt: localSnapshot.lastSettingsSyncAt,
 				nextLastSuccessfulSyncAt: localSnapshot.lastSuccessfulSyncAt
 			});
+			desktopWorkspaceTab = localSnapshot.desktopWorkspaceTab || 'dashboard';
+			mobileTab = localSnapshot.mobileTab || localSnapshot.desktopWorkspaceTab || 'dashboard';
 			workspaceHydrating = false;
 		}
 
 		try {
-			const [workspaceResult, settingsResult] = await Promise.allSettled([
+			const [workspaceResult, settingsResult, profileResult] = await Promise.allSettled([
 				withTimeout(
 					fetchWorkspace(currentUser.id),
 					STARTUP_TIMEOUT_MS,
@@ -1046,6 +1553,11 @@
 					fetchUserSettings(currentUser.id),
 					STARTUP_TIMEOUT_MS,
 					'Loading your settings timed out. Please retry.'
+				),
+				withTimeout(
+					fetchUserProfile(currentUser.id),
+					STARTUP_TIMEOUT_MS,
+					'Loading your account timed out. Please retry.'
 				)
 			]);
 
@@ -1091,6 +1603,10 @@
 				nextLastSettingsSyncAt: localSnapshot?.lastSettingsSyncAt,
 				nextLastSuccessfulSyncAt: localSnapshot?.lastSuccessfulSyncAt
 			});
+
+			syncUsernameDraftFromProfile(
+				profileResult.status === 'fulfilled' ? profileResult.value : createFallbackUserProfile(currentUser)
+			);
 		} catch (error) {
 			console.error(error);
 			workspaceError = error instanceof Error ? error.message : 'Unable to load your workspace.';
@@ -1098,6 +1614,24 @@
 			if (loadVersion === workspaceLoadVersion) {
 				workspaceHydrating = false;
 			}
+		}
+	};
+
+	const loadAiModels = async () => {
+		try {
+			const nextModels = await fetchWorkspaceAiModels();
+			if (!nextModels.length) return;
+			aiModels = nextModels;
+			if (projects.length || user) {
+				applyWorkspaceState({
+					nextProjects: projects,
+					nextSettings: settings
+				});
+			} else {
+				settings = normalizeAiSettings(settings);
+			}
+		} catch (error) {
+			console.error(error);
 		}
 	};
 
@@ -1218,33 +1752,37 @@
 	};
 
 	const clearProjectSyncState = (projectId: string) => {
-		const boardTimeout = boardSyncTimeouts.get(projectId);
-		if (boardTimeout) clearTimeout(boardTimeout);
-		boardSyncTimeouts.delete(projectId);
-		pendingBoardSyncs.delete(projectId);
+		for (const syncKey of [...boardSyncTimeouts.keys()]) {
+			if (!syncKey.startsWith(`${projectId}::board::`)) continue;
+			const boardTimeout = boardSyncTimeouts.get(syncKey);
+			if (boardTimeout) clearTimeout(boardTimeout);
+			boardSyncTimeouts.delete(syncKey);
+			pendingBoardSyncs.delete(syncKey);
+		}
 
-		const scratchpadTimeout = scratchpadSyncTimeouts.get(projectId);
-		if (scratchpadTimeout) clearTimeout(scratchpadTimeout);
-		scratchpadSyncTimeouts.delete(projectId);
-		pendingScratchpadSyncs.delete(projectId);
+		for (const syncKey of [...scratchpadSyncTimeouts.keys()]) {
+			if (!syncKey.startsWith(`${projectId}::page::`)) continue;
+			const scratchpadTimeout = scratchpadSyncTimeouts.get(syncKey);
+			if (scratchpadTimeout) clearTimeout(scratchpadTimeout);
+			scratchpadSyncTimeouts.delete(syncKey);
+			pendingScratchpadSyncs.delete(syncKey);
+		}
 
 		const chatTimeout = chatSyncTimeouts.get(projectId);
 		if (chatTimeout) clearTimeout(chatTimeout);
 		chatSyncTimeouts.delete(projectId);
 		pendingChatSyncs.delete(projectId);
 
-		const { [projectId]: _removedRevision, ...remainingRevisions } = projectRevisions;
+		const remainingRevisions = { ...projectRevisions };
+		delete remainingRevisions[projectId];
 		projectRevisions = remainingRevisions;
 
-		const { [projectId]: _removedSyncAt, ...remainingSyncAt } = lastProjectSyncAt;
+		const remainingSyncAt = { ...lastProjectSyncAt };
+		delete remainingSyncAt[projectId];
 		lastProjectSyncAt = remainingSyncAt;
 
-		if (scratchpadConflict?.projectId === projectId) {
-			scratchpadConflict = null;
-		}
-
-		if (pendingProposal?.projectId === projectId) {
-			pendingProposal = null;
+		if (pendingProposals.some((proposal) => proposal.projectId === projectId)) {
+			pendingProposals = pendingProposals.filter((proposal) => proposal.projectId !== projectId);
 			proposalPreviewTarget = null;
 		}
 
@@ -1276,7 +1814,13 @@
 		window.addEventListener('pointerup', stopResizing);
 	};
 
-	const selectProject = (projectId: string) => {
+	const clearProjectProposalState = (projectId: string) => {
+		if (!pendingProposals.some((proposal) => proposal.projectId === projectId)) return;
+		pendingProposals = pendingProposals.filter((proposal) => proposal.projectId !== projectId);
+		proposalPreviewTarget = null;
+	};
+
+	const selectProject = (projectId: string, updater?: (project: Project) => Project) => {
 		const project = projects.find((entry) => entry.id === projectId);
 		if (!project) return;
 
@@ -1285,15 +1829,18 @@
 			clearComposerState();
 			clearActiveViewState();
 		}
+		if (switchingProjects || updater) {
+			clearProjectProposalState(projectId);
+		}
 
 		const openedAt = Date.now();
 		applyWorkspaceState({
 			nextProjects: projects.map((entry) =>
 				entry.id === projectId
-					? {
-							...entry,
+					? normalizeProjectStructure({
+							...(updater ? updater(entry) : entry),
 							viewerLastOpenedAt: openedAt
-						}
+						})
 					: entry
 			),
 			preferredProjectId: projectId
@@ -1301,7 +1848,7 @@
 
 		void runSyncAction(
 			() => touchProjectLastOpened(projectId),
-			'Unable to update board ordering right now.'
+			'Unable to update board activity right now.'
 		)
 			.then(() => {
 				lastProjectSyncAt = {
@@ -1316,40 +1863,384 @@
 	};
 
 	const openProjectWorkspace = (projectId: string) => {
-		selectProject(projectId);
+		const project = projects.find((entry) => entry.id === projectId);
+		if (!project) return;
+
+		selectProject(projectId, (entry) => setProjectActiveBoard(entry, entry.activeBoardId));
 		desktopWorkspaceTab = 'kanban';
 		mobileTab = 'kanban';
 		desktopChatCollapsed = true;
 		showProjectSheet = false;
 	};
 
+	const openProjectBoard = (projectId: string, boardId: string) => {
+		selectProject(projectId, (project) => setProjectActiveBoard(project, boardId));
+		desktopWorkspaceTab = 'kanban';
+		mobileTab = 'kanban';
+		desktopChatCollapsed = true;
+		showProjectSheet = false;
+	};
+
+	const openProjectPage = (projectId: string, pageId: string) => {
+		selectProject(projectId, (project) => setProjectActivePage(project, pageId));
+		desktopWorkspaceTab = 'scratchpad';
+		mobileTab = 'scratchpad';
+		desktopChatCollapsed = true;
+		showProjectSheet = false;
+	};
+
 	const handleCreateProject = async () => {
 		if (!user) return;
-		const currentUser = user;
+		nameModalState = {
+			kind: 'create-project',
+			value: `Project ${projects.length + 1}`
+		};
+	};
 
-		const suggestedName = `Board ${projects.length + 1}`;
-		const input = window.prompt('Name this board', suggestedName);
-		if (input === null) return;
-
-		const name = input.trim() || suggestedName;
+	const handleCreateBoardInline = async (projectId: string, nextName: string) => {
+		const project = projects.find((entry) => entry.id === projectId);
+		const name = nextName.trim();
+		if (!project || !name) return;
 
 		try {
-			const createdProject = await runSyncAction(
-				() => createProjectRemote(currentUser.id, name),
+			const createdBoard = await runSyncAction(
+				() => createProjectBoard(projectId, name, project.boards.length),
 				'Unable to create a new board right now.'
 			);
-
-			applyWorkspaceState({
-				nextProjects: [
-					createdProject,
-					...projects.filter((project) => project.id !== createdProject.id)
-				],
-				preferredProjectId: createdProject.id
-			});
+			selectProject(projectId, (currentProject) =>
+				setProjectActiveBoard(
+					{ ...currentProject, boards: [...currentProject.boards, createdBoard] },
+					createdBoard.id
+				)
+			);
+			lastProjectSyncAt = { ...lastProjectSyncAt, [projectId]: Date.now() };
 			desktopWorkspaceTab = 'kanban';
 			mobileTab = 'kanban';
-			desktopChatCollapsed = true;
 			showProjectSheet = false;
+		} catch (error) {
+			console.error(error);
+		}
+	};
+
+	const handleCreatePageInline = async (projectId: string, nextName: string) => {
+		const project = projects.find((entry) => entry.id === projectId);
+		const name = nextName.trim();
+		if (!project || !name) return;
+
+		try {
+			const createdPage = await runSyncAction(
+				() => createProjectPage(projectId, name, project.pages.length),
+				'Unable to create a new page right now.'
+			);
+			selectProject(projectId, (currentProject) =>
+				setProjectActivePage(
+					{ ...currentProject, pages: [...currentProject.pages, createdPage] },
+					createdPage.id
+				)
+			);
+			lastProjectSyncAt = { ...lastProjectSyncAt, [projectId]: Date.now() };
+			desktopWorkspaceTab = 'scratchpad';
+			mobileTab = 'scratchpad';
+			showProjectSheet = false;
+		} catch (error) {
+			console.error(error);
+		}
+	};
+
+	const handleRenameBoardInline = async (projectId: string, boardId: string, nextName: string) => {
+		const project = projects.find((entry) => entry.id === projectId);
+		const board = project?.boards.find((entry) => entry.id === boardId);
+		const name = nextName.trim();
+		if (!project || !board || !name || board.name === name) return;
+
+		projects = projects.map((entry) =>
+			entry.id === projectId
+				? {
+						...entry,
+						boards: entry.boards.map((candidate) =>
+							candidate.id === boardId
+								? { ...candidate, name, updatedAt: Date.now() }
+								: candidate
+						)
+				  }
+				: entry
+		);
+
+		try {
+			await runSyncAction(
+				() => renameProjectBoardRemote(projectId, boardId, name),
+				'Unable to rename this board right now.'
+			);
+		} catch (error) {
+			console.error(error);
+		}
+	};
+
+	const handleRenamePageInline = async (projectId: string, pageId: string, nextName: string) => {
+		const project = projects.find((entry) => entry.id === projectId);
+		const page = project?.pages.find((entry) => entry.id === pageId);
+		const name = nextName.trim();
+		if (!project || !page || !name || page.name === name) return;
+
+		projects = projects.map((entry) =>
+			entry.id === projectId
+				? {
+						...entry,
+						pages: entry.pages.map((candidate) =>
+							candidate.id === pageId
+								? { ...candidate, name, updatedAt: Date.now() }
+								: candidate
+						)
+				  }
+				: entry
+		);
+
+		try {
+			await runSyncAction(
+				() => renameProjectPageRemote(projectId, pageId, name),
+				'Unable to rename this page right now.'
+			);
+		} catch (error) {
+			console.error(error);
+		}
+	};
+
+	const handleCreateBoard = (projectId: string) => {
+		const project = projects.find((entry) => entry.id === projectId);
+		if (!project) return;
+		nameModalState = {
+			kind: 'create-board',
+			projectId,
+			value: `Board ${project.boards.length + 1}`
+		};
+	};
+
+	const handleCreatePage = (projectId: string) => {
+		const project = projects.find((entry) => entry.id === projectId);
+		if (!project) return;
+		nameModalState = {
+			kind: 'create-page',
+			projectId,
+			value: `Page ${project.pages.length + 1}`
+		};
+	};
+
+	const handleRenameBoard = (projectId: string, boardId: string) => {
+		const project = projects.find((entry) => entry.id === projectId);
+		const board = project?.boards.find((b) => b.id === boardId);
+		if (!board) return;
+		nameModalState = {
+			kind: 'rename-board',
+			projectId,
+			itemId: boardId,
+			value: board.name
+		};
+	};
+
+	const handleRenamePage = (projectId: string, pageId: string) => {
+		const project = projects.find((entry) => entry.id === projectId);
+		const page = project?.pages.find((p) => p.id === pageId);
+		if (!page) return;
+		nameModalState = {
+			kind: 'rename-page',
+			projectId,
+			itemId: pageId,
+			value: page.name
+		};
+	};
+
+	const handleNameModalSubmit = async () => {
+		if (!nameModalState) return;
+		const { kind, projectId, itemId, value } = nameModalState;
+		const name = value.trim();
+		if (!name) return;
+
+		nameModalState = null;
+
+		if (kind === 'create-project') {
+			const currentUser = user;
+			if (!currentUser) return;
+			try {
+				const createdProject = await runSyncAction(
+					() => createProjectRemote(currentUser.id, name),
+					'Unable to create a new project right now.'
+				);
+
+				applyWorkspaceState({
+					nextProjects: [
+						createdProject,
+						...projects.filter((project) => project.id !== createdProject.id)
+					],
+					preferredProjectId: createdProject.id
+				});
+				desktopWorkspaceTab = 'kanban';
+				mobileTab = 'kanban';
+				desktopChatCollapsed = true;
+				showProjectSheet = false;
+			} catch (error) {
+				console.error(error);
+			}
+			return;
+		}
+
+		if (!projectId) return;
+		const project = projects.find((entry) => entry.id === projectId);
+		if (!project) return;
+
+		if (kind === 'create-board') {
+			try {
+				const createdBoard = await runSyncAction(
+					() => createProjectBoard(projectId, name, project.boards.length),
+					'Unable to create a new board right now.'
+				);
+				selectProject(projectId, (currentProject) =>
+					setProjectActiveBoard(
+						{ ...currentProject, boards: [...currentProject.boards, createdBoard] },
+						createdBoard.id
+					)
+				);
+				lastProjectSyncAt = { ...lastProjectSyncAt, [projectId]: Date.now() };
+				desktopWorkspaceTab = 'kanban';
+				mobileTab = 'kanban';
+				showProjectSheet = false;
+			} catch (error) {
+				console.error(error);
+			}
+		} else if (kind === 'create-page') {
+			try {
+				const createdPage = await runSyncAction(
+					() => createProjectPage(projectId, name, project.pages.length),
+					'Unable to create a new page right now.'
+				);
+				selectProject(projectId, (currentProject) =>
+					setProjectActivePage(
+						{ ...currentProject, pages: [...currentProject.pages, createdPage] },
+						createdPage.id
+					)
+				);
+				lastProjectSyncAt = { ...lastProjectSyncAt, [projectId]: Date.now() };
+				desktopWorkspaceTab = 'scratchpad';
+				mobileTab = 'scratchpad';
+				showProjectSheet = false;
+			} catch (error) {
+				console.error(error);
+			}
+		} else if (kind === 'rename-board' && itemId) {
+			const board = project.boards.find((b) => b.id === itemId);
+			if (!board || board.name === name) return;
+			projects = projects.map((p) =>
+				p.id === projectId
+					? { ...p, boards: p.boards.map((b) => (b.id === itemId ? { ...b, name, updatedAt: Date.now() } : b)) }
+					: p
+			);
+			try {
+				await runSyncAction(
+					() => renameProjectBoardRemote(projectId, itemId, name),
+					'Unable to rename this board right now.'
+				);
+			} catch (error) {
+				console.error(error);
+			}
+		} else if (kind === 'rename-page' && itemId) {
+			const page = project.pages.find((p) => p.id === itemId);
+			if (!page || page.name === name) return;
+			projects = projects.map((p) =>
+				p.id === projectId
+					? { ...p, pages: p.pages.map((pg) => (pg.id === itemId ? { ...pg, name, updatedAt: Date.now() } : pg)) }
+					: p
+			);
+			try {
+				await runSyncAction(
+					() => renameProjectPageRemote(projectId, itemId, name),
+					'Unable to rename this page right now.'
+				);
+			} catch (error) {
+				console.error(error);
+			}
+		}
+	};
+
+	const handleClearTimedTaskDue = (projectId: string, columnId: string, taskId: string) => {
+		const project = projects.find((entry) => entry.id === projectId);
+		if (!project) return;
+
+		const nextKanbanData = project.kanbanData.map((column) =>
+			column.id === columnId
+				? {
+						...column,
+						tasks: column.tasks.map((task) =>
+							task.id === taskId ? clearTaskDueAt(task) : task
+						)
+					}
+				: column
+		);
+
+		applyLocalKanbanChange(project, nextKanbanData, {
+			recordHistory: true
+		});
+	};
+
+	const handleDeleteBoard = async (projectId: string, boardId: string) => {
+		const project = projects.find((entry) => entry.id === projectId);
+		if (!project || project.boards.length <= 1) return;
+
+		const board = project.boards.find((b) => b.id === boardId);
+		if (!board) return;
+
+		const confirmed = window.confirm(`Delete board "${board.name}"?`);
+		if (!confirmed) return;
+
+		const remainingBoards = project.boards.filter((b) => b.id !== boardId);
+		const needsSwitch = currentProjectId === projectId && currentBoardId === boardId;
+
+		projects = projects.map((p) =>
+			p.id === projectId ? { ...p, boards: remainingBoards } : p
+		);
+
+		if (needsSwitch && remainingBoards.length > 0) {
+			selectProject(projectId, (cp) =>
+				setProjectActiveBoard(cp, remainingBoards[0].id)
+			);
+		}
+
+		try {
+			await runSyncAction(
+				() => deleteProjectBoardRemote(projectId, boardId),
+				'Unable to delete this board right now.'
+			);
+		} catch (error) {
+			console.error(error);
+		}
+	};
+
+	const handleDeletePage = async (projectId: string, pageId: string) => {
+		const project = projects.find((entry) => entry.id === projectId);
+		if (!project || project.pages.length <= 1) return;
+
+		const page = project.pages.find((p) => p.id === pageId);
+		if (!page) return;
+
+		const confirmed = window.confirm(`Delete page "${page.name}"?`);
+		if (!confirmed) return;
+
+		const remainingPages = project.pages.filter((p) => p.id !== pageId);
+		const needsSwitch = currentProjectId === projectId && currentPageId === pageId;
+
+		projects = projects.map((p) =>
+			p.id === projectId ? { ...p, pages: remainingPages } : p
+		);
+
+		if (needsSwitch && remainingPages.length > 0) {
+			selectProject(projectId, (cp) =>
+				setProjectActivePage(cp, remainingPages[0].id)
+			);
+		}
+
+		try {
+			await runSyncAction(
+				() => deleteProjectPageRemote(projectId, pageId),
+				'Unable to delete this page right now.'
+			);
 		} catch (error) {
 			console.error(error);
 		}
@@ -1421,7 +2312,7 @@
 	};
 
 	const handleSettingsChange = (nextSettings: UserSettings) => {
-		settings = nextSettings;
+		settings = normalizeAiSettings(nextSettings);
 		dirtySettings = true;
 		refreshSyncStatus();
 		scheduleSettingsSync();
@@ -1437,7 +2328,7 @@
 			settingsSyncTimeout = null;
 		}
 
-		settings = nextSettings;
+		settings = normalizeAiSettings(nextSettings);
 		dirtySettings = true;
 		refreshSyncStatus();
 		scheduleSnapshotPersist();
@@ -1596,7 +2487,8 @@
 		}
 	};
 
-	const openSettings = () => {
+	const openSettings = (nextSection: SettingsSection = 'appearance') => {
+		settingsSection = nextSection;
 		setWorkspaceTab('settings');
 		showProjectSheet = false;
 	};
@@ -1621,83 +2513,150 @@
 		if (!currentProject) return;
 		if (!window.confirm(`Clear your private AI chat for "${currentProject.name}"?`)) return;
 
-		updateProjectLocal(currentProject.id, (project) => ({
-			...project,
-			chatHistory: structuredClone(DEFAULT_CHAT_HISTORY)
-		}));
-		pendingProposal = pendingProposal?.projectId === currentProject.id ? null : pendingProposal;
+		updateProjectLocal(currentProject.id, (project) =>
+			updateActiveProjectAiSession(project, (session) => ({
+				...session,
+				history: structuredClone(DEFAULT_CHAT_HISTORY),
+				updatedAt: Date.now(),
+				lastMessageAt: DEFAULT_CHAT_HISTORY.at(-1)?.timestamp || Date.now()
+			}))
+		);
+		pendingProposals = pendingProposals.filter(
+			(proposal) => proposal.projectId !== currentProject.id
+		);
 		proposalPreviewTarget = null;
 		highlightedTaskIds = [];
 		scheduleChatSync(currentProject.id, 0);
 	};
 
-	const handleChatModeChange = (mode: UserSettings['preferredChatMode']) => {
-		handleSettingsChange({
-			...settings,
-			preferredChatMode: mode
-		});
-	};
+	const handleCreateAiSession = () => {
+		if (!currentProject || isAiProcessing) return;
 
-	const handleModelPresetChange = (preset: ModelPreset) => {
-		handleSettingsChange({
-			...settings,
-			preferredModelPreset: preset
-		});
-	};
+		const preserveComposerState =
+			composerDraft.trim().length > 0 ||
+			queuedAttachments.length > 0 ||
+			queuedTaskCards.length > 0;
 
-	const mutateScratchpad = (
-		mutator: (scratchpadData: Project['scratchpadData']) => Project['scratchpadData']
-	) => {
-		if (!currentProject) return;
-
-		const previousProject = currentProject;
-		const nextScratchpadData = mutator(previousProject.scratchpadData);
-		const updateResult = updateProjectLocal(previousProject.id, (project) => ({
-			...project,
-			scratchpadData: nextScratchpadData
-		}));
-
-		if (!updateResult) return;
-
-		bumpProjectRevision(previousProject.id, 'scratchpad');
-
-		if (scratchpadConflict?.projectId !== previousProject.id) {
-			scheduleScratchpadSync(previousProject.id, nextScratchpadData, previousProject.scratchpadRev);
+		const emptySession = currentProject.aiSessions.find(
+			(s) =>
+				isDefaultAiSessionTitle(s.title) &&
+				!s.history.some((m) => m.role === 'user')
+		);
+		if (emptySession) {
+			updateProjectLocal(currentProject.id, (project) => setActiveProjectAiSession(project, emptySession.id));
+			scheduleChatSync(currentProject.id, 0);
+			if (!preserveComposerState) clearComposerState();
+			highlightedTaskIds = [];
+			return;
 		}
+
+		const nextModelId = normalizePreferredAiModelId(settings.preferredAiModelId);
+		updateProjectLocal(currentProject.id, (project) => addProjectAiSession(project, nextModelId));
+		scheduleChatSync(currentProject.id, 0);
+		if (!preserveComposerState) clearComposerState();
+		highlightedTaskIds = [];
 	};
 
-	const handleSelectScratchpadPad = (padId: string) => {
-		if (!currentProject || proposalPreviewTarget === 'scratchpad') return;
-		mutateScratchpad((scratchpadData) => setActiveScratchpadPad(scratchpadData, padId));
+	const handleActiveAiSessionChange = (sessionId: string) => {
+		if (!currentProject || isAiProcessing) return;
+		updateProjectLocal(currentProject.id, (project) => setActiveProjectAiSession(project, sessionId));
+		scheduleChatSync(currentProject.id, 0);
+		clearComposerState();
+		highlightedTaskIds = [];
+		proposalPreviewTarget = null;
 	};
 
-	const handleCreateScratchpadPad = () => {
-		if (!currentProject || proposalPreviewTarget === 'scratchpad') return;
-		mutateScratchpad((scratchpadData) => addScratchpadPad(scratchpadData));
+	const handleRenameAiSession = (sessionId: string, title: string) => {
+		if (!currentProject || isAiProcessing) return;
+		updateProjectLocal(currentProject.id, (project) => renameProjectAiSession(project, sessionId, title));
+		scheduleChatSync(currentProject.id, 0);
 	};
 
-	const handleDeleteScratchpadPad = (padId: string) => {
-		if (!currentProject || proposalPreviewTarget === 'scratchpad') return;
-		mutateScratchpad((scratchpadData) => deleteScratchpadPad(scratchpadData, padId));
+	const handleDeleteAiSession = (sessionId: string) => {
+		if (!currentProject || isAiProcessing) return;
+		updateProjectLocal(currentProject.id, (project) =>
+			deleteProjectAiSession(project, sessionId, getFallbackAiModelId())
+		);
+		scheduleChatSync(currentProject.id, 0);
+		clearComposerState();
+		highlightedTaskIds = [];
+		proposalPreviewTarget = null;
+	};
+
+	const handleAiModelChange = (modelId: AiModelId) => {
+		const nextModelId = normalizePreferredAiModelId(modelId);
+		handleSettingsChange({
+			...settings,
+			preferredAiModelId: nextModelId
+		});
+		if (!currentProject) return;
+		updateProjectLocal(currentProject.id, (project) =>
+			updateActiveProjectAiSession(project, (session) => ({
+				...session,
+				modelId: nextModelId,
+				updatedAt: Date.now()
+			}))
+		);
+		scheduleChatSync(currentProject.id, 0);
 	};
 
 	const handleScratchpadChange = (value: string) => {
-		if (!currentProject || !currentScratchpadPad || proposalPreviewTarget === 'scratchpad') return;
-		mutateScratchpad((scratchpadData) =>
-			updateScratchpadPadContent(scratchpadData, currentScratchpadPad.id, value)
+		if (!currentProject || !currentPage || proposalPreviewTarget === 'scratchpad') return;
+		if (currentPage.content === value) return;
+
+		const updateResult = updateProjectLocal(currentProject.id, (project) =>
+			updateProjectPageState(project, currentPage.id, value)
 		);
+		if (!updateResult) return;
+
+		bumpProjectRevision(currentProject.id, 'scratchpad');
+		scheduleScratchpadSync(currentProject.id, currentPage.id, value);
 	};
 
-	const handleKanbanChange = (nextKanbanData: Project['kanbanData']) => {
+	const handleKanbanChange = (
+		nextKanbanData: Project['kanbanData'],
+		options: {
+			recordHistory?: boolean;
+			syncDelay?: number;
+		} = {}
+	) => {
 		if (!currentProject || proposalPreviewTarget === 'kanban') return;
 
-		applyLocalKanbanChange(currentProject, nextKanbanData);
+		applyLocalKanbanChange(currentProject, nextKanbanData, options);
+	};
+
+	const handleActiveTaskChange = (payload: { taskId?: string; columnId?: string } | null) => {
+		activeTaskContext =
+			payload?.taskId && payload?.columnId
+				? {
+						taskId: payload.taskId,
+						columnId: payload.columnId
+					}
+				: null;
+	};
+
+	const handleTaskReferenceNavigate = (payload: { taskId: string; columnId: string }) => {
+		desktopWorkspaceTab = 'kanban';
+		mobileTab = 'kanban';
+		desktopChatCollapsed = true;
+		activeTaskContext = null;
+		highlightedTaskIds = [payload.taskId];
+	};
+
+	const handleScratchpadReferenceNavigate = (reference: TaskReferenceOption) => {
+		if (reference.kind === 'task') {
+			handleTaskReferenceNavigate({
+				taskId: reference.id,
+				columnId: reference.columnId || ''
+			});
+		}
 	};
 
 	const handleKanbanUndo = () => {
 		if (!currentProject || proposalPreviewTarget === 'kanban') return;
+		if (!currentBoardId) return;
 
-		const history = getBoardHistoryState(currentProject.id);
+		const history = getBoardHistoryState(getBoardHistoryKey(currentProject.id, currentBoardId));
 		const previousKanbanData = history.past.at(-1);
 		if (!previousKanbanData) return;
 
@@ -1714,13 +2673,14 @@
 		});
 		if (!applied) return;
 
-		setBoardHistoryState(currentProject.id, nextHistory);
+		setBoardHistoryState(getBoardHistoryKey(currentProject.id, currentBoardId), nextHistory);
 	};
 
 	const handleKanbanRedo = () => {
 		if (!currentProject || proposalPreviewTarget === 'kanban') return;
+		if (!currentBoardId) return;
 
-		const history = getBoardHistoryState(currentProject.id);
+		const history = getBoardHistoryState(getBoardHistoryKey(currentProject.id, currentBoardId));
 		const nextKanbanData = history.future[0];
 		if (!nextKanbanData) return;
 
@@ -1736,7 +2696,7 @@
 		});
 		if (!applied) return;
 
-		setBoardHistoryState(currentProject.id, nextHistory);
+		setBoardHistoryState(getBoardHistoryKey(currentProject.id, currentBoardId), nextHistory);
 	};
 
 	const handleSendTaskToChat = (payload: { task: Task; column: Column }) => {
@@ -1773,11 +2733,181 @@
 		}
 	};
 
-	const handleReviewProposal = () => {
-		if (!activePendingProposal) return;
+	const buildWorkspaceSummaryForProject = (project: Project): WorkspaceSummary => {
+		const columnCount = project.kanbanData.length;
+		const taskCount = project.kanbanData.reduce((total, column) => total + column.tasks.length, 0);
+		const padCount = project.pages.length;
+		const scratchpadBytes = JSON.stringify(project.pages).length;
 
-		proposalPreviewTarget = activePendingProposal.target;
-		if (activePendingProposal.target === 'kanban') {
+		return {
+			columnCount,
+			taskCount,
+			padCount,
+			memberCount: project.members.length,
+			kanbanFullAllowed: columnCount <= 6 && taskCount <= 60,
+			scratchpadAllAllowed: padCount <= 6 && scratchpadBytes <= 20 * 1024
+		};
+	};
+
+	const serializeActiveView = (
+		project: Project,
+		tab: WorkspaceTab,
+		boardId: string,
+		padId: string
+	): { kind: 'board' | 'page' | 'none'; name: string; content: string } => {
+		if (tab === 'kanban') {
+			const board = project.boards.find((b) => b.id === boardId) || project.boards[0];
+			if (!board) return { kind: 'none', name: 'kanban', content: '' };
+			const lines = [`Board: "${board.name}"`];
+			for (const col of board.kanbanData) {
+				const taskTitles = col.tasks.map((t) => t.title).join(', ');
+				lines.push(`[${col.title}] ${taskTitles || '(empty)'}`);
+			}
+			return { kind: 'board', name: board.name, content: lines.join('\n').slice(0, 3000) };
+		}
+
+		if (tab === 'scratchpad') {
+			const pad = getScratchpadPadForProject(project, padId);
+			if (!pad) return { kind: 'none', name: 'scratchpad', content: '' };
+			return { kind: 'page', name: pad.name, content: pad.content.slice(0, 2000) };
+		}
+
+		return { kind: 'none', name: tab, content: '' };
+	};
+
+	const buildAiHistory = (
+		chatHistory: ChatMessage[],
+		latestMessage: ChatMessage,
+		questionId?: string
+	) => {
+		const nextHistory: ChatMessage[] = [];
+		const seenMessageIds = new Set<string>();
+		const pushMessage = (message?: ChatMessage) => {
+			if (!message || seenMessageIds.has(message.id)) return;
+			seenMessageIds.add(message.id);
+			nextHistory.push(message);
+		};
+		const questionMessage = questionId
+			? [...chatHistory].reverse().find((message) => message.question?.id === questionId)
+			: undefined;
+		const openQuestionMessage = [...chatHistory]
+			.reverse()
+			.find((message) => message.question?.status === 'open');
+		const recentHistory = chatHistory.slice(-(AI_HISTORY_WINDOW - 2));
+
+		pushMessage(questionMessage);
+		pushMessage(openQuestionMessage);
+		recentHistory.forEach(pushMessage);
+		pushMessage(latestMessage);
+
+		return nextHistory.slice(-AI_HISTORY_WINDOW);
+	};
+
+	const syncProjectStateForAi = async (projectId: string) => {
+		for (const syncKey of getBoardSyncKeysForProject(projectId)) {
+			const boardTimeout = boardSyncTimeouts.get(syncKey);
+			if (boardTimeout) {
+				clearTimeout(boardTimeout);
+				boardSyncTimeouts.delete(syncKey);
+			}
+			await flushBoardSync(syncKey);
+		}
+
+		for (const syncKey of getPageSyncKeysForProject(projectId)) {
+			const scratchpadTimeout = scratchpadSyncTimeouts.get(syncKey);
+			if (scratchpadTimeout) {
+				clearTimeout(scratchpadTimeout);
+				scratchpadSyncTimeouts.delete(syncKey);
+			}
+			await flushScratchpadSync(syncKey);
+		}
+
+		if (hasPendingBoardSyncForProject(projectId) || hasPendingPageSyncForProject(projectId)) {
+			throw new Error('Please let your latest board changes sync before using AI.');
+		}
+	};
+
+	const mergePendingProposals = (
+		projectSnapshot: Project,
+		response: Awaited<ReturnType<typeof invokeWorkspaceAi>>
+	) => {
+		if (!response.proposals.length) {
+			return;
+		}
+
+		const nextPendingProposals = response.proposals.map((proposal) =>
+			proposal.target === 'kanban'
+				? {
+						...proposal,
+						projectId: projectSnapshot.id,
+						stale:
+							getProjectRevisionState(projectSnapshot.id).kanban > proposal.baseRevision ||
+							getKanbanFingerprint(projectSnapshot.kanbanData) !== proposal.baseFingerprint,
+						originalKanbanData: structuredClone(projectSnapshot.kanbanData)
+					}
+				: {
+						...proposal,
+						projectId: projectSnapshot.id,
+						stale:
+							getProjectRevisionState(projectSnapshot.id).scratchpad > proposal.baseRevision ||
+							getScratchpadFingerprint(projectSnapshot.scratchpadData) !== proposal.baseFingerprint,
+						originalScratchpadState: structuredClone(projectSnapshot.scratchpadData)
+					}
+		);
+
+		pendingProposals = [
+			...pendingProposals.filter(
+				(existingProposal) =>
+					!(
+						existingProposal.projectId === projectSnapshot.id &&
+						nextPendingProposals.some(
+							(nextProposal) => nextProposal.target === existingProposal.target
+						)
+					)
+			),
+			...nextPendingProposals
+		];
+
+		if (
+			!proposalPreviewTarget ||
+			!nextPendingProposals.some((proposal) => proposal.target === proposalPreviewTarget)
+		) {
+			proposalPreviewTarget = nextPendingProposals[0]?.target || null;
+		}
+
+		for (const proposal of nextPendingProposals) {
+			logWorkspaceAiProposalDebug('received', projectSnapshot.id, proposal, {
+				stale: proposal.stale
+			});
+		}
+
+		refreshPendingProposalStaleness();
+	};
+
+	const buildProposalAppliedMessage = (proposal: PendingProposal): ChatMessage => ({
+		id: createId(),
+		role: 'assistant',
+		text: '',
+		timestamp: Date.now(),
+		progressEvents: [
+			{
+				id: createId(),
+				kind: 'status',
+				message:
+					proposal.target === 'kanban'
+						? 'Board changes applied to the project.'
+						: 'Page changes applied to the project.',
+				timestamp: Date.now()
+			}
+		]
+	});
+
+	const handleReviewProposal = (target: ProposalTarget) => {
+		const proposal = activePendingProposals.find((entry) => entry.target === target);
+		if (!proposal) return;
+
+		proposalPreviewTarget = proposal.target;
+		if (proposal.target === 'kanban') {
 			desktopWorkspaceTab = 'kanban';
 			mobileTab = 'kanban';
 			return;
@@ -1787,113 +2917,206 @@
 		mobileTab = 'scratchpad';
 	};
 
-	const handleAcceptProposal = () => {
-		if (!currentProject || !activePendingProposal || activePendingProposal.stale) return;
+	const handleAcceptProposal = (proposalId: string) => {
+		if (!currentProject) return;
+		const proposal = activePendingProposals.find((entry) => entry.id === proposalId);
+		if (!proposal) return;
 
-		if (
-			activePendingProposal.target === 'kanban' &&
-			activePendingProposal.proposal.kind === 'kanban' &&
-			activePendingProposal.proposal.kanbanData
-		) {
-			const nextKanbanData = activePendingProposal.proposal.kanbanData;
-			applyLocalKanbanChange(currentProject, nextKanbanData, { syncDelay: 0 });
+		refreshPendingProposalStaleness();
+		const nextProject = projects.find((entry) => entry.id === currentProject.id) || currentProject;
+		const refreshedProposal = pendingProposals.find((entry) => entry.id === proposalId) || proposal;
+		if (!nextProject) return;
+
+		if (refreshedProposal.target === 'kanban') {
+			logWorkspaceAiProposalDebug('accept:start', nextProject.id, refreshedProposal, {
+				currentFingerprint: getKanbanFingerprint(nextProject.kanbanData)
+			});
+			const applied = applyLocalKanbanChange(nextProject, refreshedProposal.preview.kanbanData, {
+				syncDelay: 0
+			});
+			const updatedProject =
+				projects.find((entry) => entry.id === nextProject.id) || nextProject;
+			logWorkspaceAiProposalDebug('accept:finish', nextProject.id, refreshedProposal, {
+				applied,
+				resultFingerprint: getKanbanFingerprint(updatedProject.kanbanData),
+				resultMatchesPreview:
+					getKanbanFingerprint(updatedProject.kanbanData) ===
+					getKanbanFingerprint(refreshedProposal.preview.kanbanData)
+			});
 			desktopWorkspaceTab = 'kanban';
 			mobileTab = 'kanban';
 		}
 
-		if (
-			activePendingProposal.target === 'scratchpad' &&
-			activePendingProposal.proposal.kind === 'scratchpad' &&
-			activePendingProposal.proposal.scratchpadData !== undefined
-		) {
-			const targetPadId =
-				activePendingProposal.scratchpadPadId || currentProject.scratchpadData.activePadId;
-			const nextScratchpadData = updateScratchpadPadContent(
-				currentProject.scratchpadData,
-				targetPadId,
-				activePendingProposal.proposal.scratchpadData
-			);
+		if (refreshedProposal.target === 'scratchpad') {
+			const nextScratchpadState = refreshedProposal.preview.scratchpadState;
+			const targetPadId = refreshedProposal.padId || nextScratchpadState.activePadId;
+			const nextPad =
+				getScratchpadPad(nextScratchpadState, targetPadId) ||
+				getActiveScratchpadPad(nextScratchpadState);
+			const nextContent = nextPad?.content || '';
+			const pageId = nextPad?.id || nextProject.activePageId;
+			if (!pageId) return;
 
-			updateProjectLocal(currentProject.id, (project) => ({
-				...project,
-				scratchpadData: nextScratchpadData
-			}));
-			bumpProjectRevision(currentProject.id, 'scratchpad');
-			scheduleScratchpadSync(
-				currentProject.id,
-				nextScratchpadData,
-				currentProject.scratchpadRev,
-				0
+			logWorkspaceAiProposalDebug('accept:start', nextProject.id, refreshedProposal, {
+				currentFingerprint: getScratchpadFingerprint(nextProject.scratchpadData),
+				targetPageId: pageId,
+				currentActivePageId: nextProject.activePageId
+			});
+			const updateResult = updateProjectLocal(nextProject.id, (project) =>
+				updateProjectPageState(setProjectActivePage(project, pageId), pageId, nextContent)
 			);
+			if (updateResult) {
+				bumpProjectRevision(nextProject.id, 'scratchpad');
+				scheduleScratchpadSync(nextProject.id, pageId, nextContent, 0);
+			}
+			const updatedProject =
+				projects.find((entry) => entry.id === nextProject.id) || nextProject;
+			logWorkspaceAiProposalDebug('accept:finish', nextProject.id, refreshedProposal, {
+				applied: Boolean(updateResult),
+				targetPageId: pageId,
+				resultFingerprint: getScratchpadFingerprint(updatedProject.scratchpadData),
+				resultMatchesPreview:
+					getScratchpadFingerprint(updatedProject.scratchpadData) ===
+					getScratchpadFingerprint(refreshedProposal.preview.scratchpadState)
+			});
 			desktopWorkspaceTab = 'scratchpad';
 			mobileTab = 'scratchpad';
 		}
 
-		pendingProposal = null;
-		proposalPreviewTarget = null;
-	};
+		updateProjectLocal(nextProject.id, (project) => ({
+			...updateActiveProjectAiSession(project, (session) => ({
+				...session,
+				history: [...session.history, buildProposalAppliedMessage(refreshedProposal)],
+				updatedAt: Date.now(),
+				lastMessageAt: Date.now()
+			}))
+		}));
+		scheduleChatSync(nextProject.id, 0);
 
-	const handleRejectProposal = () => {
-		pendingProposal = null;
-		proposalPreviewTarget = null;
-	};
-
-	const handleSendMessage = async () => {
-		if (!user || !currentProject || isAiProcessing) return;
-		if (
-			!composerDraft.trim().length &&
-			queuedAttachments.length === 0 &&
-			queuedTaskCards.length === 0
-		) {
-			return;
+		pendingProposals = pendingProposals.filter((entry) => entry.id !== refreshedProposal.id);
+		if (proposalPreviewTarget === refreshedProposal.target) {
+			proposalPreviewTarget = null;
 		}
+	};
 
-		const projectSnapshot = currentProject;
+	const handleRejectProposal = (proposalId: string) => {
+		const proposal = activePendingProposals.find((entry) => entry.id === proposalId);
+		if (!proposal) return;
+
+		pendingProposals = pendingProposals.filter((entry) => entry.id !== proposal.id);
+		if (proposalPreviewTarget === proposal.target) {
+			proposalPreviewTarget = null;
+		}
+	};
+
+	const submitAiTurn = async ({
+		displayText,
+		attachments = [],
+		taskCards = [],
+		continuation
+	}: {
+		displayText: string;
+		attachments?: ChatAttachment[];
+		taskCards?: ChatTaskCard[];
+		continuation?: AiQuestionAnswer;
+	}) => {
+		if (!user || !currentProject || isAiProcessing) return;
+
+		const initialProjectSnapshot = currentProject;
+
+		await syncProjectStateForAi(initialProjectSnapshot.id);
+
+		const projectSnapshot =
+			projects.find((project) => project.id === initialProjectSnapshot.id) ||
+			initialProjectSnapshot;
+		const activeSessionSnapshot = getActiveProjectAiSession(projectSnapshot);
+		if (!activeSessionSnapshot) {
+			throw new Error('Unable to find an active AI session for this project.');
+		}
+		const needsAutoTitle = isDefaultAiSessionTitle(activeSessionSnapshot.title);
 		const revisionSnapshot = getProjectRevisionState(projectSnapshot.id);
-		const attachmentSnapshot = [...queuedAttachments];
-		const taskCardSnapshot = [...queuedTaskCards];
-		const baseText = composerDraft.trim();
-		const fallbackText = taskCardSnapshot.length
-			? 'Shared task cards for context.'
-			: 'Shared attachments for context.';
-		const displayText = baseText || fallbackText;
-		const requestText = taskCardSnapshot.length
-			? `${displayText}\n\n${formatTaskCardsForPrompt(taskCardSnapshot)}`
-			: displayText;
 		const timestamp = Date.now();
 		const userMessage: ChatMessage = {
 			id: createId(),
 			role: 'user',
 			text: displayText,
 			timestamp,
-			...(attachmentSnapshot.length ? { attachments: attachmentSnapshot } : {}),
-			...(taskCardSnapshot.length ? { taskCards: taskCardSnapshot } : {})
+			...(attachments.length ? { attachments } : {}),
+			...(taskCards.length ? { taskCards } : {})
 		};
-		const requestMessage: ChatMessage = {
-			...userMessage,
-			text: requestText
-		};
-		const scratchpadPad = getScratchpadPadForProject(projectSnapshot);
-
-		updateProjectLocal(projectSnapshot.id, (project) => ({
-			...project,
-			chatHistory: [...project.chatHistory, userMessage]
-		}));
+		const nextSessionTitle =
+			isDefaultAiSessionTitle(activeSessionSnapshot.title) && displayText.trim()
+				? buildAiSessionTitle(displayText)
+				: activeSessionSnapshot.title;
+		const userUpdateResult = updateProjectLocal(projectSnapshot.id, (project) =>
+			updateActiveProjectAiSession(project, (session) => ({
+				...session,
+				title: nextSessionTitle,
+				history: [...session.history, userMessage],
+				updatedAt: timestamp,
+				lastMessageAt: timestamp
+			}))
+		);
+		const aiProjectSnapshot = userUpdateResult?.nextProject || projectSnapshot;
+		const aiSessionSnapshot = getActiveProjectAiSession(aiProjectSnapshot) || activeSessionSnapshot;
 		scheduleChatSync(projectSnapshot.id);
-		clearComposerState();
 		highlightedTaskIds = [];
 		isAiProcessing = true;
+		aiProgressEvents = [];
 
 		try {
-			const response = await invokeWorkspaceAi({
-				projectId: projectSnapshot.id,
-				chatMode: settings.preferredChatMode,
-				modelPreset: settings.preferredModelPreset,
-				history: [...projectSnapshot.chatHistory, requestMessage],
-				kanbanData: projectSnapshot.kanbanData,
-				scratchpadData: scratchpadPad?.content || '',
-				attachments: attachmentSnapshot
-			});
+			const selectedTaskIds = uniqueIds([
+				...taskCards.map((taskCard) => taskCard.taskId),
+				...queuedTaskCards.map((taskCard) => taskCard.taskId)
+			]);
+			const selectedColumnIds = uniqueIds([
+				...taskCards.map((taskCard) => taskCard.columnId),
+				...queuedTaskCards.map((taskCard) => taskCard.columnId)
+			]);
+			const activePadId =
+				getScratchpadPadForProject(projectSnapshot)?.id ||
+				projectSnapshot.scratchpadData.activePadId;
+			const boundTarget = buildBoundTargetHint(projectSnapshot, taskCards, activeTaskContext);
+			const clientNowIso = new Date().toISOString();
+			const clientTimezone = Intl.DateTimeFormat().resolvedOptions().timeZone || undefined;
+			const response = await invokeWorkspaceAi(
+				{
+					projectId: projectSnapshot.id,
+					sessionId: aiSessionSnapshot.id,
+					modelId: aiSessionSnapshot.modelId,
+					thinkingLevel: aiThinkingLevel,
+					history: buildAiHistory(
+						aiSessionSnapshot.history,
+						userMessage,
+						continuation?.questionId
+					),
+					scope: {
+						currentTab: visibleWorkspaceTab,
+						selectedTaskIds,
+						selectedColumnIds,
+						...(currentBoardId ? { activeBoardId: currentBoardId } : {}),
+						...(activeTaskContext?.taskId ? { activeTaskId: activeTaskContext.taskId } : {}),
+						...(activeTaskContext?.columnId ? { activeColumnId: activeTaskContext.columnId } : {}),
+						activePadId,
+						clientNowIso,
+						...(clientTimezone ? { clientTimezone } : {}),
+						boundTarget,
+						queuedTaskCards: taskCards,
+						revisions: revisionSnapshot,
+						workspaceSummary: buildWorkspaceSummaryForProject(projectSnapshot),
+						activeViewContent: serializeActiveView(
+							projectSnapshot,
+							visibleWorkspaceTab,
+							currentBoardId,
+							activePadId
+						)
+					},
+					...(continuation ? { continuation } : {})
+				},
+				{
+					onProgress: appendAiProgressEvent
+				}
+			);
 
 			const assistantMessage: ChatMessage = {
 				id: createId(),
@@ -1901,40 +3124,44 @@
 				text: response.reply,
 				timestamp: Date.now(),
 				metadata: {
+					modelId: response.modelId,
 					model: response.model,
 					latencyMs: response.latencyMs,
-					mode: response.mode
+					requestId: response.requestId
 				},
 				annotations: response.annotations,
-				toolActions: response.toolActions
+				toolActions: response.toolActions,
+				progressEvents: aiProgressEvents.filter((e) => e.kind !== 'assistant_draft'),
+				...(response.question ? { question: response.question } : {}),
+				usage: response.usage,
+				...(response.stoppedReason ? { stoppedReason: response.stoppedReason } : {})
 			};
 
-			updateProjectLocal(projectSnapshot.id, (project) => ({
-				...project,
-				chatHistory: [...project.chatHistory, assistantMessage]
-			}));
+			updateProjectLocal(projectSnapshot.id, (project) =>
+				updateActiveProjectAiSession(project, (session) => ({
+					...session,
+					history: [...session.history, assistantMessage],
+					updatedAt: assistantMessage.timestamp,
+					lastMessageAt: assistantMessage.timestamp
+				}))
+			);
 			scheduleChatSync(projectSnapshot.id);
 			highlightedTaskIds = response.highlightedTaskIds;
+			const latestProjectSnapshot =
+				projects.find((project) => project.id === projectSnapshot.id) || aiProjectSnapshot;
+			mergePendingProposals(latestProjectSnapshot, response);
 
-			if (response.proposal.kind !== 'none') {
-				const target: ProposalTarget =
-					response.proposal.kind === 'kanban' ? 'kanban' : 'scratchpad';
-				const baseRevision = revisionSnapshot[target];
-				const latestRevision = getProjectRevisionState(projectSnapshot.id)[target];
-
-				pendingProposal = {
-					projectId: projectSnapshot.id,
-					proposal: response.proposal,
-					target,
-					baseRevision,
-					stale: latestRevision > baseRevision,
-					...(target === 'kanban'
-						? { originalKanbanData: projectSnapshot.kanbanData }
-						: {
-								originalScratchpadData: scratchpadPad?.content || '',
-								scratchpadPadId: scratchpadPad?.id
-							})
-				};
+			if (needsAutoTitle) {
+				generateSessionTitle(displayText, response.reply).then((generatedTitle) => {
+					if (!generatedTitle) return;
+					const freshProject = projects.find((p) => p.id === projectSnapshot.id);
+					if (!freshProject) return;
+					const freshSession = freshProject.aiSessions.find(
+						(s) => s.id === activeSessionSnapshot.id
+					);
+					if (!freshSession) return;
+					handleRenameAiSession(activeSessionSnapshot.id, generatedTitle);
+				});
 			}
 		} catch (error) {
 			console.error(error);
@@ -1947,20 +3174,99 @@
 						: 'I hit a problem while working on that request.',
 				timestamp: Date.now(),
 				metadata: {
+					modelId: aiSessionSnapshot.modelId,
 					model: 'System',
-					latencyMs: 0,
-					mode: settings.preferredChatMode
+					latencyMs: 0
 				}
 			};
 
-			updateProjectLocal(projectSnapshot.id, (project) => ({
-				...project,
-				chatHistory: [...project.chatHistory, assistantErrorMessage]
-			}));
+			updateProjectLocal(projectSnapshot.id, (project) =>
+				updateActiveProjectAiSession(project, (session) => ({
+					...session,
+					history: [...session.history, assistantErrorMessage],
+					updatedAt: assistantErrorMessage.timestamp,
+					lastMessageAt: assistantErrorMessage.timestamp
+				}))
+			);
 			scheduleChatSync(projectSnapshot.id);
 		} finally {
 			isAiProcessing = false;
 		}
+	};
+
+	const handleSendMessage = async () => {
+		if (
+			!user ||
+			!currentProject ||
+			isAiProcessing ||
+			(!composerDraft.trim().length &&
+				queuedAttachments.length === 0 &&
+				queuedTaskCards.length === 0)
+		) {
+			return;
+		}
+
+		const attachmentSnapshot = [...queuedAttachments];
+		const taskCardSnapshot = [...queuedTaskCards];
+		const baseText = composerDraft.trim();
+		const fallbackText = taskCardSnapshot.length
+			? 'Shared task cards for context.'
+			: 'Shared attachments for context.';
+		const displayText = baseText || fallbackText;
+
+		clearComposerState();
+		await submitAiTurn({
+			displayText,
+			attachments: attachmentSnapshot,
+			taskCards: taskCardSnapshot
+		});
+	};
+
+	const handleAnswerQuestion = async (questionId: string, optionId?: string, text?: string) => {
+		if (!currentProject || isAiProcessing) return;
+		const activeSession = getActiveProjectAiSession(currentProject);
+		if (!activeSession) return;
+
+		const questionMessage = [...activeSession.history]
+			.reverse()
+			.find((message) => message.question?.id === questionId && message.question.status === 'open');
+		const selectedOption = questionMessage?.question?.options.find(
+			(option) => option.id === optionId
+		);
+		const answerText = text?.trim() || selectedOption?.label || '';
+		if (!answerText.length) return;
+
+		updateProjectLocal(currentProject.id, (project) =>
+			updateActiveProjectAiSession(project, (session) => ({
+				...session,
+				history: session.history.map((message) =>
+					message.question?.id === questionId
+						? {
+								...message,
+								question: {
+									...message.question,
+									status: 'answered',
+									answeredOptionId: optionId,
+									answerText: text?.trim() || undefined,
+									answeredAt: Date.now()
+								}
+							}
+						: message
+				),
+				updatedAt: Date.now(),
+				lastMessageAt: session.lastMessageAt
+			}))
+		);
+		scheduleChatSync(currentProject.id);
+
+		await submitAiTurn({
+			displayText: answerText,
+			continuation: {
+				questionId,
+				...(optionId ? { optionId } : {}),
+				...(text?.trim() ? { text: text.trim() } : {})
+			}
+		});
 	};
 
 	const handleExportProjects = () => {
@@ -2008,31 +3314,6 @@
 		} finally {
 			isRestoring = false;
 		}
-	};
-
-	const handleLoadRemoteScratchpad = () => {
-		if (!currentProject || !activeScratchpadConflict) return;
-
-		const scratchpadTimeout = scratchpadSyncTimeouts.get(currentProject.id);
-		if (scratchpadTimeout) clearTimeout(scratchpadTimeout);
-		scratchpadSyncTimeouts.delete(currentProject.id);
-		pendingScratchpadSyncs.delete(currentProject.id);
-
-		updateProjectLocal(currentProject.id, (project) => ({
-			...project,
-			scratchpadData: activeScratchpadConflict.remoteData,
-			scratchpadRev: activeScratchpadConflict.remoteRev
-		}));
-		bumpProjectRevision(currentProject.id, 'scratchpad');
-		scratchpadConflict = null;
-	};
-
-	const handleSyncMergedScratchpad = () => {
-		if (!currentProject || !activeScratchpadConflict) return;
-
-		const remoteRevision = activeScratchpadConflict.remoteRev;
-		scratchpadConflict = null;
-		scheduleScratchpadSync(currentProject.id, currentProject.scratchpadData, remoteRevision, 0);
 	};
 
 	const handleInvite = async (projectId: string, email: string) => {
@@ -2170,6 +3451,7 @@
 		}
 
 		user = nextUser;
+		syncUsernameDraftFromProfile(createFallbackUserProfile(nextUser));
 		authHydrating = false;
 
 		if (shouldReloadWorkspaceForAuthEvent(event, previousUserId, nextUser)) {
@@ -2178,6 +3460,7 @@
 	};
 
 	onMount(() => {
+		void loadAiModels();
 		if (!isSupabaseConfigured) {
 			authHydrating = false;
 			return;
@@ -2220,6 +3503,7 @@
 
 	onDestroy(() => {
 		persistSnapshotNow();
+		clearUsernameAvailabilityCheck();
 		stopAuthListener?.();
 		stopAuthListener = null;
 		stopVisibilityListener?.();
@@ -2292,65 +3576,60 @@
 			<ProjectRail
 				{projects}
 				{currentProjectId}
-				visible={!isMobile && projectRailExpanded}
+				{currentBoardId}
+				{currentPageId}
+				activeSurface={projectRailActiveSurface}
+				visible={!isMobile}
+				compact={projectRailCompact}
 				{syncStatus}
-				onSwitch={openProjectWorkspace}
+				profileEmail={profileEmail}
+				profileUsername={profile?.username || null}
+				onToggleCompact={() => (projectRailCompact = !projectRailCompact)}
+				onOpenBoard={openProjectBoard}
+				onOpenPage={openProjectPage}
+				onCreateBoard={handleCreateBoardInline}
+				onCreatePage={handleCreatePageInline}
+				onRenameBoard={handleRenameBoardInline}
+				onRenamePage={handleRenamePageInline}
+				onDeleteBoard={handleDeleteBoard}
+				onDeletePage={handleDeletePage}
 				onCreate={handleCreateProject}
 				onRename={handleRenameProject}
 				onDelete={handleDeleteProject}
 				onExport={handleExportProjects}
 				onRestore={handleRestoreProjects}
 				onOpenSettings={openSettings}
+				onOpenAccount={() => openSettings('account')}
 				onSignOut={handleSignOut}
 			/>
 
 			<div class="relative flex min-h-0 min-w-0 flex-1">
 				<div class="relative flex min-h-0 min-w-0 flex-1 flex-col">
 					<header
-						class="border-b border-app-border/80 bg-app-bg/82 px-3 py-2 backdrop-blur-xl lg:px-4"
+						class="bg-app-bg/82 px-3 py-2 backdrop-blur-xl lg:px-4"
 					>
 						<div class="flex flex-wrap items-center gap-2.5">
 							{#if isMobile}
 								<button
 									type="button"
-									class="inline-flex h-10 w-10 items-center justify-center rounded-[0.95rem] border border-app-border bg-app-element text-app-text"
+									class="inline-flex h-10 w-10 items-center justify-center rounded-[0.95rem] border border-app-border bg-app-element text-app-text transition hover:border-app-primary/35 hover:text-app-primary"
 									on:click={() => (showProjectSheet = true)}
 									aria-label="Open workspace menu"
 									title="Open workspace menu"
 								>
-									<svg xmlns="http://www.w3.org/2000/svg" viewBox="290 100 220 220" class="h-5 w-5">
-										<polygon points="290,100 400,100 400,210" fill="#d47a2e" />
-										<polygon points="290,100 290,210 400,210" fill="#c26a1f" />
-										<polygon points="400,100 510,100 400,210" fill="#636363" />
-										<polygon points="290,210 400,210 400,320" fill="#454545" />
-										<polygon points="290,210 290,320 400,320" fill="#3a3a3a" />
-										<polygon points="400,210 510,320 400,320" fill="#d47a2e" />
-										<polygon points="348,158 400,100 400,210" fill="#4a4a4a" />
-										<polygon points="452,262 400,210 400,320" fill="#a8551a" />
-										<polygon points="290,320 400,320 290,210" fill="#3a3a3a" opacity="0.3" />
-									</svg>
-								</button>
-							{:else}
-								<button
-									type="button"
-									class="inline-flex h-10 w-10 items-center justify-center rounded-[0.95rem] border border-app-border bg-app-element text-app-text transition hover:border-app-primary/35 hover:text-app-primary"
-									on:click={() => (projectRailExpanded = !projectRailExpanded)}
-									aria-label={projectRailExpanded ? 'Hide boards sidebar' : 'Show boards sidebar'}
-									title={projectRailExpanded ? 'Hide boards sidebar' : 'Show boards sidebar'}
-								>
-									<svg xmlns="http://www.w3.org/2000/svg" viewBox="290 100 220 220" class="h-5 w-5">
-										<polygon points="290,100 400,100 400,210" fill="#d47a2e" />
-										<polygon points="290,100 290,210 400,210" fill="#c26a1f" />
-										<polygon points="400,100 510,100 400,210" fill="#636363" />
-										<polygon points="290,210 400,210 400,320" fill="#454545" />
-										<polygon points="290,210 290,320 400,320" fill="#3a3a3a" />
-										<polygon points="400,210 510,320 400,320" fill="#d47a2e" />
-										<polygon points="348,158 400,100 400,210" fill="#4a4a4a" />
-										<polygon points="452,262 400,210 400,320" fill="#a8551a" />
-										<polygon points="290,320 400,320 290,210" fill="#3a3a3a" opacity="0.3" />
-									</svg>
+									<Menu size={16} />
 								</button>
 							{/if}
+
+							<button
+								type="button"
+								class="inline-flex h-10 items-center justify-center text-app-text transition hover:opacity-85"
+								on:click={() => setWorkspaceTab('dashboard')}
+								aria-label="Go to dashboard"
+								title="Go to dashboard"
+							>
+								<BrandMark size={36} alt="" />
+							</button>
 
 							<div class="min-w-0 flex-1">
 								<h1
@@ -2360,45 +3639,61 @@
 								</h1>
 							</div>
 
-							{#if !isMobile}
+							{#if !isMobile && desktopWorkspaceTab !== 'settings'}
 								<div
-									class="inline-flex items-center rounded-[1rem] border border-app-border bg-app-element/80 p-1"
+									class="inline-flex items-center gap-0.5 rounded-lg border border-app-border/40 p-0.5"
 								>
 									<button
 										type="button"
-										class={`inline-flex items-center gap-2 rounded-[0.8rem] px-3 py-1.5 text-sm font-semibold transition ${
+										class={`inline-flex h-8 w-8 items-center justify-center rounded-md transition ${
 											desktopWorkspaceTab === 'dashboard'
-												? 'bg-app-primary text-white'
-												: 'text-app-subtext hover:text-app-text'
+												? 'bg-app-element text-app-text'
+												: 'text-app-subtext/60 hover:text-app-text'
 										}`}
 										on:click={() => setWorkspaceTab('dashboard')}
+										title="Dashboard"
 									>
-										<LayoutDashboard size={14} />
-										Dashboard
+										<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+											<rect x="3" y="3" width="7" height="7" rx="1" />
+											<rect x="14" y="3" width="7" height="7" rx="1" />
+											<rect x="3" y="14" width="7" height="7" rx="1" />
+											<rect x="14" y="14" width="7" height="7" rx="1" />
+										</svg>
 									</button>
 									<button
 										type="button"
-										class={`inline-flex items-center gap-2 rounded-[0.8rem] px-3 py-1.5 text-sm font-semibold transition ${
+										class={`inline-flex h-8 w-8 items-center justify-center rounded-md transition ${
 											desktopWorkspaceTab === 'kanban'
-												? 'bg-app-primary text-white'
-												: 'text-app-subtext hover:text-app-text'
+												? 'bg-app-element text-app-text'
+												: 'text-app-subtext/60 hover:text-app-text'
 										}`}
 										on:click={() => setWorkspaceTab('kanban')}
+										title="Board"
 									>
-										<Sparkles size={14} />
-										Kanban
+										<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+											<rect x="3" y="3" width="18" height="18" rx="2" />
+											<path d="M9 3v18" />
+											<path d="M15 3v18" />
+										</svg>
 									</button>
 									<button
 										type="button"
-										class={`inline-flex items-center gap-2 rounded-[0.8rem] px-3 py-1.5 text-sm font-semibold transition ${
+										class={`inline-flex h-8 w-8 items-center justify-center rounded-md transition ${
 											desktopWorkspaceTab === 'scratchpad'
-												? 'bg-app-primary text-white'
-												: 'text-app-subtext hover:text-app-text'
+												? 'bg-app-element text-app-text'
+												: 'text-app-subtext/60 hover:text-app-text'
 										}`}
 										on:click={() => setWorkspaceTab('scratchpad')}
+										title="Pages"
 									>
-										<NotebookPen size={14} />
-										Scratchpad
+										<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+											<path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z" />
+											<path d="M14 2v4a2 2 0 0 0 2 2h4" />
+											<path d="M10 13H8" />
+											<path d="M16 13h-2" />
+											<path d="M10 17H8" />
+											<path d="M16 17h-2" />
+										</svg>
 									</button>
 								</div>
 							{/if}
@@ -2409,7 +3704,7 @@
 								>
 									<button
 										type="button"
-										class={`inline-flex h-9 w-9 items-center justify-center rounded-[0.8rem] transition ${
+										class={`inline-flex h-8 w-8 items-center justify-center rounded-[0.8rem] transition ${
 											canUndoBoardHistory && proposalPreviewTarget !== 'kanban'
 												? 'text-app-subtext hover:bg-app-bg/80 hover:text-app-text'
 												: 'cursor-not-allowed text-app-subtext/40'
@@ -2417,19 +3712,17 @@
 										on:click={handleKanbanUndo}
 										disabled={!canUndoBoardHistory || proposalPreviewTarget === 'kanban'}
 										aria-label="Undo board change"
-										title={
-											proposalPreviewTarget === 'kanban'
-												? 'Finish reviewing the proposal before undoing'
-												: canUndoBoardHistory
-													? 'Undo board change'
-													: 'Nothing to undo'
-										}
+										title={proposalPreviewTarget === 'kanban'
+											? 'Finish reviewing the proposal before undoing'
+											: canUndoBoardHistory
+												? 'Undo board change'
+												: 'Nothing to undo'}
 									>
 										<Undo2 size={16} />
 									</button>
 									<button
 										type="button"
-										class={`inline-flex h-9 w-9 items-center justify-center rounded-[0.8rem] transition ${
+										class={`inline-flex h-8 w-8 items-center justify-center rounded-[0.8rem] transition ${
 											canRedoBoardHistory && proposalPreviewTarget !== 'kanban'
 												? 'text-app-subtext hover:bg-app-bg/80 hover:text-app-text'
 												: 'cursor-not-allowed text-app-subtext/40'
@@ -2437,13 +3730,11 @@
 										on:click={handleKanbanRedo}
 										disabled={!canRedoBoardHistory || proposalPreviewTarget === 'kanban'}
 										aria-label="Redo board change"
-										title={
-											proposalPreviewTarget === 'kanban'
-												? 'Finish reviewing the proposal before redoing'
-												: canRedoBoardHistory
-													? 'Redo board change'
-													: 'Nothing to redo'
-										}
+										title={proposalPreviewTarget === 'kanban'
+											? 'Finish reviewing the proposal before redoing'
+											: canRedoBoardHistory
+												? 'Redo board change'
+												: 'Nothing to redo'}
 									>
 										<Redo2 size={16} />
 									</button>
@@ -2464,43 +3755,45 @@
 						</div>
 					</header>
 
-					<div class="space-y-2 px-3 pt-2 lg:px-4">
-						{#if workspaceError}
-							<div class="rounded-[1.2rem] border border-rose-500/25 bg-rose-500/10 px-4 py-3">
-								<div class="flex flex-wrap items-center justify-between gap-3">
-									<div>
-										<p class="text-sm font-semibold text-rose-100">
-											Workspace refresh needs attention
-										</p>
-										<p class="mt-1 text-sm text-rose-100/80">{workspaceError}</p>
+					{#if workspaceError || syncErrorMessage || isRestoring}
+						<div class="space-y-2 px-3 pt-2 lg:px-4">
+							{#if workspaceError}
+								<div class="rounded-[1.2rem] border border-rose-500/25 bg-rose-500/10 px-4 py-3">
+									<div class="flex flex-wrap items-center justify-between gap-3">
+										<div>
+											<p class="text-sm font-semibold text-rose-100">
+												Workspace refresh needs attention
+											</p>
+											<p class="mt-1 text-sm text-rose-100/80">{workspaceError}</p>
+										</div>
+										<button
+											type="button"
+											class="rounded-[0.95rem] border border-rose-300/25 bg-rose-500/10 px-3 py-2 text-sm font-semibold text-rose-100"
+											on:click={handleRetryInitialization}
+										>
+											Retry
+										</button>
 									</div>
-									<button
-										type="button"
-										class="rounded-[0.95rem] border border-rose-300/25 bg-rose-500/10 px-3 py-2 text-sm font-semibold text-rose-100"
-										on:click={handleRetryInitialization}
-									>
-										Retry
-									</button>
 								</div>
-							</div>
-						{/if}
+							{/if}
 
-						{#if syncErrorMessage}
-							<div
-								class="rounded-[1.2rem] border border-amber-500/25 bg-amber-500/10 px-4 py-3 text-sm text-amber-100"
-							>
-								{syncErrorMessage}
-							</div>
-						{/if}
+							{#if syncErrorMessage}
+								<div
+									class="rounded-[1.2rem] border border-amber-500/25 bg-amber-500/10 px-4 py-3 text-sm text-amber-100"
+								>
+									{syncErrorMessage}
+								</div>
+							{/if}
 
-						{#if isRestoring}
-							<div
-								class="rounded-[1.2rem] border border-app-primary/25 bg-app-primary/10 px-4 py-3 text-sm text-app-text"
-							>
-								Restoring boards from backup. Shared board data is being recreated now.
-							</div>
-						{/if}
-					</div>
+							{#if isRestoring}
+								<div
+									class="rounded-[1.2rem] border border-app-primary/25 bg-app-primary/10 px-4 py-3 text-sm text-app-text"
+								>
+									Restoring boards from backup. Shared board data is being recreated now.
+								</div>
+							{/if}
+						</div>
+					{/if}
 
 					{#if workspaceHydrating && projects.length === 0}
 						<div class="flex min-h-0 flex-1 items-center justify-center p-6">
@@ -2519,7 +3812,7 @@
 							</div>
 						</div>
 					{:else}
-						<div class="min-h-0 flex-1 overflow-hidden lg:px-4 lg:pb-4 lg:pt-3">
+						<div class="min-h-0 flex-1 overflow-hidden">
 							{#if isMobile}
 								<div class="relative h-full min-h-0 overflow-hidden">
 									{#if mobileTab === 'dashboard'}
@@ -2538,68 +3831,37 @@
 											onLeaveProject={handleLeaveProject}
 											onRenameProject={handleRenameProject}
 											onDeleteProject={handleDeleteProject}
+											onClearTimedTaskDue={handleClearTimedTaskDue}
 										/>
 									{:else if mobileTab === 'kanban' && currentProject}
 										<KanbanBoard
+											projectId={currentProject.id}
 											data={kanbanData}
 											comparisonData={kanbanComparisonData}
 											{highlightedTaskIds}
+											activeTaskId={activeTaskContext?.taskId}
 											isLocked={proposalPreviewTarget === 'kanban'}
 											defaultShowCheckbox={settings.defaultShowCheckbox}
 											active={mobileTab === 'kanban'}
 											members={currentProject.members}
 											onChange={handleKanbanChange}
 											onSendToChat={handleSendTaskToChat}
+											onActiveTaskChange={handleActiveTaskChange}
+											onTaskReferenceNavigate={handleTaskReferenceNavigate}
+											onAddAttachments={handleAddAttachments}
 										/>
 									{:else if mobileTab === 'scratchpad' && currentProject}
 										<div class="absolute inset-0 flex flex-col">
-											{#if activeScratchpadConflict}
-												<div class="border-b border-app-border bg-amber-500/10 px-4 py-3">
-													<p class="text-sm font-semibold text-amber-100">
-														Shared notes changed somewhere else
-													</p>
-													<p class="mt-1 text-sm text-amber-100/80">
-														Review the remote copy below, then either load it or explicitly sync
-														your merged notes.
-													</p>
-													<pre
-														class="mt-3 max-h-28 overflow-auto rounded-[1rem] border border-amber-300/15 bg-app-bg/60 p-3 text-xs leading-relaxed text-amber-50">{JSON.stringify(
-															activeScratchpadConflict.remoteData.pads,
-															null,
-															2
-														)}</pre>
-													<div class="mt-3 flex gap-2">
-														<button
-															type="button"
-															class="rounded-[0.95rem] bg-app-primary px-3 py-2 text-sm font-semibold text-white"
-															on:click={handleLoadRemoteScratchpad}
-														>
-															Load remote version
-														</button>
-														<button
-															type="button"
-															class="rounded-[0.95rem] border border-app-border bg-app-element px-3 py-2 text-sm font-semibold text-app-text"
-															on:click={handleSyncMergedScratchpad}
-														>
-															Use my merged notes
-														</button>
-													</div>
-												</div>
-											{/if}
-
-											<ScratchpadPane
-												pads={currentProject.scratchpadData.pads}
-												activePadId={visibleScratchpadPad?.id ||
-													currentProject.scratchpadData.activePadId}
-												content={scratchpadContent}
-												isLocked={proposalPreviewTarget === 'scratchpad'}
-												comparisonContent={scratchpadComparisonContent}
-												active={mobileTab === 'scratchpad'}
-												onSelectPad={handleSelectScratchpadPad}
-												onCreatePad={handleCreateScratchpadPad}
-												onDeletePad={handleDeleteScratchpadPad}
-												onChange={handleScratchpadChange}
-											/>
+												<PagePane
+													title={currentPage?.name || 'Page'}
+													content={scratchpadContent}
+													isLocked={proposalPreviewTarget === 'scratchpad'}
+													comparisonContent={scratchpadComparisonContent}
+													active={mobileTab === 'scratchpad'}
+													referenceOptions={scratchpadReferenceOptions}
+													onReferenceNavigate={handleScratchpadReferenceNavigate}
+													onChange={handleScratchpadChange}
+												/>
 										</div>
 									{:else if mobileTab === 'chat' && currentProject}
 										<ChatPane
@@ -2608,13 +3870,13 @@
 											{queuedAttachments}
 											{queuedTaskCards}
 											isProcessing={isAiProcessing}
-											pendingProposal={activePendingProposal}
-											proposalPreviewActive={Boolean(
-												activePendingProposal &&
-												proposalPreviewTarget === activePendingProposal.target
-											)}
-											chatMode={settings.preferredChatMode}
-											modelPreset={settings.preferredModelPreset}
+											processingEvents={aiProgressEvents}
+											pendingProposals={activePendingProposals}
+											activeProposalTarget={proposalPreviewTarget}
+											sessions={currentProject.aiSessions}
+											activeSessionId={currentProject.activeAiSessionId}
+											modelId={activeAiModelId}
+											modelOptions={aiModels}
 											active={mobileTab === 'chat'}
 											chrome="mobile"
 											onDraftChange={handleDraftChange}
@@ -2623,20 +3885,36 @@
 											onRemoveAttachment={handleRemoveAttachment}
 											onRemoveTaskCard={handleRemoveTaskCard}
 											onClearHistory={handleClearHistory}
-											onChatModeChange={handleChatModeChange}
-											onModelPresetChange={handleModelPresetChange}
-											onReviewProposal={activePendingProposal ? handleReviewProposal : null}
+											onSessionChange={handleActiveAiSessionChange}
+											onCreateSession={handleCreateAiSession}
+											onRenameSession={handleRenameAiSession}
+											onDeleteSession={handleDeleteAiSession}
+											onModelChange={handleAiModelChange}
+										thinkingLevel={aiThinkingLevel}
+										onThinkingLevelChange={(level) => { aiThinkingLevel = level; }}
+											onReviewProposal={activePendingProposals.length ? handleReviewProposal : null}
 											onAcceptProposal={handleAcceptProposal}
 											onRejectProposal={handleRejectProposal}
+											onAnswerQuestion={handleAnswerQuestion}
 										/>
 									{:else if mobileTab === 'settings'}
 										<SettingsView
+											section={settingsSection}
 											{settings}
 											{currentProject}
+											email={profileEmail}
+											username={profile?.username || null}
+											{usernameDraft}
+											{usernameAvailability}
+											usernameFeedback={usernameFeedback}
+											usernameSaving={usernameSaving}
 											personalImageUrl={personalBackgroundImageUrl}
 											boardImageUrl={projectBackgroundImageUrl}
 											personalImageUploading={personalBackgroundUploading}
 											boardImageUploading={projectBackgroundUploading}
+											onSectionChange={handleSettingsSectionChange}
+											onUsernameDraftChange={handleUsernameDraftChange}
+											onUsernameSubmit={handleUsernameSubmit}
 											onSettingsChange={handleSettingsChange}
 											onSelectPersonalBackground={handleSelectPersonalBackground}
 											onUploadPersonalBackground={handleUploadPersonalBackground}
@@ -2651,11 +3929,11 @@
 											>
 												<BrandMark size={56} className="mx-auto" alt="" />
 												<p class="mt-4 font-display text-2xl font-bold text-app-text">
-													Open a board first
+													Open a project first
 												</p>
 												<p class="mt-2 text-sm leading-relaxed text-app-subtext">
-													Use the dashboard tab to create or select a board before jumping into
-													Kanban, notes, or private AI chat.
+													Use the dashboard tab to create or select a project before jumping into
+													boards, pages, or private AI chat.
 												</p>
 												<div class="mt-4 flex justify-center gap-2">
 													<button
@@ -2670,7 +3948,7 @@
 														class="rounded-[0.95rem] border border-app-border bg-app-element px-4 py-2 text-sm font-semibold text-app-text"
 														on:click={handleCreateProject}
 													>
-														New board
+														New project
 													</button>
 												</div>
 											</div>
@@ -2695,77 +3973,56 @@
 											onLeaveProject={handleLeaveProject}
 											onRenameProject={handleRenameProject}
 											onDeleteProject={handleDeleteProject}
+											onClearTimedTaskDue={handleClearTimedTaskDue}
 										/>
 									{:else if desktopWorkspaceTab === 'kanban' && currentProject}
 										<KanbanBoard
+											projectId={currentProject.id}
 											data={kanbanData}
 											comparisonData={kanbanComparisonData}
 											{highlightedTaskIds}
+											activeTaskId={activeTaskContext?.taskId}
 											isLocked={proposalPreviewTarget === 'kanban'}
 											defaultShowCheckbox={settings.defaultShowCheckbox}
 											active={desktopWorkspaceTab === 'kanban'}
 											members={currentProject.members}
 											onChange={handleKanbanChange}
 											onSendToChat={handleSendTaskToChat}
+											onActiveTaskChange={handleActiveTaskChange}
+											onTaskReferenceNavigate={handleTaskReferenceNavigate}
+											onAddAttachments={handleAddAttachments}
 										/>
 									{:else if desktopWorkspaceTab === 'scratchpad' && currentProject}
 										<div class="absolute inset-0 flex flex-col">
-											{#if activeScratchpadConflict}
-												<div class="border-b border-app-border bg-amber-500/10 px-4 py-3">
-													<p class="text-sm font-semibold text-amber-100">
-														Shared notes changed somewhere else
-													</p>
-													<p class="mt-1 text-sm text-amber-100/80">
-														Review the remote copy below, then either load it or explicitly sync
-														your merged notes.
-													</p>
-													<pre
-														class="mt-3 max-h-32 overflow-auto rounded-[1rem] border border-amber-300/15 bg-app-bg/60 p-3 text-xs leading-relaxed text-amber-50">{JSON.stringify(
-															activeScratchpadConflict.remoteData.pads,
-															null,
-															2
-														)}</pre>
-													<div class="mt-3 flex gap-2">
-														<button
-															type="button"
-															class="rounded-[0.95rem] bg-app-primary px-3 py-2 text-sm font-semibold text-white"
-															on:click={handleLoadRemoteScratchpad}
-														>
-															Load remote version
-														</button>
-														<button
-															type="button"
-															class="rounded-[0.95rem] border border-app-border bg-app-element px-3 py-2 text-sm font-semibold text-app-text"
-															on:click={handleSyncMergedScratchpad}
-														>
-															Use my merged notes
-														</button>
-													</div>
-												</div>
-											{/if}
-
-											<ScratchpadPane
-												pads={currentProject.scratchpadData.pads}
-												activePadId={visibleScratchpadPad?.id ||
-													currentProject.scratchpadData.activePadId}
-												content={scratchpadContent}
-												isLocked={proposalPreviewTarget === 'scratchpad'}
-												comparisonContent={scratchpadComparisonContent}
-												active={desktopWorkspaceTab === 'scratchpad'}
-												onSelectPad={handleSelectScratchpadPad}
-												onCreatePad={handleCreateScratchpadPad}
-												onDeletePad={handleDeleteScratchpadPad}
-												onChange={handleScratchpadChange}
-											/>
+												<PagePane
+													title={currentPage?.name || 'Page'}
+													content={scratchpadContent}
+													isLocked={proposalPreviewTarget === 'scratchpad'}
+													comparisonContent={scratchpadComparisonContent}
+													active={desktopWorkspaceTab === 'scratchpad'}
+													referenceOptions={scratchpadReferenceOptions}
+													onReferenceNavigate={handleScratchpadReferenceNavigate}
+													onChange={handleScratchpadChange}
+												/>
 										</div>
 									{:else if desktopWorkspaceTab === 'settings'}
 										<SettingsView
+											section={settingsSection}
 											{settings}
 											{currentProject}
+											email={profileEmail}
+											username={profile?.username || null}
+											{usernameDraft}
+											{usernameAvailability}
+											usernameFeedback={usernameFeedback}
+											usernameSaving={usernameSaving}
 											personalImageUrl={personalBackgroundImageUrl}
 											boardImageUrl={projectBackgroundImageUrl}
 											personalImageUploading={personalBackgroundUploading}
 											boardImageUploading={projectBackgroundUploading}
+											onSectionChange={handleSettingsSectionChange}
+											onUsernameDraftChange={handleUsernameDraftChange}
+											onUsernameSubmit={handleUsernameSubmit}
 											onSettingsChange={handleSettingsChange}
 											onSelectPersonalBackground={handleSelectPersonalBackground}
 											onUploadPersonalBackground={handleUploadPersonalBackground}
@@ -2780,10 +4037,10 @@
 											>
 												<BrandMark size={56} className="mx-auto" alt="" />
 												<p class="mt-4 font-display text-2xl font-bold text-app-text">
-													Open a board first
+													Open a project first
 												</p>
 												<p class="mt-2 text-sm leading-relaxed text-app-subtext">
-													Choose a board from the dashboard or rail to start editing columns, notes,
+													Choose a project from the dashboard or rail to start editing boards, pages,
 													or your private AI thread.
 												</p>
 												<div class="mt-4 flex justify-center gap-2">
@@ -2799,7 +4056,7 @@
 														class="rounded-[0.95rem] border border-app-border bg-app-element px-4 py-2 text-sm font-semibold text-app-text"
 														on:click={handleCreateProject}
 													>
-														New board
+														New project
 													</button>
 												</div>
 											</div>
@@ -2843,7 +4100,7 @@
 									on:click={() => setWorkspaceTab('scratchpad')}
 								>
 									<NotebookPen size={16} />
-									Notes
+									Pages
 								</button>
 								<button
 									type="button"
@@ -2883,25 +4140,26 @@
 						</button>
 					{:else}
 						<div
-							class="h-full w-2 shrink-0 cursor-col-resize bg-app-bg/35 transition hover:bg-app-primary/20"
-							on:pointerdown={handleDesktopChatResizeStart}
-						></div>
-						<div
 							class="relative h-full min-w-0 shrink-0 border-l border-app-border bg-app-surface/92 backdrop-blur-xl"
 							style={`width:${desktopChatWidth}rem;`}
 						>
+							<div
+								class="absolute left-0 top-0 z-60 h-full w-2 cursor-col-resize transition hover:bg-app-primary/20"
+								on:pointerdown={handleDesktopChatResizeStart}
+							></div>
 							<ChatPane
 								history={currentProject.chatHistory}
 								draft={composerDraft}
 								{queuedAttachments}
 								{queuedTaskCards}
 								isProcessing={isAiProcessing}
-								pendingProposal={activePendingProposal}
-								proposalPreviewActive={Boolean(
-									activePendingProposal && proposalPreviewTarget === activePendingProposal.target
-								)}
-								chatMode={settings.preferredChatMode}
-								modelPreset={settings.preferredModelPreset}
+								processingEvents={aiProgressEvents}
+								pendingProposals={activePendingProposals}
+								activeProposalTarget={proposalPreviewTarget}
+								sessions={currentProject.aiSessions}
+								activeSessionId={currentProject.activeAiSessionId}
+								modelId={activeAiModelId}
+								modelOptions={aiModels}
 								active={true}
 								chrome="sidebar"
 								onDraftChange={handleDraftChange}
@@ -2910,11 +4168,17 @@
 								onRemoveAttachment={handleRemoveAttachment}
 								onRemoveTaskCard={handleRemoveTaskCard}
 								onClearHistory={handleClearHistory}
-								onChatModeChange={handleChatModeChange}
-								onModelPresetChange={handleModelPresetChange}
-								onReviewProposal={activePendingProposal ? handleReviewProposal : null}
+								onSessionChange={handleActiveAiSessionChange}
+								onCreateSession={handleCreateAiSession}
+								onRenameSession={handleRenameAiSession}
+								onDeleteSession={handleDeleteAiSession}
+								onModelChange={handleAiModelChange}
+										thinkingLevel={aiThinkingLevel}
+										onThinkingLevelChange={(level) => { aiThinkingLevel = level; }}
+								onReviewProposal={activePendingProposals.length ? handleReviewProposal : null}
 								onAcceptProposal={handleAcceptProposal}
 								onRejectProposal={handleRejectProposal}
+								onAnswerQuestion={handleAnswerQuestion}
 								onCollapseSidebar={() => (desktopChatCollapsed = true)}
 							/>
 						</div>
@@ -2923,12 +4187,115 @@
 			</div>
 		</div>
 
+			{#if requiresUsername}
+				<UsernameModal
+					email={profileEmail}
+					currentUsername={profile?.username || null}
+					usernameDraft={usernameDraft}
+					availability={usernameAvailability}
+					feedback={usernameFeedback}
+					saving={usernameSaving}
+					onDraftChange={handleUsernameDraftChange}
+					onSubmit={handleUsernameSubmit}
+					onSignOut={handleSignOut}
+				/>
+			{/if}
+
+			{#if nameModalState}
+				<div class="absolute inset-0 z-40 flex items-center justify-center bg-app-bg/60 p-4 backdrop-blur-sm">
+					<div
+						role="dialog"
+						aria-modal="true"
+						aria-label={
+							nameModalState.kind === 'create-project'
+								? 'Create project'
+								: nameModalState.kind === 'create-board'
+									? 'Create board'
+									: nameModalState.kind === 'create-page'
+										? 'Create page'
+										: nameModalState.kind === 'rename-board'
+											? 'Rename board'
+											: 'Rename page'
+						}
+						class="w-full max-w-md rounded-xl border border-app-border/60 bg-app-surface/95"
+					>
+						<div class="border-b border-app-border/40 px-5 py-4">
+							<p class="text-[10px] font-semibold uppercase tracking-[0.2em] text-app-primary">
+								{nameModalState.kind === 'create-project'
+									? 'New Project'
+									: nameModalState.kind === 'create-board'
+										? 'New Board'
+										: nameModalState.kind === 'create-page'
+											? 'New Page'
+											: nameModalState.kind === 'rename-board'
+												? 'Rename Board'
+												: 'Rename Page'}
+							</p>
+							<p class="mt-1 text-sm text-app-subtext">
+								{nameModalState.kind === 'create-project'
+									? 'Name the new board space so it is easy to find later.'
+									: nameModalState.kind === 'create-board'
+										? 'Choose a name for this board view.'
+										: nameModalState.kind === 'create-page'
+											? 'Choose a name for this markdown page.'
+											: 'Update the name shown across the workspace.'}
+							</p>
+						</div>
+						<form
+							class="px-5 py-4"
+							on:submit|preventDefault={handleNameModalSubmit}
+						>
+							<label class="block">
+								<span class="mb-1.5 block text-[10px] font-semibold uppercase tracking-[0.18em] text-app-subtext">
+									Name
+								</span>
+								<input
+									bind:value={nameModalState.value}
+									type="text"
+									class="min-w-0 w-full rounded-lg border border-app-border/60 bg-app-bg px-3 py-2 text-sm text-app-text outline-none transition focus:border-app-primary/40"
+									placeholder={nameModalState.kind === 'create-project' ? 'Project name' : 'Name'}
+									use:focusOnMount
+									on:keydown={(event: KeyboardEvent) => {
+										if (event.key === 'Escape') nameModalState = null;
+									}}
+								/>
+							</label>
+							<div class="mt-4 flex items-center justify-end gap-2">
+								<button
+									type="button"
+									class="rounded-lg border border-app-border/40 px-3 py-2 text-sm text-app-subtext transition hover:text-app-text"
+									on:click={() => (nameModalState = null)}
+								>
+									Cancel
+								</button>
+								<button
+									type="submit"
+									disabled={!nameModalState.value.trim()}
+									class="rounded-lg bg-app-primary px-3 py-2 text-sm font-semibold text-white transition hover:bg-app-primary-hover disabled:opacity-40"
+								>
+									{nameModalState.kind.startsWith('create') ? 'Create' : 'Save'}
+								</button>
+							</div>
+						</form>
+					</div>
+				</div>
+			{/if}
+
 		{#if showProjectSheet}
 			<ProjectSheet
 				{projects}
 				{currentProjectId}
+				{currentBoardId}
+				{currentPageId}
 				onClose={() => (showProjectSheet = false)}
-				onSwitch={openProjectWorkspace}
+				onOpenBoard={openProjectBoard}
+				onOpenPage={openProjectPage}
+				onCreateBoard={handleCreateBoard}
+				onCreatePage={handleCreatePage}
+				onRenameBoard={handleRenameBoard}
+				onRenamePage={handleRenamePage}
+				onDeleteBoard={handleDeleteBoard}
+				onDeletePage={handleDeletePage}
 				onCreate={handleCreateProject}
 				onRename={handleRenameProject}
 				onDelete={handleDeleteProject}

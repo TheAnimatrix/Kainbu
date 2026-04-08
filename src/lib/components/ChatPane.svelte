@@ -1,17 +1,36 @@
 <script lang="ts">
 	import { afterUpdate, tick } from 'svelte';
-	import { Check, Info, LoaderCircle, Paperclip, Send, Trash2, X, XCircle } from 'lucide-svelte';
+	import {
+		Check,
+		ChevronLeft,
+		ExternalLink,
+		Info,
+		LoaderCircle,
+		PanelRight,
+		Pencil,
+		Paperclip,
+		Plus,
+		RefreshCw,
+		Search,
+		Send,
+		SlidersHorizontal,
+		Trash2,
+		X,
+		XCircle
+	} from 'lucide-svelte';
 	import BrandMark from '$lib/components/BrandMark.svelte';
-	import { MODEL_PRESET_LABELS } from '$lib/kainbu/constants';
 	import { createId } from '$lib/kainbu/id';
 	import { getTagToneClasses } from '$lib/kainbu/tags';
 	import type {
+		AiModelConfig,
+		AiModelId,
+		AiProgressEvent,
 		ChatAttachment,
 		ChatMessage,
-		ChatMode,
 		ChatTaskCard,
-		ModelPreset,
-		PendingProposal
+		PendingProposal,
+		ProjectAiSession,
+		ProposalTarget
 	} from '$lib/kainbu/types';
 	import RichText from '$lib/components/RichText.svelte';
 
@@ -20,10 +39,15 @@
 	export let queuedAttachments: ChatAttachment[] = [];
 	export let queuedTaskCards: ChatTaskCard[] = [];
 	export let isProcessing = false;
-	export let pendingProposal: PendingProposal | null = null;
-	export let proposalPreviewActive = false;
-	export let chatMode: ChatMode = 'auto';
-	export let modelPreset: ModelPreset = 'fast';
+	export let processingEvents: AiProgressEvent[] = [];
+	export let pendingProposals: PendingProposal[] = [];
+	export let activeProposalTarget: ProposalTarget | null = null;
+	export let sessions: ProjectAiSession[] = [];
+	export let activeSessionId = '';
+	export let modelId: AiModelId = '';
+	export let modelOptions: AiModelConfig[] = [];
+	export let thinkingLevel: import('$lib/kainbu/types').AiThinkingLevel = 'none';
+	export let onThinkingLevelChange: (level: import('$lib/kainbu/types').AiThinkingLevel) => void;
 	export let active = true;
 	export let chrome: 'floating' | 'sidebar' | 'mobile' = 'floating';
 	export let onDraftChange: (value: string) => void;
@@ -31,12 +55,16 @@
 	export let onAddAttachments: (attachments: ChatAttachment[]) => void;
 	export let onRemoveAttachment: (attachmentId: string) => void;
 	export let onRemoveTaskCard: (taskCardId: string) => void;
-	export let onClearHistory: () => void;
-	export let onChatModeChange: (mode: ChatMode) => void;
-	export let onModelPresetChange: (preset: ModelPreset) => void;
-	export let onReviewProposal: (() => void) | null = null;
-	export let onAcceptProposal: () => void;
-	export let onRejectProposal: () => void;
+	export let onClearHistory: (() => void) | null = null;
+	export let onSessionChange: (sessionId: string) => void;
+	export let onCreateSession: () => void;
+	export let onRenameSession: (sessionId: string, title: string) => void;
+	export let onDeleteSession: (sessionId: string) => void;
+	export let onModelChange: (modelId: AiModelId) => void;
+	export let onReviewProposal: ((target: ProposalTarget) => void) | null = null;
+	export let onAcceptProposal: (proposalId: string) => void;
+	export let onRejectProposal: (proposalId: string) => void;
+	export let onAnswerQuestion: (questionId: string, optionId?: string, text?: string) => void;
 	export let onCollapseSidebar: (() => void) | null = null;
 
 	let fileInput: HTMLInputElement | null = null;
@@ -61,6 +89,48 @@
 	$: isSidebar = chrome === 'sidebar';
 	$: isMobileChrome = chrome === 'mobile';
 	$: isFramelessChrome = isSidebar || isMobileChrome;
+	$: activeSession = sessions.find((session) => session.id === activeSessionId) || sessions[0] || null;
+
+	let showingSessionsList = true;
+	let showAllSessions = false;
+	let sessionSearchActive = false;
+	let sessionSearchQuery = '';
+	const VISIBLE_SESSION_COUNT = 5;
+
+	$: sortedSessions = [...sessions].sort((a, b) =>
+		(b.lastMessageAt || b.updatedAt) - (a.lastMessageAt || a.updatedAt)
+	);
+	$: filteredSessions = sessionSearchQuery.trim()
+		? sortedSessions.filter((s) => s.title.toLowerCase().includes(sessionSearchQuery.trim().toLowerCase()))
+		: sortedSessions;
+	$: displayedSessions = sessionSearchActive
+		? filteredSessions
+		: showAllSessions ? sortedSessions : sortedSessions.slice(0, VISIBLE_SESSION_COUNT);
+	$: remainingSessionCount = Math.max(0, sessions.length - VISIBLE_SESSION_COUNT);
+
+	const relativeTime = (timestamp: number) => {
+		if (!timestamp) return '';
+		const diff = Date.now() - timestamp;
+		const minutes = Math.floor(diff / 60000);
+		if (minutes < 1) return 'Just now';
+		if (minutes < 60) return `${minutes} min ago`;
+		const hours = Math.floor(minutes / 60);
+		if (hours < 24) return `${hours} hrs ago`;
+		const days = Math.floor(hours / 24);
+		if (days < 7) return `${days}d ago`;
+		const weeks = Math.floor(days / 7);
+		return `${weeks}w ago`;
+	};
+
+	const openSession = (sessionId: string) => {
+		showingSessionsList = false;
+		showAllSessions = false;
+		onSessionChange(sessionId);
+	};
+
+	const backToSessionsList = () => {
+		showingSessionsList = true;
+	};
 
 	let previousHistorySignature = '';
 	let previousActive = false;
@@ -76,6 +146,7 @@
 	let previewDragStartY = 0;
 	let previewDragOriginX = 0;
 	let previewDragOriginY = 0;
+	let questionDrafts: Record<string, string> = {};
 
 	$: if (!active && previewAttachment) {
 		previewAttachment = null;
@@ -146,7 +217,25 @@
 
 	const submitComposer = () => {
 		if (!canSendMessage()) return;
+		if (showingSessionsList) {
+			onCreateSession();
+			showingSessionsList = false;
+		}
 		onSend();
+	};
+
+	const handleComposerPaste = async (event: ClipboardEvent) => {
+		if (isProcessing) return;
+		const clipboardFiles = Array.from(event.clipboardData?.items || [])
+			.filter((item) => item.type.startsWith('image/'))
+			.map((item) => item.getAsFile())
+			.filter((file): file is File => Boolean(file));
+
+		if (!clipboardFiles.length) return;
+		event.preventDefault();
+		const transfer = new DataTransfer();
+		clipboardFiles.forEach((file) => transfer.items.add(file));
+		await handleFiles(transfer.files);
 	};
 
 	const clampPreviewScale = (value: number) =>
@@ -200,6 +289,26 @@
 	const closeAttachmentPreview = () => {
 		resetPreviewTransform();
 		previewAttachment = null;
+	};
+
+	const requestSessionRename = () => {
+		if (!activeSession || typeof window === 'undefined') return;
+		const nextTitle = window.prompt('Rename this chat', activeSession.title);
+		if (nextTitle == null) return;
+		const trimmed = nextTitle.trim();
+		if (!trimmed || trimmed === activeSession.title) return;
+		onRenameSession(activeSession.id, trimmed);
+	};
+
+	const requestSessionDelete = () => {
+		if (!activeSession || typeof window === 'undefined') return;
+		if (!window.confirm(`Delete "${activeSession.title}"?`)) return;
+		onDeleteSession(activeSession.id);
+	};
+
+	const openPreviewInNewTab = () => {
+		if (!previewAttachment) return;
+		window.open(previewAttachment.content, '_blank', 'noopener,noreferrer');
 	};
 
 	const getPointerDistance = (points: Array<{ x: number; y: number }>) =>
@@ -331,6 +440,66 @@
 
 	const summarize = (value = '', maxLength = 92) =>
 		value.length > maxLength ? `${value.slice(0, maxLength - 1).trimEnd()}…` : value;
+	const proposalStatusText = (proposal: PendingProposal) => {
+		if (proposal.stale) {
+			return 'Workspace changed since this was generated. Review the diff and apply it if it still looks right.';
+		}
+
+		if (proposal.proposalSafety.outOfScope) {
+			return 'Review carefully before applying. This one reaches beyond the original target.';
+		}
+
+		if (proposal.editCallCount > 1) {
+			return proposal.target === 'kanban'
+				? `${proposal.editCallCount} smaller card edits are batched into one board diff. Review the grouped insertions, edits, and deletions before applying them.`
+				: `${proposal.editCallCount} smaller page edits are batched into one diff so you can review the full page change before applying it.`;
+		}
+
+		return proposal.target === 'kanban'
+			? 'Board changes are ready to review and apply to the project.'
+			: 'Page changes are ready to review and apply to the project.';
+	};
+
+	const setQuestionDraft = (questionId: string, value: string) => {
+		questionDrafts = {
+			...questionDrafts,
+			[questionId]: value
+		};
+	};
+
+	const submitQuestionFreeform = (questionId: string) => {
+		const value = questionDrafts[questionId]?.trim();
+		if (!value) return;
+		onAnswerQuestion(questionId, undefined, value);
+		setQuestionDraft(questionId, '');
+	};
+
+	const isCompactStatusMessage = (message: ChatMessage) =>
+		message.role === 'assistant' &&
+		(message.progressEvents?.length || 0) > 0 &&
+		!message.text.trim().length &&
+		!(message.attachments?.length || 0) &&
+		!(message.taskCards?.length || 0) &&
+		!message.question &&
+		!(message.toolActions?.length || 0) &&
+		!(message.annotations?.length || 0) &&
+		!message.metadata &&
+		!message.usage;
+
+	const latestProgressEvent = (events: AiProgressEvent[] = []) => events.at(-1);
+	const summarizeProgressEvent = (event: AiProgressEvent) => {
+		const baseMessage = summarize(
+			event.message.trim() || 'Thinking…',
+			event.kind === 'assistant_draft' ? 120 : 88
+		);
+		const detail = summarize((event.detail || '').trim(), 88);
+		if (event.kind === 'assistant_draft') {
+			return `Drafting reply: ${baseMessage}`;
+		}
+		return detail ? `${baseMessage} ${detail}` : baseMessage;
+	};
+	const latestProgressText = (events: AiProgressEvent[] = []) =>
+		events.length ? summarizeProgressEvent(events.at(-1)!) : 'Thinking…';
 
 	const resizeComposer = (node: HTMLTextAreaElement) => {
 		node.style.height = 'auto';
@@ -403,84 +572,212 @@
 				? 'bg-app-bg'
 				: 'bg-app-surface'
 			: 'rounded-[1.25rem] border border-app-border bg-app-surface'
-	}`}
+	} ${isSidebar ? 'pb-1' : ''}`}
 >
-	<header
-		class={`flex items-center justify-end gap-3 border-b border-app-border ${
-			isMobileChrome ? 'px-3 py-2' : 'px-4 py-3'
-		}`}
-	>
-		<div class={`flex items-center overflow-x-auto ${isMobileChrome ? 'gap-1.5' : 'gap-2'}`}>
-			<div
-				class={`flex rounded-full border border-app-border bg-app-element text-xs ${
-					isMobileChrome ? 'p-0.5' : 'p-1'
-				}`}
-			>
+	{#if showingSessionsList && isSidebar}
+		<header class="flex items-center justify-between border-b border-app-border px-4 py-2.5">
+			<span class="text-[11px] font-bold uppercase tracking-[0.28em] text-app-subtext">Sessions</span>
+			<div class="flex items-center gap-1">
 				<button
 					type="button"
-					class={`rounded-full font-semibold transition ${
-						isMobileChrome ? 'px-2.5 py-1 text-[11px]' : 'px-3 py-1.5'
-					} ${chatMode === 'auto' ? 'bg-app-primary text-white' : 'text-app-subtext'}`}
-					on:click={() => onChatModeChange('auto')}
+					class="rounded-md p-1.5 text-app-subtext transition hover:text-app-text"
+					title="Refresh"
+					aria-label="Refresh sessions"
 				>
-					Auto
+					<RefreshCw size={15} />
 				</button>
 				<button
 					type="button"
-					class={`rounded-full font-semibold transition ${
-						isMobileChrome ? 'px-2.5 py-1 text-[11px]' : 'px-3 py-1.5'
-					} ${chatMode === 'chat' ? 'bg-app-accent text-white' : 'text-app-subtext'}`}
-					on:click={() => onChatModeChange('chat')}
+					class={`rounded-md p-1.5 transition ${sessionSearchActive ? 'text-app-text bg-app-element' : 'text-app-subtext hover:text-app-text'}`}
+					title="Search"
+					aria-label="Search sessions"
+					on:click={() => {
+						sessionSearchActive = !sessionSearchActive;
+						if (!sessionSearchActive) sessionSearchQuery = '';
+					}}
 				>
-					Chat
+					<Search size={15} />
 				</button>
 				<button
 					type="button"
-					class={`rounded-full font-semibold transition ${
-						isMobileChrome ? 'px-2.5 py-1 text-[11px]' : 'px-3 py-1.5'
-					} ${chatMode === 'edit' ? 'bg-app-primary text-white' : 'text-app-subtext'}`}
-					on:click={() => onChatModeChange('edit')}
+					class="rounded-md p-1.5 text-app-subtext transition hover:text-app-text"
+					title="Filter"
+					aria-label="Filter sessions"
 				>
-					Edit
+					<SlidersHorizontal size={15} />
 				</button>
+				{#if onCollapseSidebar}
+					<button
+						type="button"
+						class="rounded-md p-1.5 text-app-subtext transition hover:text-app-text"
+						title="Collapse AI sidebar"
+						aria-label="Collapse AI sidebar"
+						on:click={onCollapseSidebar}
+					>
+						<PanelRight size={15} />
+					</button>
+				{/if}
 			</div>
+		</header>
 
-			<select
-				class={`rounded-full border border-app-border bg-app-element text-app-text outline-none ${
-					isMobileChrome ? 'px-2.5 py-1.5 text-[12px]' : 'px-3 py-2 text-sm'
-				}`}
-				value={modelPreset}
-				on:change={(event) =>
-					onModelPresetChange((event.currentTarget as HTMLSelectElement).value as ModelPreset)}
-			>
-				<option value="fast">{MODEL_PRESET_LABELS.fast}</option>
-				<option value="smart">{MODEL_PRESET_LABELS.smart}</option>
-			</select>
+		{#if sessionSearchActive}
+			<div class="border-b border-app-border px-4 py-2">
+				<input
+					type="text"
+					class="w-full rounded-md border border-app-border bg-app-bg px-2.5 py-1.5 text-sm text-app-text outline-none placeholder:text-app-subtext/50 focus:border-app-primary/50"
+					placeholder="Search sessions…"
+					bind:value={sessionSearchQuery}
+				/>
+			</div>
+		{/if}
 
-			{#if isSidebar && onCollapseSidebar}
+		<div class="min-h-0 flex-1 overflow-y-auto">
+			{#each displayedSessions as session (session.id)}
+				<div class="group relative px-4 text-left transition hover:bg-app-element/30">
+					<button
+						type="button"
+						class={`flex w-full items-start gap-3 py-3`}
+						on:click={() => openSession(session.id)}
+					>
+						{#if session.id === activeSessionId && isProcessing}
+							<div class="mt-0.5 shrink-0">
+								<LoaderCircle size={12} class="animate-spin text-app-subtext" />
+							</div>
+						{:else}
+							<div class="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-amber-500"></div>
+						{/if}
+						<div class="min-w-0 flex-1">
+							<p class="truncate text-[13px] text-app-text transition group-hover:text-amber-300">
+								{session.title}
+							</p>
+							<p class="mt-0.5 text-xs text-app-subtext">
+								{#if session.id === activeSessionId && isProcessing}
+									{@const liveProgress = latestProgressText(processingEvents)}
+									{liveProgress || 'Thinking…'}
+								{:else}
+									{relativeTime(session.lastMessageAt || session.updatedAt)}
+								{/if}
+							</p>
+						</div>
+					</button>
+				</div>
+			{/each}
+
+			{#if !sessionSearchActive && !showAllSessions && remainingSessionCount > 0}
 				<button
 					type="button"
-					class={`rounded-full border border-app-border bg-app-element text-app-subtext transition hover:border-app-primary/35 hover:text-app-text ${
-						isMobileChrome ? 'p-1.5' : 'p-2'
-					}`}
-					on:click={onCollapseSidebar}
-					title="Collapse AI sidebar"
-					aria-label="Collapse AI sidebar"
+					class="flex w-full items-center justify-between px-4 py-2.5 text-left transition hover:bg-app-element/50"
+					on:click={() => (showAllSessions = true)}
 				>
-					<X size={16} />
+					<span class="text-[11px] font-bold uppercase tracking-[0.24em] text-app-subtext">More</span>
+					<span class="text-xs text-app-subtext">{sessions.length}</span>
 				</button>
 			{/if}
 
+			{#if !sessions.length}
+				<div class="flex h-full flex-col items-center justify-center text-center text-app-subtext">
+					<BrandMark size={60} className="mb-3" alt="" />
+					<p class="font-display text-2xl tracking-[0.18em] text-app-text">KAINBU AI</p>
+					<p class="mt-2 text-[11px] uppercase tracking-[0.32em]">No sessions yet</p>
+				</div>
+			{/if}
+		</div>
+	{:else}
+		<header
+			class={`flex items-center gap-2 border-b border-app-border ${
+				isMobileChrome ? 'px-3 py-2' : 'px-4 py-2.5'
+			}`}
+		>
+			{#if isSidebar}
+				<button
+					type="button"
+					class="rounded-md p-1.5 text-app-subtext transition hover:text-app-text"
+					on:click={backToSessionsList}
+					title="Back to sessions"
+					aria-label="Back to sessions"
+				>
+					<ChevronLeft size={16} />
+				</button>
+			{/if}
+			<select
+				class={`min-w-0 flex-1 truncate rounded-md border border-app-border bg-app-bg text-app-text outline-none transition hover:border-app-primary/50 ${
+					isMobileChrome ? 'max-w-[10rem] px-2 py-1 text-[12px]' : 'max-w-[14rem] px-2.5 py-1.5 text-sm'
+				}`}
+				value={activeSessionId}
+				on:change={(event) => onSessionChange((event.currentTarget as HTMLSelectElement).value)}
+			>
+				{#each sessions as session}
+					<option value={session.id}>{session.title}</option>
+				{/each}
+			</select>
+
+		<div class={`ml-auto flex items-center ${isMobileChrome ? 'gap-1' : 'gap-1.5'}`}>
 			<button
 				type="button"
-				class={`rounded-full border border-app-border bg-app-element text-app-subtext transition hover:text-rose-300 ${
-					isMobileChrome ? 'p-1.5' : 'p-2'
+				class={`rounded-md text-app-subtext transition hover:bg-app-element hover:text-app-text ${
+					isMobileChrome ? 'p-1' : 'p-1.5'
 				}`}
-				on:click={onClearHistory}
-				title="Clear history"
+				on:click={onCreateSession}
+				title="New chat"
+				aria-label="New chat"
+			>
+				<Plus size={16} />
+			</button>
+
+			<button
+				type="button"
+				disabled={!activeSession}
+				class={`rounded-md text-app-subtext transition hover:bg-app-element hover:text-app-text disabled:cursor-not-allowed disabled:opacity-45 ${
+					isMobileChrome ? 'p-1' : 'p-1.5'
+				}`}
+				on:click={requestSessionRename}
+				title="Rename chat"
+				aria-label="Rename chat"
+			>
+				<Pencil size={16} />
+			</button>
+
+			<button
+				type="button"
+				disabled={!activeSession || !onClearHistory}
+				class={`rounded-md text-app-subtext transition hover:bg-app-element hover:text-app-text disabled:cursor-not-allowed disabled:opacity-45 ${
+					isMobileChrome ? 'p-1' : 'p-1.5'
+				}`}
+				on:click={() => onClearHistory && onClearHistory()}
+				title="Clear messages"
+				aria-label="Clear messages"
+			>
+				<XCircle size={16} />
+			</button>
+
+			<button
+				type="button"
+				disabled={!activeSession}
+				class={`rounded-md text-app-subtext transition hover:bg-app-element hover:text-rose-300 disabled:cursor-not-allowed disabled:opacity-45 ${
+					isMobileChrome ? 'p-1' : 'p-1.5'
+				}`}
+				on:click={requestSessionDelete}
+				title="Delete chat"
+				aria-label="Delete chat"
 			>
 				<Trash2 size={16} />
 			</button>
+
+			<div class="mx-0.5 h-4 w-px bg-app-border"></div>
+
+			{#if isSidebar && onCollapseSidebar}
+					<button
+						type="button"
+						class={`rounded-md text-app-subtext transition hover:bg-app-element hover:text-app-text ${
+							isMobileChrome ? 'p-1' : 'p-1.5'
+						}`}
+						on:click={onCollapseSidebar}
+						title="Collapse AI sidebar"
+						aria-label="Collapse AI sidebar"
+					>
+						<PanelRight size={16} />
+					</button>
+			{/if}
 		</div>
 	</header>
 
@@ -504,10 +801,22 @@
 			</div>
 		{/if}
 
-		<div class={`${isMobileChrome ? 'space-y-3' : 'space-y-4'}`}>
+		<div class={`${isMobileChrome ? 'space-y-2.5' : 'space-y-3'}`}>
 			{#each history as message (message.id)}
 				<div class={`flex flex-col ${message.role === 'user' ? 'items-end' : 'items-start'}`}>
-					{#if message.toolActions?.length}
+					{#if isCompactStatusMessage(message)}
+						{@const compactProgress = latestProgressText(message.progressEvents || [])}
+						{#if compactProgress}
+							<div class="mb-1.5 px-1 text-[11px] text-app-subtext/70">
+								{compactProgress}
+							</div>
+						{/if}
+					{:else if message.role === 'assistant' && latestProgressEvent(message.progressEvents || [])}
+						{@const compactProgress = latestProgressText(message.progressEvents || [])}
+						<div class="mb-1.5 px-1 text-[11px] text-app-subtext/70">
+							{compactProgress}
+						</div>
+					{:else if message.toolActions?.length}
 						<div class="mb-2 flex flex-wrap gap-1.5">
 							{#each message.toolActions as action}
 								<span
@@ -519,190 +828,250 @@
 						</div>
 					{/if}
 
-					<div
-						class={`max-w-[96%] border shadow-sm ${
-							isMobileChrome ? 'rounded-[1rem] px-3 py-2.5' : 'rounded-[1.2rem] px-3.5 py-3'
-						} ${
-							message.role === 'user'
-								? 'rounded-tr-md border-app-primary/25 bg-app-primary/10 text-app-text'
-								: 'rounded-tl-md border-app-border bg-app-bg/70 text-app-text'
-						}`}
-					>
-						{#if message.taskCards?.length}
-							<div class="mb-3 flex gap-2 overflow-x-auto pb-1">
-								{#each message.taskCards as taskCard (taskCard.id)}
-									<div
-										class="w-[14rem] shrink-0 rounded-[1rem] border border-app-border bg-app-surface/85 px-3 py-2.5"
-									>
-										<div class="flex items-center justify-between gap-2">
-											<p
-												class="truncate text-xs font-semibold uppercase tracking-[0.2em] text-app-subtext"
-											>
-												{taskCard.columnTitle}
-											</p>
-											{#if taskCard.checked}
-												<span
-													class="rounded-full bg-emerald-500/15 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.16em] text-emerald-200"
+					{#if !isCompactStatusMessage(message)}
+						<div
+							class={message.role === 'user'
+								? `max-w-[96%] border ${
+										isMobileChrome ? 'rounded-lg px-3 py-2.5' : 'rounded-lg px-3.5 py-3'
+									} border-app-border bg-app-element text-app-text`
+								: `max-w-[min(100%,46rem)] text-app-text ${
+										isMobileChrome ? 'px-0 py-0' : 'px-0 py-0'
+									}`}
+						>
+							{#if message.taskCards?.length}
+								<div class="mb-3 flex gap-2 overflow-x-auto pb-1">
+									{#each message.taskCards as taskCard (taskCard.id)}
+										<div
+											class="w-[14rem] shrink-0 rounded-lg border border-app-border bg-app-surface/85 px-3 py-2.5"
+										>
+											<div class="flex items-center justify-between gap-2">
+												<p
+													class="truncate text-xs font-semibold uppercase tracking-[0.2em] text-app-subtext"
 												>
-													Done
-												</span>
+													{taskCard.columnTitle}
+												</p>
+												{#if taskCard.checked}
+													<span
+														class="rounded-full bg-emerald-500/15 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.16em] text-emerald-200"
+													>
+														Done
+													</span>
+												{/if}
+											</div>
+											<p class="mt-2 text-sm font-semibold text-app-text">{taskCard.title}</p>
+											{#if taskCard.description}
+												<p class="mt-1 text-xs leading-relaxed text-app-subtext">
+													{summarize(taskCard.description)}
+												</p>
+											{/if}
+											{#if taskCard.tags.length}
+												<div class="mt-2 flex flex-wrap gap-1.5">
+													{#each taskCard.tags.slice(0, 3) as tag (tag.id)}
+														<span
+															class={`rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.15em] ${getTagToneClasses(tag.color)}`}
+														>
+															{tag.label}
+														</span>
+													{/each}
+												</div>
 											{/if}
 										</div>
-										<p class="mt-2 text-sm font-semibold text-app-text">{taskCard.title}</p>
-										{#if taskCard.description}
-											<p class="mt-1 text-xs leading-relaxed text-app-subtext">
-												{summarize(taskCard.description)}
-											</p>
-										{/if}
-										{#if taskCard.tags.length}
-											<div class="mt-2 flex flex-wrap gap-1.5">
-												{#each taskCard.tags.slice(0, 3) as tag (tag.id)}
-													<span
-														class={`rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.15em] ${getTagToneClasses(tag.color)}`}
-													>
-														{tag.label}
-													</span>
-												{/each}
-											</div>
-										{/if}
-									</div>
-								{/each}
-							</div>
-						{/if}
+									{/each}
+								</div>
+							{/if}
 
-						{#if message.attachments?.length}
-							<div class="mb-3 space-y-2">
-								{#each message.attachments as attachment (attachment.id)}
-									{#if attachment.kind === 'image'}
-										<button
-											type="button"
-											class="flex w-full items-center gap-3 rounded-[1rem] border border-app-border bg-app-surface/85 px-3 py-2.5 text-left transition hover:border-app-primary/35 hover:bg-app-surface"
-											on:click={() => openAttachmentPreview(attachment)}
-											aria-label={`Open image preview for ${attachment.name}`}
-										>
-											<img
-												src={attachment.content}
-												alt={attachment.name}
-												class="h-14 w-14 shrink-0 rounded-2xl border border-app-border object-cover"
-											/>
-											<div class="min-w-0 flex-1">
-												<p class="truncate text-xs font-semibold text-app-text">
-													{attachment.name}
-												</p>
-												<p
-													class="mt-1 text-[10px] font-semibold uppercase tracking-[0.18em] text-app-subtext"
-												>
-													{attachmentLabel(attachment)}
-												</p>
-											</div>
-											<span
-												class="rounded-full border border-app-primary/20 bg-app-primary/10 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-app-primary"
+							{#if message.attachments?.length}
+								<div class="mb-3 space-y-2">
+									{#each message.attachments as attachment (attachment.id)}
+										{#if attachment.kind === 'image'}
+											<button
+												type="button"
+												class="flex w-full items-center gap-3 rounded-lg border border-app-border bg-app-surface/85 px-3 py-2.5 text-left transition hover:border-app-primary/35 hover:bg-app-surface"
+												on:click={() => openAttachmentPreview(attachment)}
+												aria-label={`Open image preview for ${attachment.name}`}
 											>
-												Preview
-											</span>
-										</button>
-									{:else}
-										<div
-											class="flex items-center gap-3 rounded-[1rem] border border-app-border bg-app-surface/85 px-3 py-2.5"
-										>
+												<img
+													src={attachment.content}
+													alt={attachment.name}
+													class="h-14 w-14 shrink-0 rounded-lg border border-app-border object-cover"
+												/>
+												<div class="min-w-0 flex-1">
+													<p class="truncate text-xs font-semibold text-app-text">
+														{attachment.name}
+													</p>
+													<p
+														class="mt-1 text-[10px] font-semibold uppercase tracking-[0.18em] text-app-subtext"
+													>
+														{attachmentLabel(attachment)}
+													</p>
+												</div>
+												<span
+													class="rounded-full border border-app-primary/20 bg-app-primary/10 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-app-primary"
+												>
+													Preview
+												</span>
+											</button>
+										{:else}
 											<div
-												class="flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl border border-app-border bg-app-element text-app-subtext"
+												class="flex items-center gap-3 rounded-lg border border-app-border bg-app-surface/85 px-3 py-2.5"
 											>
-												<Paperclip size={16} />
-											</div>
-											<div class="min-w-0 flex-1">
-												<p class="truncate text-xs font-semibold text-app-text">
-													{attachment.name}
-												</p>
-												<p
-													class="mt-1 text-[10px] font-semibold uppercase tracking-[0.18em] text-app-subtext"
+												<div
+													class="flex h-14 w-14 shrink-0 items-center justify-center rounded-lg border border-app-border bg-app-element text-app-subtext"
 												>
-													{attachmentLabel(attachment)}
-												</p>
+													<Paperclip size={16} />
+												</div>
+												<div class="min-w-0 flex-1">
+													<p class="truncate text-xs font-semibold text-app-text">
+														{attachment.name}
+													</p>
+													<p
+														class="mt-1 text-[10px] font-semibold uppercase tracking-[0.18em] text-app-subtext"
+													>
+														{attachmentLabel(attachment)}
+													</p>
+												</div>
 											</div>
+										{/if}
+									{/each}
+								</div>
+							{/if}
+
+							{#if message.role === 'assistant'}
+								<RichText
+									value={message.text}
+									className={isMobileChrome ? 'kainbu-prose text-[13px]' : 'kainbu-prose'}
+								/>
+							{:else}
+								<p
+									class={`whitespace-pre-wrap leading-relaxed ${isMobileChrome ? 'text-[13px]' : 'text-sm'}`}
+								>
+									{message.text}
+								</p>
+							{/if}
+
+							{#if message.question}
+								<div class="mt-2">
+									{#if message.question.status === 'answered'}
+										<div class="mb-1.5">
+											<span
+												class="rounded-full border border-emerald-500/30 bg-emerald-500/10 px-2 py-0.5 text-[9px] font-bold uppercase tracking-[0.18em] text-emerald-200"
+											>
+												Answered
+											</span>
 										</div>
 									{/if}
-								{/each}
-							</div>
-						{/if}
+									<p class="text-sm font-semibold text-app-text">{message.question.prompt}</p>
+									{#if message.question.reason}
+										<p class="mt-0.5 text-xs leading-relaxed text-app-subtext">
+											{message.question.reason}
+										</p>
+									{/if}
+									<div class="mt-2 flex flex-wrap gap-1.5">
+										{#each message.question.options as option (option.id)}
+											<button
+												type="button"
+												disabled={message.question.status === 'answered'}
+												class={`rounded-lg border px-2.5 py-1.5 text-left text-xs font-medium transition ${
+													message.question.status === 'answered'
+														? option.id === message.question.answeredOptionId
+															? 'border-emerald-500/35 bg-emerald-500/10 text-emerald-100'
+															: 'cursor-not-allowed border-app-border bg-app-element/70 text-app-subtext'
+														: 'border-app-border bg-app-element text-app-text hover:border-app-primary/35 hover:text-app-primary'
+												}`}
+												on:click={() => onAnswerQuestion(message.question?.id || '', option.id)}
+											>
+												<span>{option.label}</span>
+												{#if option.description}
+													<span class="mt-0.5 block text-[10px] font-normal text-app-subtext">
+														{option.description}
+													</span>
+												{/if}
+											</button>
+										{/each}
+									</div>
+									{#if message.question.allowFreeform}
+										<div class="mt-2 flex items-end gap-1.5">
+											<textarea
+												rows={2}
+												disabled={message.question.status === 'answered'}
+												class="min-h-14 flex-1 resize-none rounded-lg border border-app-border bg-app-bg px-2.5 py-1.5 text-xs text-app-text outline-none placeholder:text-app-subtext/50 disabled:cursor-not-allowed disabled:opacity-60"
+												placeholder="Add your own answer…"
+												value={questionDrafts[message.question.id] || ''}
+												on:input={(event) =>
+													setQuestionDraft(
+														message.question?.id || '',
+														(event.currentTarget as HTMLTextAreaElement).value
+													)}
+											></textarea>
+											<button
+												type="button"
+												disabled={message.question.status === 'answered' ||
+													!(questionDrafts[message.question.id] || '').trim().length}
+												class="rounded-lg bg-app-primary px-2.5 py-1.5 text-xs font-semibold text-white transition disabled:cursor-not-allowed disabled:opacity-45"
+												on:click={() => submitQuestionFreeform(message.question?.id || '')}
+											>
+												Send
+											</button>
+										</div>
+									{/if}
+								</div>
+							{/if}
 
-						{#if message.role === 'assistant'}
-							<RichText
-								value={message.text}
-								className={isMobileChrome ? 'kainbu-prose text-[13px]' : 'kainbu-prose'}
-							/>
-						{:else}
-							<p
-								class={`whitespace-pre-wrap leading-relaxed ${isMobileChrome ? 'text-[13px]' : 'text-sm'}`}
-							>
-								{message.text}
-							</p>
-						{/if}
+							{#if message.metadata}
+								<div
+									class={`mt-2 flex flex-wrap items-center gap-2 text-app-subtext/50 ${
+										isMobileChrome ? 'text-[10px]' : 'text-[10px]'
+									}`}
+								>
+									<span>{(message.metadata.latencyMs / 1000).toFixed(2)}s</span>
+								</div>
+							{/if}
 
-						{#if message.metadata}
-							<div
-								class={`mt-3 flex flex-wrap items-center gap-2 text-app-subtext ${
-									isMobileChrome ? 'text-[10px]' : 'text-[11px]'
-								}`}
-							>
-								<span class="inline-flex items-center gap-1">
-									<Info size={12} />
-									{message.metadata.model}
-								</span>
-								<span>·</span>
-								<span>{(message.metadata.latencyMs / 1000).toFixed(2)}s</span>
-								{#if message.metadata.mode}
-									<span>·</span>
-									<span class="uppercase">{message.metadata.mode}</span>
-								{/if}
-							</div>
-						{/if}
-
-						{#if uniqueCitations(message).length}
-							<div class="mt-3 flex flex-wrap gap-2">
-								{#each uniqueCitations(message) as citation}
-									<a
-										href={citation.url}
-										target="_blank"
-										rel="noreferrer"
-										class="rounded-full border border-app-accent/25 bg-app-accent/10 px-3 py-1 text-[11px] font-semibold text-app-accent transition hover:bg-app-accent/20"
-									>
-										{citation.title || citation.url}
-									</a>
-								{/each}
-							</div>
-						{/if}
-					</div>
+							{#if uniqueCitations(message).length}
+								<div class="mt-3 flex flex-wrap gap-2">
+									{#each uniqueCitations(message) as citation}
+										<a
+											href={citation.url}
+											target="_blank"
+											rel="noreferrer"
+											class="rounded-full border border-app-accent/25 bg-app-accent/10 px-3 py-1 text-[11px] font-semibold text-app-accent transition hover:bg-app-accent/20"
+										>
+											{citation.title || citation.url}
+										</a>
+									{/each}
+								</div>
+							{/if}
+						</div>
+					{/if}
 				</div>
 			{/each}
 
 			{#if isProcessing}
-				<div
-					class={`flex items-center gap-3 rounded-full border border-app-border bg-app-bg/80 text-app-subtext ${
-						isMobileChrome ? 'px-3 py-2 text-[13px]' : 'px-4 py-3 text-sm'
-					}`}
-				>
-					<LoaderCircle size={16} class="animate-spin text-app-primary" />
-					Streaming harmony
+				{@const liveProgress = latestProgressText(processingEvents)}
+				<div class="flex items-start">
+					<div
+						class="relative inline-flex max-w-[min(100%,28rem)] overflow-hidden rounded-md px-2 py-1 text-xs text-app-subtext/80"
+					>
+						<div
+							class="animate-shimmer pointer-events-none absolute inset-0 rounded-md opacity-70"
+						></div>
+						<div class="relative min-w-0 truncate">
+							{liveProgress}
+						</div>
+					</div>
 				</div>
 			{/if}
 
-			{#if pendingProposal && pendingProposal.proposal.kind !== 'none'}
-				<div class="rounded-[1.25rem] border border-app-primary/25 bg-app-primary/10 p-4">
+			{#each pendingProposals as pendingProposal (pendingProposal.id)}
+				<div class="rounded-lg border border-app-primary/25 bg-app-primary/10 p-3.5">
 					<p class="text-[10px] font-bold uppercase tracking-[0.28em] text-app-subtext">
 						Sync proposal
 					</p>
-					<h3 class="mt-2 text-lg font-semibold text-app-text">
-						{pendingProposal.proposal.summary || 'Review AI changes'}
+					<h3 class="mt-2 text-base font-semibold leading-snug text-app-text">
+						{pendingProposal.summary || 'Review AI changes'}
 					</h3>
 					<p class="mt-2 text-sm text-app-subtext">
-						{#if pendingProposal.stale}
-							This proposal is now stale because the local workspace changed after it was generated.
-						{:else if pendingProposal.proposal.kind === 'kanban'}
-							Board changes are ready to review and commit.
-						{:else}
-							Scratchpad changes are ready to review and commit.
-						{/if}
+						{proposalStatusText(pendingProposal)}
 					</p>
 					<div class="mt-3 flex flex-wrap gap-2 text-[10px] font-bold uppercase tracking-[0.22em]">
 						<span
@@ -710,27 +1079,27 @@
 						>
 							{pendingProposal.target}
 						</span>
-						{#if proposalPreviewActive}
+						{#if activeProposalTarget === pendingProposal.target}
 							<span
 								class="rounded-full border border-app-accent/25 bg-app-accent/10 px-3 py-1 text-app-accent"
 							>
 								Preview Open
 							</span>
 						{/if}
-						{#if pendingProposal.stale}
+						{#if pendingProposal.proposalSafety.outOfScope}
 							<span
 								class="rounded-full border border-amber-500/30 bg-amber-500/10 px-3 py-1 text-amber-200"
 							>
-								Needs Regeneration
+								Review Carefully
 							</span>
 						{/if}
 					</div>
-					<div class="mt-4 flex flex-wrap gap-3">
+					<div class="mt-3 flex flex-wrap gap-2.5">
 						{#if onReviewProposal}
 							<button
 								type="button"
-								class="inline-flex flex-1 items-center justify-center gap-2 rounded-xl border border-app-border bg-app-element px-4 py-2.5 text-sm font-semibold text-app-text"
-								on:click={onReviewProposal}
+								class="inline-flex flex-1 items-center justify-center gap-2 rounded-lg border border-app-border bg-app-element px-4 py-2 text-sm font-semibold text-app-text"
+								on:click={() => onReviewProposal && onReviewProposal(pendingProposal.target)}
 							>
 								<Info size={16} />
 								Review
@@ -738,38 +1107,36 @@
 						{/if}
 						<button
 							type="button"
-							disabled={pendingProposal.stale}
-							class={`inline-flex flex-1 items-center justify-center gap-2 rounded-xl px-4 py-2.5 text-sm font-semibold text-white ${
-								pendingProposal.stale ? 'cursor-not-allowed bg-app-primary/45' : 'bg-app-primary'
-							}`}
-							on:click={onAcceptProposal}
+							class="inline-flex flex-1 items-center justify-center gap-2 rounded-lg bg-app-primary px-4 py-2 text-sm font-semibold text-white"
+							on:click={() => onAcceptProposal(pendingProposal.id)}
 						>
 							<Check size={16} />
-							Commit
+							Apply
 						</button>
 						<button
 							type="button"
-							class="inline-flex flex-1 items-center justify-center gap-2 rounded-xl border border-app-border bg-app-element px-4 py-2.5 text-sm font-semibold text-app-text"
-							on:click={onRejectProposal}
+							class="inline-flex flex-1 items-center justify-center gap-2 rounded-lg border border-app-border bg-app-element px-4 py-2 text-sm font-semibold text-app-text"
+							on:click={() => onRejectProposal(pendingProposal.id)}
 						>
 							<XCircle size={16} />
 							Discard
 						</button>
 					</div>
 				</div>
-			{/if}
+			{/each}
 		</div>
 	</div>
+	{/if}
 
 	<div
 		class={`border-t border-app-border ${
-			isMobileChrome ? 'bg-app-surface/96 px-0 py-0' : 'px-4 py-3'
+			isMobileChrome ? 'bg-app-surface/96 px-0 py-0' : 'px-0 py-0'
 		}`}
 	>
 		<form
 			class={isMobileChrome
 				? 'space-y-2'
-				: 'relative rounded-[1.2rem] border border-app-border bg-app-bg px-3 pb-3 pt-3'}
+				: 'space-y-0'}
 			on:submit|preventDefault={submitComposer}
 		>
 			{#if queuedTaskCards.length}
@@ -778,7 +1145,7 @@
 				>
 					{#each queuedTaskCards as taskCard (taskCard.id)}
 						<div
-							class={`relative shrink-0 rounded-[1rem] border border-app-border bg-app-surface/90 ${
+							class={`relative shrink-0 rounded-lg border border-app-border bg-app-surface/90 ${
 								isMobileChrome ? 'w-[12.5rem] px-2.5 py-2' : 'w-[13.5rem] px-3 py-2.5'
 							}`}
 						>
@@ -822,7 +1189,7 @@
 				<div class={`${isMobileChrome ? 'space-y-2 px-3 pb-1' : 'mb-3 space-y-2'}`}>
 					{#each queuedAttachments as attachment (attachment.id)}
 						<div
-							class="relative flex items-center gap-3 rounded-[1rem] border border-app-border bg-app-surface/90 px-3 py-2.5 pr-10"
+							class="relative flex items-center gap-3 rounded-lg border border-app-border bg-app-surface/90 px-3 py-2.5 pr-10"
 						>
 							{#if attachment.kind === 'image'}
 								<button
@@ -834,7 +1201,7 @@
 									<img
 										src={attachment.content}
 										alt={attachment.name}
-										class="h-14 w-14 shrink-0 rounded-2xl border border-app-border object-cover"
+										class="h-14 w-14 shrink-0 rounded-lg border border-app-border object-cover"
 									/>
 									<div class="min-w-0 flex-1">
 										<p class="truncate text-sm font-semibold text-app-text">{attachment.name}</p>
@@ -850,7 +1217,7 @@
 								</button>
 							{:else}
 								<div
-									class="flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl border border-app-border bg-app-element text-app-subtext"
+									class="flex h-14 w-14 shrink-0 items-center justify-center rounded-lg border border-app-border bg-app-element text-app-subtext"
 								>
 									<Paperclip size={16} />
 								</div>
@@ -878,66 +1245,92 @@
 				</div>
 			{/if}
 
-			<div class={`flex items-end gap-2 ${isMobileChrome ? 'px-3 py-2' : ''}`}>
+			<div class={`flex flex-col gap-2 ${isMobileChrome ? 'px-3 py-2' : ''}`}>
 				<textarea
 					use:autosizeComposer={draft}
 					rows={1}
-					class={`min-h-0 flex-1 resize-none bg-transparent text-app-text outline-none transition-[height] duration-200 ease-out placeholder:text-app-subtext/50 ${
+					class={`min-h-0 w-full resize-none bg-transparent text-app-text outline-none transition-[height] duration-200 ease-out placeholder:text-app-subtext/50 ${
 						isMobileChrome
 							? 'px-0 py-1.5 text-[13px] leading-[1.45]'
-							: 'px-2.5 py-2 text-sm leading-[1.55]'
+							: 'px-4 py-3 text-[13px] leading-[1.55]'
 					}`}
 					placeholder={isProcessing
 						? 'Keep typing while the current reply finishes…'
-						: chatMode === 'chat'
-							? 'Ask a question…'
-							: 'Channel your intent…'}
-					enterkeyhint="send"
+						: ' or problem to research'}
+					enterkeyhint={isMobileChrome ? 'enter' : 'send'}
 					bind:value={draft}
 					on:input={() => onDraftChange(draft)}
 					on:change={() => onDraftChange(draft)}
 					on:keydown={(event) => {
-						if (event.key === 'Enter' && !event.shiftKey) {
+						if (event.key === 'Enter' && !event.shiftKey && !isMobileChrome) {
 							event.preventDefault();
 							submitComposer();
 						}
 					}}
+					on:paste={handleComposerPaste}
 				></textarea>
 
-				<div class={`flex shrink-0 items-center gap-1.5 ${isMobileChrome ? 'pb-0.5' : 'pb-1'}`}>
-					<label
-						class="relative rounded-full p-2 text-app-subtext transition hover:bg-app-element hover:text-app-primary focus-within:bg-app-element focus-within:text-app-primary"
-						title="Add attachment"
-						aria-label="Add attachment"
-					>
-						<Paperclip size={18} />
-						<input
-							bind:this={fileInput}
-							type="file"
-							multiple
+				<div class="flex items-center justify-between px-3">
+					<div class="flex items-center gap-1.5">
+						<label
+							class="relative rounded-md p-1.5 text-app-subtext transition hover:bg-app-element hover:text-app-text focus-within:bg-app-element focus-within:text-app-text"
+							title="Add attachment"
 							aria-label="Add attachment"
-							class="absolute inset-0 h-full w-full cursor-pointer opacity-0"
-							accept="image/*,text/*,.txt,.md,.json,.js,.jsx,.ts,.tsx,.css,.html"
-							on:change={(event) => handleFiles((event.currentTarget as HTMLInputElement).files)}
-						/>
-					</label>
+						>
+							<Paperclip size={16} />
+							<input
+								bind:this={fileInput}
+								type="file"
+								multiple
+								aria-label="Add attachment"
+								class="absolute inset-0 h-full w-full cursor-pointer opacity-0"
+								accept="image/*,text/*,.txt,.md,.json,.js,.jsx,.ts,.tsx,.css,.html"
+								on:change={(event) => handleFiles((event.currentTarget as HTMLInputElement).files)}
+							/>
+						</label>
 
-					<button
-						type="submit"
-						aria-disabled={!canSendMessage()}
-						class={`inline-flex h-10 w-10 items-center justify-center rounded-full bg-app-primary text-white transition ${
-							canSendMessage()
-								? 'hover:-translate-y-0.5 hover:bg-app-primary-hover'
-								: 'cursor-not-allowed opacity-50'
-						}`}
-						title="Send message"
-					>
-						{#if isProcessing}
-							<LoaderCircle size={16} class="animate-spin" />
-						{:else}
-							<Send size={16} />
-						{/if}
-					</button>
+						
+
+						<select
+							class="rounded-md bg-transparent px-2 py-1.5 text-xs text-app-subtext outline-none transition hover:bg-app-element hover:text-app-text cursor-pointer"
+							value={modelId}
+							on:change={(event) => onModelChange((event.currentTarget as HTMLSelectElement).value)}
+						>
+							{#each modelOptions as option}
+								<option value={option.id}>{option.id}</option>
+							{/each}
+						</select>
+
+						<select
+							class="rounded-md bg-transparent px-2 py-1.5 text-xs text-app-subtext outline-none transition hover:bg-app-element hover:text-app-text cursor-pointer"
+							value={thinkingLevel}
+							on:change={(event) => onThinkingLevelChange((event.currentTarget as HTMLSelectElement).value as import('$lib/kainbu/types').AiThinkingLevel)}
+						>
+							<option value="none">No thinking</option>
+							<option value="low">Think low</option>
+							<option value="medium">Think medium</option>
+							<option value="high">Think high</option>
+						</select>
+					</div>
+
+					<div class={`flex shrink-0 items-center gap-1.5 ${isMobileChrome ? 'pb-0.5' : 'pb-1'}`}>
+						<button
+							type="submit"
+							aria-disabled={!canSendMessage()}
+							class={`inline-flex items-center justify-center rounded-md p-1.5 text-app-subtext transition ${
+								canSendMessage()
+									? 'hover:text-app-text hover:bg-app-element'
+									: 'cursor-not-allowed opacity-50'
+							}`}
+							title="Send message"
+						>
+							{#if isProcessing}
+								<LoaderCircle size={16} class="animate-spin" />
+							{:else}
+								<Send size={16} />
+							{/if}
+						</button>
+					</div>
 				</div>
 			</div>
 		</form>
@@ -977,14 +1370,25 @@
 						Pinch or scroll to zoom
 					</p>
 				</div>
-				<button
-					type="button"
-					class="rounded-full border border-app-border bg-app-element p-2 text-app-subtext transition hover:border-app-primary/35 hover:text-app-text"
-					on:click={closeAttachmentPreview}
-					aria-label="Close image preview"
-				>
-					<X size={18} />
-				</button>
+				<div class="flex items-center gap-2">
+					<button
+						type="button"
+						class="rounded-full border border-app-border bg-app-element p-2 text-app-subtext transition hover:border-app-primary/35 hover:text-app-text"
+						on:click={openPreviewInNewTab}
+						aria-label="Open image in full screen"
+						title="Open full screen"
+					>
+						<ExternalLink size={16} />
+					</button>
+					<button
+						type="button"
+						class="rounded-full border border-app-border bg-app-element p-2 text-app-subtext transition hover:border-app-primary/35 hover:text-app-text"
+						on:click={closeAttachmentPreview}
+						aria-label="Close image preview"
+					>
+						<X size={18} />
+					</button>
+				</div>
 			</div>
 
 			<div

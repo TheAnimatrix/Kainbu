@@ -75,6 +75,7 @@ export const diffWords = (oldText: string, newText: string): TextDiffPart[] => {
 
 export interface DiffTask extends Task {
 	_status?: 'added' | 'removed' | 'modified' | 'unchanged';
+	_originalTask?: Task;
 }
 
 export interface DiffColumn extends Column {
@@ -112,6 +113,7 @@ const areTasksEqual = (left: Task, right: Task) => {
 	if (left.completedAt !== right.completedAt) return false;
 	if (left.countdownAt !== right.countdownAt) return false;
 	if (left.alarmAt !== right.alarmAt) return false;
+	if ((left.assignedTo || '') !== (right.assignedTo || '')) return false;
 	return areTagsEqual(left.tags || [], right.tags || []);
 };
 
@@ -152,13 +154,14 @@ export const computeKanbanDiff = (original: KanbanData, proposed: KanbanData): D
 
 			mergedTasks.push({
 				...proposedTask,
-				_status: areTasksEqual(originalTask, proposedTask) ? 'unchanged' : 'modified'
+				_status: areTasksEqual(originalTask, proposedTask) ? 'unchanged' : 'modified',
+				_originalTask: originalTask
 			});
 		}
 
 		for (const originalTask of originalColumn.tasks) {
 			if (!proposedTaskMap.has(originalTask.id)) {
-				mergedTasks.push({ ...originalTask, _status: 'removed' });
+				mergedTasks.push({ ...originalTask, _status: 'removed', _originalTask: originalTask });
 			}
 		}
 

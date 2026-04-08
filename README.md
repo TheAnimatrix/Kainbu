@@ -48,6 +48,7 @@ Even after running the script, you must manually:
 - Android Studio
 - Supabase Project
 - Google Cloud Console Project
+- `ANDROID_HOME` or `ANDROID_SDK_ROOT` pointing at your Android SDK if you build from the CLI
 
 ## Setup & Installation
 
@@ -101,6 +102,7 @@ Even after running the script, you must manually:
     npm run build
     npx cap sync
     ```
+    CLI Android builds also create `android/local.properties` automatically from `ANDROID_HOME` or `ANDROID_SDK_ROOT` when it is missing.
 
 ### Daily Development
 

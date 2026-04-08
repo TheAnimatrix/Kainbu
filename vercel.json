@@ -12,6 +12,10 @@
 			"includeFiles": "server/**/*",
 			"maxDuration": 60
 		},
+		"api/workspace-ai/**/*.js": {
+			"includeFiles": "server/**/*",
+			"maxDuration": 60
+		},
 		"api/workspace-ai.js": {
 			"includeFiles": "server/**/*",
 			"maxDuration": 60

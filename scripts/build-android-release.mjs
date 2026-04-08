@@ -2,10 +2,11 @@ import { existsSync } from 'node:fs';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 import process from 'node:process';
+import { ensureAndroidSdk } from './ensure-android-sdk.mjs';
+import { runGradle } from './run-gradle.mjs';
 
 const projectRoot = process.cwd();
 const androidDir = path.join(projectRoot, 'android');
-const gradleCommand = process.platform === 'win32' ? 'gradlew.bat' : './gradlew';
 const releaseApkPath = path.join(androidDir, 'app', 'build', 'outputs', 'apk', 'release', 'app-release.apk');
 
 const runStep = (label, command, args, cwd = projectRoot) =>
@@ -36,12 +37,9 @@ const runStep = (label, command, args, cwd = projectRoot) =>
 try {
 	await runStep('Build web app', 'npm', ['run', 'build']);
 	await runStep('Sync Capacitor Android project', 'npx', ['cap', 'sync', 'android']);
-	await runStep(
-		'Assemble signed Android release APK',
-		gradleCommand,
-		['assembleRelease', '-x', 'lintVitalAnalyzeRelease'],
-		androidDir
-	);
+	ensureAndroidSdk(projectRoot);
+	console.log('\n==> Assemble signed Android release APK');
+	await runGradle(['assembleRelease', '-x', 'lintVitalAnalyzeRelease'], projectRoot);
 
 	if (!existsSync(releaseApkPath)) {
 		throw new Error(`Release APK was not found at ${releaseApkPath}.`);

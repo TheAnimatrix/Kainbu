@@ -1,0 +1,957 @@
+import type { IntentFocus, ToolFocus, ToolIntent } from "@/lib/chat-context";
+
+const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY;
+const OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1";
+const INTENT_MODEL = "gpt-oss-safeguard-20b";
+const INTENT_TIMEOUT_MS = 5000;
+const INTENT_MAX_TOKENS_TOOL_CALL = 256;
+const INTENT_MAX_TOKENS_JSON = 160;
+const INTENT_MAX_TOKENS_TEXT = 128;
+const REASONING_REQUIRED_MODEL_HINTS = ["gpt-oss", "o1-", "gpt-5", "reasoner", "deepseek-r1"];
+const VERBOSE_INTENT_CLASSIFIER_LOGS = process.env.DEBUG_INTENT_CLASSIFIER === "1";
+
+const ALLOWED_INTENTS = new Set<ToolIntent>(["CHAT", "READ", "FULL"]);
+const ALLOWED_FOCUSES = new Set<ToolFocus>(["GENERAL", "SPECIFIC"]);
+
+interface OpenRouterIntentResponse {
+  choices?: Array<{
+    finish_reason?: unknown;
+    native_finish_reason?: unknown;
+    index?: unknown;
+    logprobs?: unknown;
+    message?: {
+      role?: unknown;
+      content?: unknown;
+      refusal?: unknown;
+      tool_calls?: Array<{
+        id?: unknown;
+        type?: unknown;
+        function?: {
+          name?: string;
+          arguments?: unknown;
+        };
+      }>;
+    };
+    text?: unknown;
+  }>;
+  output_text?: unknown;
+  output?: unknown;
+  reasoning?: unknown;
+  provider?: unknown;
+  model?: unknown;
+}
+
+const DEFAULT_INTENT_FOCUS: IntentFocus = {
+  intent: "FULL",
+  focus: "GENERAL",
+  raw: "",
+  fallbackUsed: true,
+  fallbackReason: "fallback_default",
+};
+
+const CLASSIFIER_TOOL_NAME = "set_intent_focus";
+
+type ProviderStrategy = "zdr_auto";
+type RequestMode = "tool_call" | "json_schema" | "csv_text";
+
+interface RequestClassifierOptions {
+  mode: RequestMode;
+  providerStrategy: ProviderStrategy;
+  signal: AbortSignal;
+}
+
+interface ClassifierResponseMeta {
+  providerHeader?: string;
+  modelHeader?: string;
+  requestId?: string;
+}
+
+interface ClassifierResponsePayload {
+  data: OpenRouterIntentResponse;
+  meta: ClassifierResponseMeta;
+}
+
+function needsReasoning(model: string): boolean {
+  const normalized = model.toLowerCase();
+  return REASONING_REQUIRED_MODEL_HINTS.some((hint) => normalized.includes(hint));
+}
+
+interface IntentAttemptSummary {
+  label: string;
+  mode: RequestMode;
+  providerStrategy: ProviderStrategy;
+  providerHeader?: string;
+  modelHeader?: string;
+  requestId?: string;
+  providerReturned?: string;
+  modelReturned?: string;
+  hasChoices: boolean;
+  hasOutputText: boolean;
+  hasOutput: boolean;
+  finishReason?: string;
+  nativeFinishReason?: string;
+  refusalSnippet?: string;
+  toolCallsCount: number;
+  firstToolName?: string;
+  firstToolArgsSnippet?: string;
+  firstChoiceJsonSnippet?: string;
+  firstMessageJsonSnippet?: string;
+  extractedTextSource?: string;
+  extractedTextSnippet?: string;
+}
+
+function tryParseStrictCsvPair(rawIntent: string): { intent: ToolIntent; focus: ToolFocus } | null {
+  const strictMatch = rawIntent.match(/\b(CHAT|READ|FULL)\s*,\s*(GENERAL|SPECIFIC)\b/i);
+  if (!strictMatch) return null;
+
+  const intent = strictMatch[1].toUpperCase() as ToolIntent;
+  const focus = strictMatch[2].toUpperCase() as ToolFocus;
+  if (!ALLOWED_INTENTS.has(intent) || !ALLOWED_FOCUSES.has(focus)) {
+    return null;
+  }
+
+  return { intent, focus };
+}
+
+function tryExtractIntentFocusFromText(rawIntent: string): { intent: ToolIntent; focus: ToolFocus } | null {
+  const normalized = rawIntent.toUpperCase();
+  const intentMatch = normalized.match(/\b(CHAT|READ|FULL)\b/);
+  const focusMatch = normalized.match(/\b(GENERAL|SPECIFIC)\b/);
+
+  if (!intentMatch || !focusMatch) {
+    return null;
+  }
+
+  const intent = intentMatch[1] as ToolIntent;
+  const focus = focusMatch[1] as ToolFocus;
+  if (!ALLOWED_INTENTS.has(intent) || !ALLOWED_FOCUSES.has(focus)) {
+    return null;
+  }
+
+  return { intent, focus };
+}
+
+function parseIntentFocus(rawIntent: string | undefined): IntentFocus {
+  const raw = rawIntent?.trim() ?? "";
+  if (!raw) {
+    return {
+      ...DEFAULT_INTENT_FOCUS,
+      raw,
+      fallbackReason: "empty_classifier_output",
+    };
+  }
+
+  const strictParsed = tryParseStrictCsvPair(raw);
+  if (strictParsed) {
+    return {
+      intent: strictParsed.intent,
+      focus: strictParsed.focus,
+      raw,
+      fallbackUsed: false,
+    };
+  }
+
+  const extracted = tryExtractIntentFocusFromText(raw);
+  if (extracted) {
+    return {
+      intent: extracted.intent,
+      focus: extracted.focus,
+      raw,
+      fallbackUsed: true,
+      fallbackReason: "non_csv_output_extracted",
+    };
+  }
+
+  return {
+    ...DEFAULT_INTENT_FOCUS,
+    raw,
+    fallbackReason: "parse_failed",
+  };
+}
+
+function detectIntentFocusHeuristically(message: string): IntentFocus | null {
+  const normalized = message.trim().toLowerCase();
+  if (!normalized) {
+    return null;
+  }
+
+  const taskboardNouns =
+    /\b(task|tasks|taskboard|board|boards|column|columns|status|statuses|label|labels|version|versions|checkbox|gantt|kanban|list)\b/.test(
+      normalized
+    );
+  const readIntent =
+    /^(show|list|get|read|view|display|check|what(?:'s| is)|which)\b/.test(normalized) ||
+    /\b(show|list|get|read|view|display)\b/.test(normalized);
+  const writeIntent =
+    /^(create|add|update|edit|rename|delete|remove|move|assign|mark|set|toggle|enable|disable|hide|unhide)\b/.test(normalized) ||
+    /\b(create|add|update|edit|rename|delete|remove|move|assign|mark|set|toggle|enable|disable|hide|unhide)\b/.test(normalized);
+  const specificFocus =
+    /\b(this|that|these|those|board|taskboard|column|status|task|label|version|there|named|called|id)\b/.test(normalized) ||
+    /["'].*?["']/.test(normalized);
+
+  if (writeIntent && taskboardNouns) {
+    const focus: ToolFocus = specificFocus ? "SPECIFIC" : "GENERAL";
+    return {
+      intent: "FULL",
+      focus,
+      raw: `FULL,${focus}`,
+      fallbackUsed: false,
+    };
+  }
+
+  if (readIntent && taskboardNouns) {
+    const focus: ToolFocus = specificFocus ? "SPECIFIC" : "GENERAL";
+    return {
+      intent: "READ",
+      focus,
+      raw: `READ,${focus}`,
+      fallbackUsed: false,
+    };
+  }
+
+  return null;
+}
+
+function safeString(value: unknown): string | undefined {
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    return trimmed.length > 0 ? trimmed : undefined;
+  }
+
+  if (value === null || value === undefined) {
+    return undefined;
+  }
+
+  if (typeof value === "number" || typeof value === "boolean") {
+    return String(value);
+  }
+
+  return undefined;
+}
+
+function normalizeFunctionName(value: unknown): string {
+  return safeString(value)?.toLowerCase() ?? "";
+}
+
+function normalizeIntentFocusPair(
+  intentValue: unknown,
+  focusValue: unknown
+): { intent: ToolIntent; focus: ToolFocus } | null {
+  const intent = typeof intentValue === "string" ? intentValue.toUpperCase() as ToolIntent : undefined;
+  const focus = typeof focusValue === "string" ? focusValue.toUpperCase() as ToolFocus : undefined;
+
+  if (!intent || !focus) return null;
+  if (!ALLOWED_INTENTS.has(intent) || !ALLOWED_FOCUSES.has(focus)) return null;
+  return { intent, focus };
+}
+
+function extractIntentFocusFromCandidateString(raw: string): { intent: ToolIntent; focus: ToolFocus } | null {
+  const trimmed = raw.trim();
+  if (!trimmed) {
+    return null;
+  }
+
+  const strict = tryParseStrictCsvPair(trimmed);
+  if (strict) {
+    return strict;
+  }
+
+  const jsonCandidate = parseJsonObject(trimmed);
+  if (jsonCandidate) {
+    const parsedFromJson = normalizeIntentFocusPair(jsonCandidate.intent, jsonCandidate.focus);
+    if (parsedFromJson) {
+      return parsedFromJson;
+    }
+  }
+
+  const labeledIntentMatch = trimmed.match(/\bintent\b\s*[:=]\s*(CHAT|READ|FULL)\b/i);
+  const labeledFocusMatch = trimmed.match(/\bfocus\b\s*[:=]\s*(GENERAL|SPECIFIC)\b/i);
+  if (labeledIntentMatch && labeledFocusMatch) {
+    const parsed = normalizeIntentFocusPair(labeledIntentMatch[1], labeledFocusMatch[1]);
+    if (parsed) {
+      return parsed;
+    }
+  }
+
+  const tupleMatch = trimmed.match(/\b(CHAT|READ|FULL)\s*[|/;,]\s*(GENERAL|SPECIFIC)\b/i);
+  if (tupleMatch) {
+    const parsed = normalizeIntentFocusPair(tupleMatch[1], tupleMatch[2]);
+    if (parsed) {
+      return parsed;
+    }
+  }
+
+  return null;
+}
+
+function parseJsonObject(raw: unknown): Record<string, unknown> | null {
+  if (raw && typeof raw === "object" && !Array.isArray(raw)) {
+    return raw as Record<string, unknown>;
+  }
+
+  if (typeof raw !== "string") {
+    return null;
+  }
+
+  const trimmed = raw.trim();
+  if (!trimmed) {
+    return null;
+  }
+
+  try {
+    const parsed = JSON.parse(trimmed);
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+      return parsed as Record<string, unknown>;
+    }
+  } catch {
+    return null;
+  }
+
+  return null;
+}
+
+function extractIntentFocusFromObject(obj: Record<string, unknown>): { intent: ToolIntent; focus: ToolFocus } | null {
+  const direct = normalizeIntentFocusPair(obj.intent, obj.focus);
+  if (direct) {
+    return direct;
+  }
+
+  const nestedDirectCandidates = [
+    parseJsonObject(obj.intent_focus),
+    parseJsonObject(obj.intentFocus),
+    parseJsonObject(obj.classification),
+    parseJsonObject(obj.result),
+  ].filter((item): item is Record<string, unknown> => Boolean(item));
+
+  for (const candidate of nestedDirectCandidates) {
+    const normalized = normalizeIntentFocusPair(candidate.intent, candidate.focus);
+    if (normalized) {
+      return normalized;
+    }
+  }
+
+  const maybeArgs = [
+    parseJsonObject(obj.arguments),
+    parseJsonObject(obj.args),
+    parseJsonObject(obj.input),
+    parseJsonObject(obj.parameters),
+    parseJsonObject(obj.response),
+  ].filter((item): item is Record<string, unknown> => Boolean(item));
+
+  for (const argsObj of maybeArgs) {
+    const parsed = normalizeIntentFocusPair(argsObj.intent, argsObj.focus);
+    if (parsed) {
+      return parsed;
+    }
+  }
+
+  return null;
+}
+
+function extractIntentFocusFromStructuredPayload(
+  payload: unknown,
+  sourcePrefix: string
+): { intent: ToolIntent; focus: ToolFocus; source: string } | null {
+  const queue: Array<{ value: unknown; source: string }> = [{ value: payload, source: sourcePrefix }];
+  const visited = new Set<object>();
+
+  while (queue.length > 0) {
+    const next = queue.shift();
+    if (!next) break;
+
+    const { value, source } = next;
+    if (typeof value === "string") {
+      const parsedString = extractIntentFocusFromCandidateString(value);
+      if (parsedString) {
+        return { ...parsedString, source };
+      }
+
+      const parsedJson = parseJsonObject(value);
+      if (parsedJson) {
+        queue.push({ value: parsedJson, source: `${source}.json` });
+      }
+
+      continue;
+    }
+
+    if (!value || typeof value !== "object") {
+      continue;
+    }
+
+    if (visited.has(value)) {
+      continue;
+    }
+    visited.add(value);
+
+    if (Array.isArray(value)) {
+      value.forEach((entry, index) => {
+        queue.push({ value: entry, source: `${source}[${index}]` });
+      });
+      continue;
+    }
+
+    const record = value as Record<string, unknown>;
+    const parsed = extractIntentFocusFromObject(record);
+    if (parsed) {
+      return { ...parsed, source };
+    }
+
+    for (const [key, nested] of Object.entries(record)) {
+      if (typeof nested === "object" && nested !== null) {
+        queue.push({ value: nested, source: `${source}.${key}` });
+        continue;
+      }
+
+      if (typeof nested === "string") {
+        queue.push({ value: nested, source: `${source}.${key}` });
+      }
+    }
+  }
+
+  return null;
+}
+
+function extractTextFromUnknown(value: unknown): string {
+  if (typeof value === "string") {
+    return value;
+  }
+
+  if (Array.isArray(value)) {
+    const parts = value
+      .map((item) => extractTextFromUnknown(item))
+      .filter((item) => item.trim().length > 0);
+    return parts.join(" ").trim();
+  }
+
+  if (value && typeof value === "object") {
+    const record = value as Record<string, unknown>;
+    const directText = typeof record.text === "string" ? record.text : "";
+    if (directText.trim()) {
+      return directText.trim();
+    }
+
+    const directContent = extractTextFromUnknown(record.content);
+    if (directContent.trim()) {
+      return directContent.trim();
+    }
+  }
+
+  return "";
+}
+
+function extractIntentRaw(data: OpenRouterIntentResponse): { raw: string; source: string } {
+  const choice = data.choices?.[0];
+  if (!choice) {
+    return { raw: "", source: "no_choice" };
+  }
+
+  const candidateSources: Array<{ source: string; value: unknown }> = [
+    { source: "choice.message.content", value: choice.message?.content },
+    { source: "choice.text", value: choice.text },
+    { source: "response.output_text", value: data.output_text },
+  ];
+
+  for (const candidate of candidateSources) {
+    const extracted = extractTextFromUnknown(candidate.value).trim();
+    if (extracted) {
+      return { raw: extracted, source: candidate.source };
+    }
+  }
+
+  return { raw: "", source: "empty_choice_fields" };
+}
+
+function summarizeIntentResponse(
+  label: string,
+  mode: RequestMode,
+  providerStrategy: ProviderStrategy,
+  data: OpenRouterIntentResponse,
+  meta?: ClassifierResponseMeta
+): IntentAttemptSummary {
+  const choice = data.choices?.[0];
+  const message = choice?.message;
+  const toolCalls = Array.isArray(message?.tool_calls) ? message.tool_calls : [];
+  const firstToolCall = toolCalls[0];
+  const firstToolName = safeString(firstToolCall?.function?.name);
+  const firstToolArgsRaw = firstToolCall?.function?.arguments;
+
+  let firstToolArgsSnippet: string | undefined;
+  if (typeof firstToolArgsRaw === "string") {
+    firstToolArgsSnippet = firstToolArgsRaw.slice(0, 120);
+  } else if (firstToolArgsRaw && typeof firstToolArgsRaw === "object") {
+    firstToolArgsSnippet = JSON.stringify(firstToolArgsRaw).slice(0, 120);
+  }
+
+  const extractedText = extractIntentRaw(data);
+  const firstChoiceJsonSnippet =
+    choice && typeof choice === "object"
+      ? JSON.stringify(choice).slice(0, 220)
+      : undefined;
+  const firstMessageJsonSnippet =
+    message && typeof message === "object"
+      ? JSON.stringify(message).slice(0, 220)
+      : undefined;
+
+  return {
+    label,
+    mode,
+    providerStrategy,
+    providerHeader: meta?.providerHeader,
+    modelHeader: meta?.modelHeader,
+    requestId: meta?.requestId,
+    providerReturned: safeString(data.provider),
+    modelReturned: safeString(data.model),
+    hasChoices: Array.isArray(data.choices) && data.choices.length > 0,
+    hasOutputText: typeof data.output_text === "string" && data.output_text.trim().length > 0,
+    hasOutput: data.output !== undefined && data.output !== null,
+    finishReason: safeString(choice?.finish_reason),
+    nativeFinishReason: safeString(choice?.native_finish_reason),
+    refusalSnippet: safeString(message?.refusal)?.slice(0, 120),
+    toolCallsCount: toolCalls.length,
+    firstToolName,
+    firstToolArgsSnippet,
+    firstChoiceJsonSnippet,
+    firstMessageJsonSnippet,
+    extractedTextSource: extractedText.source,
+    extractedTextSnippet: extractedText.raw.slice(0, 120),
+  };
+}
+
+function extractIntentFocusFromToolCall(data: OpenRouterIntentResponse): { intent: ToolIntent; focus: ToolFocus } | null {
+  const structuredChoice = extractIntentFocusFromStructuredPayload(data.choices?.[0], "choice");
+  if (structuredChoice) {
+    return {
+      intent: structuredChoice.intent,
+      focus: structuredChoice.focus,
+    };
+  }
+
+  const structuredOutput = extractIntentFocusFromStructuredPayload(data.output, "response.output");
+  if (structuredOutput) {
+    return {
+      intent: structuredOutput.intent,
+      focus: structuredOutput.focus,
+    };
+  }
+
+  const toolCalls = data.choices?.[0]?.message?.tool_calls;
+  if (!Array.isArray(toolCalls) || toolCalls.length === 0) {
+    return null;
+  }
+
+  for (const toolCall of toolCalls) {
+    const functionPayload = toolCall.function;
+    if (!functionPayload) {
+      continue;
+    }
+
+    const functionName = normalizeFunctionName(functionPayload.name);
+    if (functionName && functionName !== CLASSIFIER_TOOL_NAME.toLowerCase()) {
+      continue;
+    }
+
+    let argumentsObj: Record<string, unknown> | null = null;
+    const rawArgs = functionPayload.arguments;
+    if (typeof rawArgs === "string") {
+      try {
+        const parsed = JSON.parse(rawArgs);
+        if (parsed && typeof parsed === "object") {
+          argumentsObj = parsed as Record<string, unknown>;
+        }
+      } catch {
+        argumentsObj = null;
+      }
+    } else if (rawArgs && typeof rawArgs === "object") {
+      argumentsObj = rawArgs as Record<string, unknown>;
+    }
+
+    if (argumentsObj) {
+      const normalized = extractIntentFocusFromObject(argumentsObj) ?? normalizeIntentFocusPair(argumentsObj.intent, argumentsObj.focus);
+      if (normalized) {
+        return normalized;
+      }
+    }
+
+    const normalized = typeof rawArgs === "string" ? extractIntentFocusFromCandidateString(rawArgs) : null;
+    if (normalized) {
+      return normalized;
+    }
+  }
+
+  return null;
+}
+
+function buildProviderRouting(): Record<string, unknown> {
+  return {
+    allow_fallbacks: true,
+    require_parameters: true,
+    data_collection: "deny",
+  };
+}
+
+async function requestClassifier(
+  trimmedMessage: string,
+  options: RequestClassifierOptions
+): Promise<ClassifierResponsePayload> {
+  const { mode, signal } = options;
+  const forceToolCall = mode === "tool_call";
+  const jsonSchemaMode = mode === "json_schema";
+  const shouldDisableReasoning = !needsReasoning(INTENT_MODEL);
+
+  const body: Record<string, unknown> = {
+    model: INTENT_MODEL,
+    temperature: 0,
+    max_tokens: forceToolCall
+      ? INTENT_MAX_TOKENS_TOOL_CALL
+      : jsonSchemaMode
+        ? INTENT_MAX_TOKENS_JSON
+        : INTENT_MAX_TOKENS_TEXT,
+    ...(shouldDisableReasoning
+      ? {
+          reasoning: {
+            effort: "none",
+            exclude: true,
+          },
+          include_reasoning: false,
+        }
+      : {
+          reasoning: {
+            effort: "low",
+          },
+        }),
+    provider: buildProviderRouting(),
+    messages: forceToolCall
+      ? [
+          {
+            role: "system",
+            content:
+              "Classify the user's message by calling the set_intent_focus function. Set intent to CHAT, READ, or FULL and focus to GENERAL or SPECIFIC.",
+          },
+          {
+            role: "user",
+            content: trimmedMessage,
+          },
+        ]
+      : jsonSchemaMode
+        ? [
+            {
+              role: "system",
+              content:
+                "Classify the user's message into intent and focus. Return only a JSON object with keys intent and focus. intent must be CHAT, READ, or FULL. focus must be GENERAL or SPECIFIC.",
+            },
+            {
+              role: "user",
+              content: trimmedMessage,
+            },
+          ]
+        : [
+          {
+            role: "system",
+            content:
+              "Classify the user's message and return exactly one CSV pair in ALL CAPS: INTENT,FOCUS. Allowed intents: CHAT, READ, FULL. Allowed focus: GENERAL, SPECIFIC. Example: READ,SPECIFIC. No extra text.",
+          },
+          {
+            role: "user",
+            content: trimmedMessage,
+          },
+        ],
+  };
+
+  if (forceToolCall) {
+    body.tools = [
+      {
+        type: "function",
+        function: {
+          name: CLASSIFIER_TOOL_NAME,
+          description: "Return the intent and focus classification for the message.",
+          parameters: {
+            type: "object",
+            properties: {
+              intent: {
+                type: "string",
+                enum: ["CHAT", "READ", "FULL"],
+              },
+              focus: {
+                type: "string",
+                enum: ["GENERAL", "SPECIFIC"],
+              },
+            },
+            required: ["intent", "focus"],
+          },
+        },
+      },
+    ];
+    body.tool_choice = {
+      type: "function",
+      function: {
+        name: CLASSIFIER_TOOL_NAME,
+      },
+    };
+  } else if (jsonSchemaMode) {
+    body.response_format = {
+      type: "json_schema",
+      json_schema: {
+        name: "intent_focus",
+        strict: true,
+        schema: {
+          type: "object",
+          additionalProperties: false,
+          properties: {
+            intent: {
+              type: "string",
+              enum: ["CHAT", "READ", "FULL"],
+            },
+            focus: {
+              type: "string",
+              enum: ["GENERAL", "SPECIFIC"],
+            },
+          },
+          required: ["intent", "focus"],
+        },
+      },
+    };
+  }
+
+  const response = await fetch(`${OPENROUTER_BASE_URL}/chat/completions`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${OPENROUTER_API_KEY}`,
+      "HTTP-Referer": "https://ideonite.com",
+      "X-Title": "Ideonite Intent Classifier",
+    },
+    body: JSON.stringify(body),
+    signal,
+  });
+
+  if (!response.ok) {
+    const errorText = await response.text().catch(() => "");
+    throw new Error(`Intent classifier request failed (${response.status}) ${errorText.slice(0, 200)}`);
+  }
+
+  const providerHeader =
+    response.headers?.get?.("x-openrouter-provider") ??
+    response.headers?.get?.("openrouter-provider") ??
+    undefined;
+  const modelHeader =
+    response.headers?.get?.("x-openrouter-model") ??
+    response.headers?.get?.("openrouter-model") ??
+    undefined;
+  const requestId =
+    response.headers?.get?.("x-request-id") ??
+    response.headers?.get?.("x-openrouter-request-id") ??
+    response.headers?.get?.("cf-ray") ??
+    undefined;
+
+  return {
+    data: (await response.json()) as OpenRouterIntentResponse,
+    meta: {
+      providerHeader,
+      modelHeader,
+      requestId,
+    },
+  };
+}
+
+export async function detectIntentWithOpenRouter(message: string): Promise<IntentFocus> {
+  const trimmedMessage = message.trim();
+  if (!trimmedMessage) {
+    const result: IntentFocus = {
+      ...DEFAULT_INTENT_FOCUS,
+      fallbackReason: "empty_message",
+    };
+    console.log("[IntentClassifier]", {
+      intentModel: INTENT_MODEL,
+      intentRaw: result.raw,
+      intentResolved: result.intent,
+      focusResolved: result.focus,
+      intentFallbackUsed: result.fallbackUsed,
+      intentFallbackReason: result.fallbackReason,
+      messageSnippet: trimmedMessage.slice(0, 80),
+    });
+    return result;
+  }
+
+  const heuristicResult = detectIntentFocusHeuristically(trimmedMessage);
+  if (heuristicResult) {
+    console.log("[IntentClassifier]", {
+      classifierVersion: "v5_heuristic_prefilter",
+      intentModel: INTENT_MODEL,
+      classifierAttempt: "local_heuristic",
+      intentRawSource: "local_heuristic",
+      intentRaw: heuristicResult.raw,
+      intentResolved: heuristicResult.intent,
+      focusResolved: heuristicResult.focus,
+      intentFallbackUsed: heuristicResult.fallbackUsed,
+      messageSnippet: trimmedMessage.slice(0, 80),
+    });
+    return heuristicResult;
+  }
+
+  if (!OPENROUTER_API_KEY) {
+    const result: IntentFocus = {
+      ...DEFAULT_INTENT_FOCUS,
+      fallbackReason: "missing_openrouter_api_key",
+    };
+    console.log("[IntentClassifier]", {
+      intentModel: INTENT_MODEL,
+      intentRaw: result.raw,
+      intentResolved: result.intent,
+      focusResolved: result.focus,
+      intentFallbackUsed: result.fallbackUsed,
+      intentFallbackReason: result.fallbackReason,
+      messageSnippet: trimmedMessage.slice(0, 80),
+    });
+    return result;
+  }
+
+  const preferToolCallFirst = INTENT_MODEL.toLowerCase().includes("gpt-oss");
+  const attempts: Array<{ label: string; mode: RequestMode; providerStrategy: ProviderStrategy }> = preferToolCallFirst
+    ? [
+        { label: "primary_tool_call_auto_zdr", mode: "tool_call", providerStrategy: "zdr_auto" },
+        { label: "secondary_csv_text_auto_zdr", mode: "csv_text", providerStrategy: "zdr_auto" },
+        { label: "tertiary_json_schema_auto_zdr", mode: "json_schema", providerStrategy: "zdr_auto" },
+      ]
+    : [
+        { label: "primary_json_schema_auto_zdr", mode: "json_schema", providerStrategy: "zdr_auto" },
+        { label: "secondary_csv_text_auto_zdr", mode: "csv_text", providerStrategy: "zdr_auto" },
+        { label: "tertiary_tool_call_auto_zdr", mode: "tool_call", providerStrategy: "zdr_auto" },
+      ];
+
+  let intentRaw: string | undefined;
+  let intentRawSource = "unresolved";
+  let classifierAttempt = attempts[0].label;
+  let resolved: IntentFocus = DEFAULT_INTENT_FOCUS;
+  let resolvedAttemptIndex: number | undefined;
+  let lastParseFallbackReason: string | undefined;
+  const attemptSummaries: IntentAttemptSummary[] = [];
+  const attemptErrors: Array<{ label: string; mode: RequestMode; providerStrategy: ProviderStrategy; error: string }> = [];
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), INTENT_TIMEOUT_MS);
+
+  try {
+    for (let index = 0; index < attempts.length; index++) {
+      const attempt = attempts[index];
+      classifierAttempt = attempt.label;
+      let data: OpenRouterIntentResponse | undefined;
+      let responseMeta: ClassifierResponseMeta | undefined;
+
+      try {
+        const responsePayload = await requestClassifier(trimmedMessage, {
+          mode: attempt.mode,
+          providerStrategy: attempt.providerStrategy,
+          signal: controller.signal,
+        });
+        data = responsePayload.data;
+        responseMeta = responsePayload.meta;
+      } catch (attemptError) {
+        if (attemptError instanceof Error && attemptError.name === "AbortError") {
+          throw attemptError;
+        }
+
+        attemptErrors.push({
+          label: attempt.label,
+          mode: attempt.mode,
+          providerStrategy: attempt.providerStrategy,
+          error: attemptError instanceof Error ? attemptError.message.slice(0, 200) : String(attemptError),
+        });
+        continue;
+      }
+
+      const summary = summarizeIntentResponse(attempt.label, attempt.mode, attempt.providerStrategy, data, responseMeta);
+      attemptSummaries.push(summary);
+
+      const structuredResult = extractIntentFocusFromToolCall(data);
+      if (structuredResult) {
+        intentRaw = `${structuredResult.intent},${structuredResult.focus}`;
+        intentRawSource = `${attempt.label}.structured`;
+        resolvedAttemptIndex = index;
+        resolved = {
+          intent: structuredResult.intent,
+          focus: structuredResult.focus,
+          raw: intentRaw,
+          fallbackUsed: index > 0,
+          ...(index > 0 ? { fallbackReason: `resolved_on_${attempt.label}` } : {}),
+        };
+        break;
+      }
+
+      const extracted = extractIntentRaw(data);
+      intentRaw = extracted.raw;
+      intentRawSource = `${attempt.label}.${extracted.source}`;
+
+      if (!extracted.raw) {
+        lastParseFallbackReason = "empty_classifier_output";
+        continue;
+      }
+
+      const parsed = parseIntentFocus(extracted.raw);
+      if (!parsed.fallbackUsed || parsed.fallbackReason === "non_csv_output_extracted") {
+        const shouldMarkFallback = index > 0 || parsed.fallbackUsed;
+        const fallbackReason =
+          index > 0
+            ? `resolved_on_${attempt.label}${parsed.fallbackReason ? `_${parsed.fallbackReason}` : ""}`
+            : parsed.fallbackReason;
+
+        resolvedAttemptIndex = index;
+        resolved = {
+          ...parsed,
+          fallbackUsed: shouldMarkFallback,
+          ...(shouldMarkFallback && fallbackReason ? { fallbackReason } : {}),
+        };
+        break;
+      }
+
+      lastParseFallbackReason = parsed.fallbackReason ?? "parse_failed";
+    }
+
+    if (resolvedAttemptIndex === undefined) {
+      resolved = {
+        ...DEFAULT_INTENT_FOCUS,
+        raw: intentRaw?.trim() ?? "",
+        fallbackReason: lastParseFallbackReason ?? "classifier_attempts_exhausted",
+      };
+    }
+  } catch (error) {
+    const fallbackReason =
+      error instanceof Error && error.name === "AbortError"
+        ? "classifier_timeout"
+        : "classifier_request_failed_or_timeout";
+    resolved = {
+      ...DEFAULT_INTENT_FOCUS,
+      raw: intentRaw?.trim() ?? "",
+      fallbackReason,
+    };
+  } finally {
+    clearTimeout(timeout);
+    const logPayload: Record<string, unknown> = {
+      classifierVersion: "v4_provider_routed",
+      intentModel: INTENT_MODEL,
+      classifierAttempt,
+      intentRawSource,
+      intentRaw: (intentRaw ?? resolved.raw).slice(0, 128),
+      intentResolved: resolved.intent,
+      focusResolved: resolved.focus,
+      intentFallbackUsed: resolved.fallbackUsed,
+      intentFallbackReason: resolved.fallbackReason,
+      resolvedAttempt: resolvedAttemptIndex !== undefined ? attempts[resolvedAttemptIndex].label : undefined,
+      messageSnippet: trimmedMessage.slice(0, 80),
+    };
+
+    if (VERBOSE_INTENT_CLASSIFIER_LOGS) {
+      logPayload.attemptErrors = attemptErrors;
+      logPayload.attemptSummaries = attemptSummaries;
+    } else {
+      logPayload.attemptErrorCount = attemptErrors.length;
+      logPayload.attemptSummaryCount = attemptSummaries.length;
+      if (attemptErrors.length > 0) {
+        logPayload.firstAttemptError = attemptErrors[0];
+      }
+    }
+
+    console.log("[IntentClassifier]", logPayload);
+  }
+
+  return resolved;
+}

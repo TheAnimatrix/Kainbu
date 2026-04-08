@@ -458,6 +458,13 @@ export const handleWorkspaceRemoveMemberRequest = async (
 		.eq('user_id', memberUserId);
 	if (userStateError) throw userStateError;
 
+	const { error: aiSessionsError } = await admin
+		.from('project_ai_sessions')
+		.delete()
+		.eq('project_id', projectId)
+		.eq('user_id', memberUserId);
+	if (aiSessionsError) throw aiSessionsError;
+
 	const { error: membershipError } = await admin
 		.from('project_memberships')
 		.delete()
@@ -487,6 +494,13 @@ export const handleWorkspaceLeaveProjectRequest = async (
 		.eq('project_id', projectId)
 		.eq('user_id', userId);
 	if (userStateError) throw userStateError;
+
+	const { error: aiSessionsError } = await admin
+		.from('project_ai_sessions')
+		.delete()
+		.eq('project_id', projectId)
+		.eq('user_id', userId);
+	if (aiSessionsError) throw aiSessionsError;
 
 	const { error: membershipError } = await admin
 		.from('project_memberships')
