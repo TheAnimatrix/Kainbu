@@ -10,6 +10,7 @@ COPY packages/kainbu-cli/package.json packages/kainbu-cli/
 RUN npm ci --ignore-scripts
 COPY . .
 RUN node scripts/patch-svelte-dnd-action.mjs
+RUN npx svelte-kit sync
 RUN npm run build
 
 FROM nginx:1.27-alpine
