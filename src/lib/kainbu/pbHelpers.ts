@@ -7,6 +7,15 @@ export const getProjectPbId = async (projectClientId: string) => {
 	return String(record.id);
 };
 
+export const getBoardPbId = async (projectClientId: string, boardClientId: string) => {
+	const pb = getPb();
+	const projectPbId = await getProjectPbId(projectClientId);
+	const record = await pb.collection('project_boards').getFirstListItem(
+		`${projectRelationFilter(projectPbId)} && client_id = "${pbEscapeFilter(boardClientId)}"`
+	);
+	return String(record.id);
+};
+
 export const listByProjectIds = async (
 	collection: string,
 	projectClientIds: string[],

@@ -14,6 +14,7 @@ import { normalizeUserSettings } from '$lib/kainbu/settings';
 import { getPb } from '$lib/kainbu/pocketbaseContext';
 import {
 	deleteByProjectAndClientIds,
+	getBoardPbId,
 	getProjectPbId,
 	listByProjectIds,
 	upsertProjectChild
@@ -590,11 +591,22 @@ const upsertProjectTasks = async (
 ) => {
 	const projectPbId = await getProjectPbId(projectId);
 	const pb = getPb();
+	const boardPbIdCache = new Map<string, string>();
+
+	const resolveBoardPbId = async (boardClientId: string) => {
+		if (!boardClientId) return '';
+		const cached = boardPbIdCache.get(boardClientId);
+		if (cached) return cached;
+		const boardPbId = await getBoardPbId(projectId, boardClientId);
+		boardPbIdCache.set(boardClientId, boardPbId);
+		return boardPbId;
+	};
 
 	for (const row of rows) {
 		const filter = `${projectRelationFilter(projectPbId)} && client_id = "${pbEscapeFilter(row.id)}"`;
+		const boardPbId = row.board_id ? await resolveBoardPbId(row.board_id) : '';
 		const body = {
-			board: row.board_id || '',
+			board: boardPbId,
 			column_id: row.column_id,
 			title: row.title,
 			description: row.description,
@@ -698,10 +710,21 @@ const applyBoardMutations = async (
 	mutations: ReturnType<typeof deriveBoardMutations>
 ) => {
 	const projectPbId = await getProjectPbId(projectId);
+	const boardPbIdCache = new Map<string, string>();
+
+	const resolveBoardPbId = async (boardClientId: string) => {
+		if (!boardClientId) return '';
+		const cached = boardPbIdCache.get(boardClientId);
+		if (cached) return cached;
+		const boardPbId = await getBoardPbId(projectId, boardClientId);
+		boardPbIdCache.set(boardClientId, boardPbId);
+		return boardPbId;
+	};
 
 	for (const row of mutations.upsertColumns) {
+		const boardPbId = row.board_id ? await resolveBoardPbId(row.board_id) : '';
 		await upsertProjectChild('project_columns', projectId, row.id, {
-			board: row.board_id || '',
+			board: boardPbId,
 			title: row.title,
 			color: row.color,
 			width: row.width,
@@ -736,10 +759,34 @@ export const fetchWorkspace = async (userId: string) => {
 		expand: 'project'
 	});
 
+	const projectClientByPbId = new Map<string, string>();
+	for (const record of ownMembershipRecords) {
+		const expanded = (record.expand as { project?: { client_id?: string } })?.project;
+		if (expanded?.client_id) {
+			projectClientByPbId.set(String(record.project), String(expanded.client_id));
+		}
+	}
+
+	const missingProjectPbIds = [
+		...new Set(
+			ownMembershipRecords
+				.map((record) => String(record.project))
+				.filter((projectPbId) => !projectClientByPbId.has(projectPbId))
+		)
+	];
+
+	if (missingProjectPbIds.length) {
+		const projectRecords = await pb.collection('projects').getFullList({
+			filter: missingProjectPbIds.map((id) => `id = "${pbEscapeFilter(id)}"`).join(' || ')
+		});
+		for (const record of projectRecords) {
+			projectClientByPbId.set(String(record.id), String(record.client_id || record.id));
+		}
+	}
+
 	const ownMembershipRows = ownMembershipRecords.map((record) => {
-		const projectClientId = String(
-			(record.expand as { project?: { client_id?: string } })?.project?.client_id || record.project
-		);
+		const projectClientId =
+			projectClientByPbId.get(String(record.project)) || String(record.project);
 		return mapMembershipRecord(record, projectClientId);
 	});
 
@@ -801,9 +848,9 @@ export const fetchWorkspace = async (userId: string) => {
 		})
 	]);
 
-	const projectClientByPbId = new Map(
-		projectRecords.map((record) => [String(record.id), String(record.client_id || record.id)])
-	);
+	for (const record of projectRecords) {
+		projectClientByPbId.set(String(record.id), String(record.client_id || record.id));
+	}
 
 	const projectRows = projectRecords.map((record) => mapProjectRecord(record));
 	const allMembershipRows = allMembershipRecords.map((record) => {
@@ -816,6 +863,9 @@ export const fetchWorkspace = async (userId: string) => {
 		const projectClientId = projectClientByPbId.get(projectPbId) || projectPbId;
 		return mapBoardRecord(record, projectClientId);
 	});
+	const boardClientIdByPbId = new Map(
+		boardRecords.map((record) => [String(record.id), String(record.client_id || record.id)])
+	);
 	const pageRows = pageRecords.map((record) => {
 		const projectPbId = String(record.project);
 		const projectClientId = projectClientByPbId.get(projectPbId) || projectPbId;
@@ -824,12 +874,14 @@ export const fetchWorkspace = async (userId: string) => {
 	const columnRows = columnRecords.map((record) => {
 		const projectPbId = String(record.project);
 		const projectClientId = projectClientByPbId.get(projectPbId) || projectPbId;
-		return mapColumnRecord(record, projectClientId, String(record.board || ''));
+		const boardClientId = boardClientIdByPbId.get(String(record.board || '')) || '';
+		return mapColumnRecord(record, projectClientId, boardClientId);
 	});
 	const taskRows = taskRecords.map((record) => {
 		const projectPbId = String(record.project);
 		const projectClientId = projectClientByPbId.get(projectPbId) || projectPbId;
-		return mapTaskRecord(record, projectClientId, String(record.board || ''));
+		const boardClientId = boardClientIdByPbId.get(String(record.board || '')) || '';
+		return mapTaskRecord(record, projectClientId, boardClientId);
 	});
 	const userStateRows = userStateRecords.map((record) => {
 		const projectClientId = String(
