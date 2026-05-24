@@ -62,8 +62,7 @@
 			<div
 				class="mb-3 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-100"
 			>
-				Add <code class="font-mono">VITE_SUPABASE_URL</code> and
-				<code class="font-mono">VITE_SUPABASE_ANON_KEY</code> to enable auth.
+				Add <code class="font-mono">VITE_POCKETBASE_URL</code> to enable auth.
 			</div>
 		{/if}
 

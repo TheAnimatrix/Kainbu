@@ -54,20 +54,17 @@ export const registerConfigCommands = (program: Command) => {
 	config
 		.command('set')
 		.description('Set a config value')
-		.option('--supabase-url <url>', 'Supabase project URL')
-		.option('--supabase-anon-key <key>', 'Supabase anon key')
+		.option('--pocketbase-url <url>', 'PocketBase URL')
 		.option('--api-base <url>', 'Kainbu API base URL')
 		.action(
 			async (options: {
-				supabaseUrl?: string;
-				supabaseAnonKey?: string;
+				pocketbaseUrl?: string;
 				apiBase?: string;
 			}) => {
 				const current = await readCliConfig();
 				await writeCliConfig({
 					...current,
-					...(options.supabaseUrl ? { supabaseUrl: options.supabaseUrl } : {}),
-					...(options.supabaseAnonKey ? { supabaseAnonKey: options.supabaseAnonKey } : {}),
+					...(options.pocketbaseUrl ? { pocketbaseUrl: options.pocketbaseUrl } : {}),
 					...(options.apiBase ? { apiBase: options.apiBase } : {})
 				});
 				console.log('Config updated.');
@@ -101,8 +98,7 @@ export const registerConfigCommands = (program: Command) => {
 				activeProjectId: file.activeProjectId,
 				activeBoardId: file.activeBoardId,
 				apiBase: file.apiBase,
-				hasSupabaseUrl: Boolean(file.supabaseUrl),
-				hasSupabaseAnonKey: Boolean(file.supabaseAnonKey)
+				hasPocketBaseUrl: Boolean(file.pocketbaseUrl)
 			};
 
 			printResult(

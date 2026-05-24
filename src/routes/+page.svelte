@@ -1,7 +1,17 @@
 <script lang="ts">
 	import { onDestroy, onMount } from 'svelte';
 	import { fade } from 'svelte/transition';
-	import type { AuthChangeEvent, User } from '@supabase/supabase-js';
+	type AuthChangeEvent =
+		| 'INITIAL_SESSION'
+		| 'SIGNED_IN'
+		| 'SIGNED_OUT'
+		| 'USER_UPDATED'
+		| 'PASSWORD_RECOVERY'
+		| 'TOKEN_REFRESHED';
+	type AuthUser = {
+		id: string;
+		email?: string;
+	};
 	import {
 		LayoutDashboard,
 		LoaderCircle,
@@ -145,7 +155,10 @@
 		WorkspaceSummary,
 		WorkspaceTab
 	} from '$lib/kainbu/types';
-	import { isSupabaseConfigured, supabase } from '$lib/supabaseClient';
+	import { isPocketBaseConfigured, pocketbase } from '$lib/pocketbaseClient';
+
+	const toAuthUser = (model: { id: string; email?: string } | null): AuthUser | null =>
+		model ? { id: model.id, email: model.email } : null;
 
 	type WorkspaceStateInput = {
 		nextProjects: Project[];
@@ -165,7 +178,7 @@
 		future: Project['kanbanData'][];
 	};
 
-	let user: User | null = null;
+	let user: AuthUser | null = null;
 	let projects: Project[] = [];
 	let incomingInvites: ProjectInvite[] = [];
 	let currentProjectId = '';
@@ -534,13 +547,13 @@
 		preferredAiModelId: normalizePreferredAiModelId(nextSettings.preferredAiModelId)
 	});
 	const normalizeUsername = (value: string | null | undefined) => value?.trim().toLowerCase() || '';
-	const createFallbackUserProfile = (currentUser: User): UserProfile => ({
+	const createFallbackUserProfile = (currentUser: AuthUser): UserProfile => ({
 		userId: currentUser.id,
 		email: currentUser.email || null,
 		username: null
 	});
 	const resolveProfileAfterFetch = (
-		currentUser: User,
+		currentUser: AuthUser,
 		profileResult: PromiseSettledResult<UserProfile>
 	) => {
 		if (profileResult.status === 'fulfilled') {
@@ -1599,7 +1612,7 @@
 		return merged;
 	};
 
-	const bootstrapWorkspace = async (currentUser: User) => {
+	const bootstrapWorkspace = async (currentUser: AuthUser) => {
 		const loadVersion = ++workspaceLoadVersion;
 		workspaceHydrating = true;
 		workspaceError = '';
@@ -1698,7 +1711,7 @@
 		}
 	};
 
-	const refreshUserProfile = async (currentUser: User) => {
+	const refreshUserProfile = async (currentUser: AuthUser) => {
 		try {
 			const nextProfile = await fetchUserProfile(currentUser.id);
 			if (user?.id !== currentUser.id) return;
@@ -1727,7 +1740,7 @@
 		}
 	};
 
-	const refreshWorkspaceFromRemote = async (currentUser: User) => {
+	const refreshWorkspaceFromRemote = async (currentUser: AuthUser) => {
 		try {
 			const workspace = await fetchWorkspace(currentUser.id);
 			applyWorkspaceState({
@@ -1750,14 +1763,14 @@
 		}, REMOTE_REFRESH_DEBOUNCE_MS);
 	};
 
-	const startWorkspaceSubscription = (currentUser: User) => {
+	const startWorkspaceSubscription = (currentUser: AuthUser) => {
 		stopWorkspaceSubscription?.();
 		stopWorkspaceSubscription = subscribeToWorkspaceChanges(currentUser.id, () => {
 			scheduleRemoteRefresh();
 		});
 	};
 
-	const scheduleWorkspaceReload = (nextUser: User) => {
+	const scheduleWorkspaceReload = (nextUser: AuthUser) => {
 		if (authStateReloadTimeout) clearTimeout(authStateReloadTimeout);
 		authStateReloadTimeout = setTimeout(() => {
 			authStateReloadTimeout = null;
@@ -1781,7 +1794,7 @@
 	const shouldReloadWorkspaceForAuthEvent = (
 		event: AuthChangeEvent,
 		previousUserId: string | null,
-		nextUser: User
+		nextUser: AuthUser
 	) => {
 		const userChanged = previousUserId !== nextUser.id;
 		const workspaceMissing = !projects.length && !incomingInvites.length;
@@ -1806,23 +1819,16 @@
 
 		try {
 			if (payload.isSignUp) {
-				const { error } = await supabase.auth.signUp({
+				await pocketbase.collection('users').create({
 					email: payload.email,
 					password: payload.password,
-					options: {
-						emailRedirectTo: window.location.origin
-					}
+					passwordConfirm: payload.password
 				});
-				if (error) throw error;
-				authInfoMessage = 'Check your email for the confirmation link, then come back and sign in.';
+				authInfoMessage = 'Account created. Sign in with your email and password.';
 				return;
 			}
 
-			const { error } = await supabase.auth.signInWithPassword({
-				email: payload.email,
-				password: payload.password
-			});
-			if (error) throw error;
+			await pocketbase.collection('users').authWithPassword(payload.email, payload.password);
 		} catch (error) {
 			console.error(error);
 			authErrorMessage =
@@ -3588,7 +3594,7 @@
 
 		try {
 			clearWorkspaceSnapshot(user.id);
-			await supabase.auth.signOut();
+			pocketbase.authStore.clear();
 		} catch (error) {
 			console.error(error);
 			workspaceError = error instanceof Error ? error.message : 'Unable to sign out right now.';
@@ -3601,7 +3607,7 @@
 		await bootstrapWorkspace(user);
 	};
 
-	const handleAuthStateChange = (event: AuthChangeEvent, nextUser: User | null) => {
+	const handleAuthStateChange = (event: AuthChangeEvent, nextUser: AuthUser | null) => {
 		const previousUserId = user?.id || null;
 
 		authInfoMessage = '';
@@ -3636,7 +3642,7 @@
 
 	onMount(() => {
 		void loadAiModels();
-		if (!isSupabaseConfigured) {
+		if (!isPocketBaseConfigured) {
 			authHydrating = false;
 			return;
 		}
@@ -3652,28 +3658,12 @@
 		};
 		document.addEventListener('visibilitychange', handleVisibilityChange);
 
-		const {
-			data: { subscription }
-		} = supabase.auth.onAuthStateChange((event, session) => {
-			if (event === 'INITIAL_SESSION') return;
-			handleAuthStateChange(event, session?.user || null);
+		stopAuthListener = pocketbase.authStore.onChange((_token, model) => {
+			const nextUser = toAuthUser(model);
+			handleAuthStateChange(nextUser ? 'SIGNED_IN' : 'SIGNED_OUT', nextUser);
 		});
 
-		stopAuthListener = () => {
-			subscription.unsubscribe();
-		};
-
-		void supabase.auth
-			.getSession()
-			.then(({ data }) => {
-				handleAuthStateChange('INITIAL_SESSION', data.session?.user || null);
-			})
-			.catch((error) => {
-				console.error(error);
-				authHydrating = false;
-				authErrorMessage =
-					error instanceof Error ? error.message : 'Unable to restore your session.';
-			});
+		handleAuthStateChange('INITIAL_SESSION', toAuthUser(pocketbase.authStore.model));
 	});
 
 	onDestroy(() => {
@@ -3724,7 +3714,7 @@
 {:else if !user}
 	<AuthView
 		loading={isAuthLoading}
-		configured={isSupabaseConfigured}
+		configured={isPocketBaseConfigured}
 		infoMessage={authInfoMessage}
 		errorMessage={authErrorMessage}
 		theme={settings.backgroundTheme}

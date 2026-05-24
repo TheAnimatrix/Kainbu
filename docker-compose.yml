@@ -1,0 +1,51 @@
+services:
+  pocketbase:
+    image: ghcr.io/muchobien/pocketbase:latest
+    container_name: kainbu-pocketbase
+    restart: unless-stopped
+    ports:
+      - '8090:8090'
+    volumes:
+      - pb_data:/pb_data
+      - ./pocketbase/pb_hooks:/pb_hooks
+      - ./pocketbase/pb_migrations:/pb_migrations
+    healthcheck:
+      test: ['CMD', 'wget', '-qO-', 'http://127.0.0.1:8090/api/health']
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+    container_name: kainbu-api
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      POCKETBASE_URL: http://pocketbase:8090
+      HOST: 0.0.0.0
+      PORT: '8788'
+    ports:
+      - '8788:8788'
+    depends_on:
+      pocketbase:
+        condition: service_healthy
+
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile.web
+      args:
+        VITE_POCKETBASE_URL: ${VITE_POCKETBASE_URL:-http://localhost:8090}
+        VITE_API_BASE_URL: ${VITE_API_BASE_URL:-}
+    container_name: kainbu-web
+    restart: unless-stopped
+    ports:
+      - '3000:80'
+    depends_on:
+      - api
+
+volumes:
+  pb_data:

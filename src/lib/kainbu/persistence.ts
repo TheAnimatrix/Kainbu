@@ -11,7 +11,28 @@ import { createId } from '$lib/kainbu/id';
 import { normalizeProjectStructure } from '$lib/kainbu/projectStructure';
 import { normalizeScratchpadData, serializeScratchpadData } from '$lib/kainbu/scratchpad';
 import { normalizeUserSettings } from '$lib/kainbu/settings';
-import { getSupabase } from '$lib/kainbu/supabaseContext';
+import { getPb } from '$lib/kainbu/pocketbaseContext';
+import {
+	deleteByProjectAndClientIds,
+	getProjectPbId,
+	listByProjectIds,
+	upsertProjectChild
+} from '$lib/kainbu/pbHelpers';
+import {
+	mapAiSessionRecord,
+	mapBoardRecord,
+	mapColumnRecord,
+	mapInviteRecord,
+	mapMembershipRecord,
+	mapPageRecord,
+	mapProfileRecord,
+	mapProjectRecord,
+	mapTaskRecord,
+	mapUserStateRecord,
+	pbEscapeFilter,
+	projectClientFilter,
+	projectRelationFilter
+} from '$lib/kainbu/pbRecords';
 import type {
 	BackgroundTheme,
 	ChatAttachment,
@@ -45,17 +66,6 @@ import type {
 const isObject = (value: unknown): value is Record<string, unknown> =>
 	typeof value === 'object' && value !== null;
 
-const PROFILE_SETTINGS_COLUMNS =
-	'user_id,email,default_show_checkbox,preferred_ai_model_id,preferred_model_preset,background_theme';
-const PROFILE_SETTINGS_COLUMNS_LEGACY =
-	'user_id,email,default_show_checkbox,preferred_model_preset';
-const PROFILE_IDENTITY_COLUMNS = 'user_id,email,username';
-const PROFILE_IDENTITY_COLUMNS_LEGACY = 'user_id,email';
-
-let profileBackgroundThemeSupported: boolean | null = null;
-let profileUsernameSupported: boolean | null = null;
-let projectTaskAssignmentsSupported: boolean | null = null;
-let projectTaskLinksSupported: boolean | null = null;
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 const toNumber = (value: unknown) => {
@@ -67,14 +77,7 @@ const toNumber = (value: unknown) => {
 	return undefined;
 };
 
-const isMissingSchemaColumnError = (error: unknown, table: string, column: string) =>
-	isObject(error) &&
-	error.code === 'PGRST204' &&
-	typeof error.message === 'string' &&
-	error.message.includes(`'${column}'`) &&
-	error.message.includes(`'${table}'`);
-
-export const supportsProfileBackgroundTheme = () => profileBackgroundThemeSupported !== false;
+export const supportsProfileBackgroundTheme = () => true;
 
 const normalizeAttachments = (message: Record<string, unknown>): ChatAttachment[] => {
 	if (Array.isArray(message.attachments)) {
@@ -581,76 +584,43 @@ const mapTaskUpsertRow = (
 	position
 });
 
-const stripAssignedToFromTaskUpserts = (rows: ReturnType<typeof mapTaskUpsertRow>[]) =>
-	rows.map(({ assigned_to: _assignedTo, ...row }) => row);
+const upsertProjectTasks = async (
+	projectId: string,
+	rows: ReturnType<typeof mapTaskUpsertRow>[]
+) => {
+	const projectPbId = await getProjectPbId(projectId);
+	const pb = getPb();
 
-const stripLinkedTaskIdsFromTaskUpserts = (rows: ReturnType<typeof mapTaskUpsertRow>[]) =>
-	rows.map(({ linked_task_ids: _linkedTaskIds, ...row }) => row);
+	for (const row of rows) {
+		const filter = `${projectRelationFilter(projectPbId)} && client_id = "${pbEscapeFilter(row.id)}"`;
+		const body = {
+			board: row.board_id || '',
+			column_id: row.column_id,
+			title: row.title,
+			description: row.description,
+			color: row.color,
+			tags: row.tags,
+			has_checkbox: row.has_checkbox,
+			checked: row.checked,
+			completed_at: row.completed_at,
+			countdown_at: row.countdown_at,
+			alarm_at: row.alarm_at,
+			assigned_to: row.assigned_to || '',
+			linked_task_ids: row.linked_task_ids,
+			position: row.position
+		};
 
-const stripOptionalTaskColumnsFromUpserts = (rows: ReturnType<typeof mapTaskUpsertRow>[]) => {
-	let next: ReturnType<typeof mapTaskUpsertRow>[] = rows;
-	if (projectTaskAssignmentsSupported === false) {
-		next = stripAssignedToFromTaskUpserts(next) as ReturnType<typeof mapTaskUpsertRow>[];
-	}
-	if (projectTaskLinksSupported === false) {
-		next = stripLinkedTaskIdsFromTaskUpserts(next) as ReturnType<typeof mapTaskUpsertRow>[];
-	}
-	return next;
-};
-
-const upsertProjectTasks = async (rows: ReturnType<typeof mapTaskUpsertRow>[]) => {
-	const shouldIncludeAssignments = projectTaskAssignmentsSupported !== false;
-	const shouldIncludeLinks = projectTaskLinksSupported !== false;
-	let payload = rows;
-	if (!shouldIncludeAssignments || !shouldIncludeLinks) {
-		payload = stripOptionalTaskColumnsFromUpserts(rows);
-	}
-
-	const result = await getSupabase().from('project_tasks').upsert(payload, {
-		onConflict: 'project_id,id'
-	});
-
-	if (!result.error) {
-		if (shouldIncludeAssignments) {
-			projectTaskAssignmentsSupported = true;
-		}
-		if (shouldIncludeLinks) {
-			projectTaskLinksSupported = true;
-		}
-		return;
-	}
-
-	if (
-		shouldIncludeAssignments &&
-		isMissingSchemaColumnError(result.error, 'project_tasks', 'assigned_to')
-	) {
-		projectTaskAssignmentsSupported = false;
-		const retry = await getSupabase()
-			.from('project_tasks')
-			.upsert(stripOptionalTaskColumnsFromUpserts(rows), {
-				onConflict: 'project_id,id'
+		try {
+			const existing = await pb.collection('project_tasks').getFirstListItem(filter);
+			await pb.collection('project_tasks').update(existing.id, body);
+		} catch {
+			await pb.collection('project_tasks').create({
+				...body,
+				project: projectPbId,
+				client_id: row.id
 			});
-
-		if (retry.error) throw retry.error;
-		return;
+		}
 	}
-
-	if (
-		shouldIncludeLinks &&
-		isMissingSchemaColumnError(result.error, 'project_tasks', 'linked_task_ids')
-	) {
-		projectTaskLinksSupported = false;
-		const retry = await getSupabase()
-			.from('project_tasks')
-			.upsert(stripOptionalTaskColumnsFromUpserts(rows), {
-				onConflict: 'project_id,id'
-			});
-
-		if (retry.error) throw retry.error;
-		return;
-	}
-
-	throw result.error;
 };
 
 const deriveBoardMutations = (
@@ -727,177 +697,180 @@ const applyBoardMutations = async (
 	projectId: string,
 	mutations: ReturnType<typeof deriveBoardMutations>
 ) => {
-	if (mutations.upsertColumns.length) {
-		const { error } = await getSupabase().from('project_columns').upsert(mutations.upsertColumns, {
-			onConflict: 'project_id,id'
+	const projectPbId = await getProjectPbId(projectId);
+
+	for (const row of mutations.upsertColumns) {
+		await upsertProjectChild('project_columns', projectId, row.id, {
+			board: row.board_id || '',
+			title: row.title,
+			color: row.color,
+			width: row.width,
+			position: row.position
 		});
-		if (error) throw error;
 	}
 
 	if (mutations.upsertTasks.length) {
-		await upsertProjectTasks(mutations.upsertTasks);
+		await upsertProjectTasks(projectId, mutations.upsertTasks);
 	}
 
 	if (mutations.deleteTaskIds.length) {
-		const { error } = await getSupabase()
-			.from('project_tasks')
-			.delete()
-			.eq('project_id', projectId)
-			.in('id', mutations.deleteTaskIds);
-		if (error) throw error;
+		await deleteByProjectAndClientIds('project_tasks', projectId, mutations.deleteTaskIds);
 	}
 
 	if (mutations.deleteColumnIds.length) {
-		const { error } = await getSupabase()
-			.from('project_columns')
-			.delete()
-			.eq('project_id', projectId)
-			.in('id', mutations.deleteColumnIds);
-		if (error) throw error;
+		await deleteByProjectAndClientIds('project_columns', projectId, mutations.deleteColumnIds);
 	}
+
+	void projectPbId;
 };
 
 const findProjectName = (projectRows: ProjectRow[], projectId: string) =>
 	projectRows.find((project) => project.id === projectId)?.name;
 
 export const fetchWorkspace = async (userId: string) => {
-	const membershipsResult = await getSupabase()
-		.from('project_memberships')
-		.select('*')
-		.eq('user_id', userId)
-		.order('last_opened_at', { ascending: false });
+	const pb = getPb();
 
-	if (membershipsResult.error) {
-		throw membershipsResult.error;
-	}
+	const ownMembershipRecords = await pb.collection('project_memberships').getFullList({
+		filter: `user = "${pbEscapeFilter(userId)}"`,
+		sort: '-last_opened_at',
+		expand: 'project'
+	});
 
-	const ownMembershipRows = (membershipsResult.data || []) as ProjectMembershipRow[];
+	const ownMembershipRows = ownMembershipRecords.map((record) => {
+		const projectClientId = String(
+			(record.expand as { project?: { client_id?: string } })?.project?.client_id || record.project
+		);
+		return mapMembershipRecord(record, projectClientId);
+	});
+
 	const accessibleProjectIds = ownMembershipRows.map((membership) => membership.project_id);
 
 	const [
-		projectsResult,
-		allMembershipsResult,
-		boardsResult,
-		pagesResult,
-		columnsResult,
-		tasksResult,
-		userStatesResult,
-		aiSessionsResult,
-		incomingInvitesResult
+		projectRecords,
+		allMembershipRecords,
+		boardRecords,
+		pageRecords,
+		columnRecords,
+		taskRecords,
+		userStateRecords,
+		aiSessionRecords,
+		incomingInviteRecords
 	] = await Promise.all([
 		accessibleProjectIds.length
-			? getSupabase().from('projects').select('*').in('id', accessibleProjectIds)
-			: Promise.resolve({ data: [], error: null }),
+			? pb.collection('projects').getFullList({
+					filter: accessibleProjectIds
+						.map((id) => `client_id = "${pbEscapeFilter(id)}"`)
+						.join(' || ')
+				})
+			: Promise.resolve([]),
 		accessibleProjectIds.length
-			? getSupabase().from('project_memberships').select('*').in('project_id', accessibleProjectIds)
-			: Promise.resolve({ data: [], error: null }),
+			? listByProjectIds('project_memberships', accessibleProjectIds)
+			: Promise.resolve([]),
 		accessibleProjectIds.length
-			? getSupabase()
-					.from('project_boards')
-					.select('*')
-					.in('project_id', accessibleProjectIds)
-					.order('position', { ascending: true })
-			: Promise.resolve({ data: [], error: null }),
+			? listByProjectIds('project_boards', accessibleProjectIds, 'position')
+			: Promise.resolve([]),
 		accessibleProjectIds.length
-			? getSupabase()
-					.from('project_pages')
-					.select('*')
-					.in('project_id', accessibleProjectIds)
-					.order('position', { ascending: true })
-			: Promise.resolve({ data: [], error: null }),
+			? listByProjectIds('project_pages', accessibleProjectIds, 'position')
+			: Promise.resolve([]),
 		accessibleProjectIds.length
-			? getSupabase()
-					.from('project_columns')
-					.select('*')
-					.in('project_id', accessibleProjectIds)
-					.order('position', { ascending: true })
-			: Promise.resolve({ data: [], error: null }),
+			? listByProjectIds('project_columns', accessibleProjectIds, 'position')
+			: Promise.resolve([]),
 		accessibleProjectIds.length
-			? getSupabase()
-					.from('project_tasks')
-					.select('*')
-					.in('project_id', accessibleProjectIds)
-					.order('position', { ascending: true })
-			: Promise.resolve({ data: [], error: null }),
+			? listByProjectIds('project_tasks', accessibleProjectIds, 'position')
+			: Promise.resolve([]),
 		accessibleProjectIds.length
-			? getSupabase()
-					.from('project_user_state')
-					.select('*')
-					.eq('user_id', userId)
-					.in('project_id', accessibleProjectIds)
-			: Promise.resolve({ data: [], error: null }),
+			? pb.collection('project_user_state').getFullList({
+					filter: `user = "${pbEscapeFilter(userId)}" && (${accessibleProjectIds
+						.map((id) => `project.client_id = "${pbEscapeFilter(id)}"`)
+						.join(' || ')})`,
+					expand: 'project'
+				})
+			: Promise.resolve([]),
 		accessibleProjectIds.length
-			? getSupabase()
-					.from('project_ai_sessions')
-					.select('*')
-					.eq('user_id', userId)
-					.in('project_id', accessibleProjectIds)
-					.order('updated_at', { ascending: true })
-			: Promise.resolve({ data: [], error: null }),
-		getSupabase()
-			.from('project_invites')
-			.select('*, projects(name)')
-			.eq('invitee_user_id', userId)
-			.eq('status', 'pending')
+			? pb.collection('project_ai_sessions').getFullList({
+					filter: `user = "${pbEscapeFilter(userId)}" && (${accessibleProjectIds
+						.map((id) => `project.client_id = "${pbEscapeFilter(id)}"`)
+						.join(' || ')})`,
+					sort: 'updated',
+					expand: 'project'
+				})
+			: Promise.resolve([]),
+		pb.collection('project_invites').getFullList({
+			filter: `invitee = "${pbEscapeFilter(userId)}" && status = "pending"`,
+			expand: 'project'
+		})
 	]);
 
-	if (projectsResult.error) throw projectsResult.error;
-	if (allMembershipsResult.error) throw allMembershipsResult.error;
-	if (boardsResult.error) throw boardsResult.error;
-	if (pagesResult.error) throw pagesResult.error;
-	if (columnsResult.error) throw columnsResult.error;
-	if (tasksResult.error) throw tasksResult.error;
-	if (userStatesResult.error) throw userStatesResult.error;
-	if (aiSessionsResult.error) throw aiSessionsResult.error;
-	if (incomingInvitesResult.error) throw incomingInvitesResult.error;
+	const projectClientByPbId = new Map(
+		projectRecords.map((record) => [String(record.id), String(record.client_id || record.id)])
+	);
 
-	const projectRows = (projectsResult.data || []) as ProjectRow[];
-	const allMembershipRows = (allMembershipsResult.data || []) as ProjectMembershipRow[];
-	const boardRows = (boardsResult.data || []) as ProjectBoardRow[];
-	const pageRows = (pagesResult.data || []) as ProjectPageRow[];
-	const columnRows = (columnsResult.data || []) as ProjectColumnRow[];
-	const taskRows = (tasksResult.data || []) as ProjectTaskRow[];
-	const userStateRows = (userStatesResult.data || []) as ProjectUserStateRow[];
-	const aiSessionRows = (aiSessionsResult.data || []) as ProjectAiSessionRow[];
+	const projectRows = projectRecords.map((record) => mapProjectRecord(record));
+	const allMembershipRows = allMembershipRecords.map((record) => {
+		const projectPbId = String(record.project);
+		const projectClientId = projectClientByPbId.get(projectPbId) || projectPbId;
+		return mapMembershipRecord(record, projectClientId);
+	});
+	const boardRows = boardRecords.map((record) => {
+		const projectPbId = String(record.project);
+		const projectClientId = projectClientByPbId.get(projectPbId) || projectPbId;
+		return mapBoardRecord(record, projectClientId);
+	});
+	const pageRows = pageRecords.map((record) => {
+		const projectPbId = String(record.project);
+		const projectClientId = projectClientByPbId.get(projectPbId) || projectPbId;
+		return mapPageRecord(record, projectClientId);
+	});
+	const columnRows = columnRecords.map((record) => {
+		const projectPbId = String(record.project);
+		const projectClientId = projectClientByPbId.get(projectPbId) || projectPbId;
+		return mapColumnRecord(record, projectClientId, String(record.board || ''));
+	});
+	const taskRows = taskRecords.map((record) => {
+		const projectPbId = String(record.project);
+		const projectClientId = projectClientByPbId.get(projectPbId) || projectPbId;
+		return mapTaskRecord(record, projectClientId, String(record.board || ''));
+	});
+	const userStateRows = userStateRecords.map((record) => {
+		const projectClientId = String(
+			(record.expand as { project?: { client_id?: string } })?.project?.client_id || record.project
+		);
+		return mapUserStateRecord(record, projectClientId);
+	});
+	const aiSessionRows = aiSessionRecords.map((record) => {
+		const projectClientId = String(
+			(record.expand as { project?: { client_id?: string } })?.project?.client_id || record.project
+		);
+		return mapAiSessionRecord(record, projectClientId);
+	});
+
 	const ownedProjectIds = projectRows
 		.filter((project) => project.user_id === userId)
 		.map((project) => project.id);
-	const ownerInvitesResult = ownedProjectIds.length
-		? await getSupabase()
-				.from('project_invites')
-				.select('*')
-				.in('project_id', ownedProjectIds)
-				.eq('status', 'pending')
-		: { data: [], error: null };
 
-	if (ownerInvitesResult.error) throw ownerInvitesResult.error;
+	const ownerInviteRecords = ownedProjectIds.length
+		? await pb.collection('project_invites').getFullList({
+				filter: `status = "pending" && (${ownedProjectIds
+					.map((id) => `project.client_id = "${pbEscapeFilter(id)}"`)
+					.join(' || ')})`,
+				expand: 'project'
+			})
+		: [];
 
 	const profileIds = [...new Set(allMembershipRows.map((membership) => membership.user_id))];
-	const useLegacyProfileColumns = profileUsernameSupported === false;
-	let loadedProfileUsernames = !useLegacyProfileColumns;
-	let profileRows: Pick<ProfileRow, 'user_id' | 'email' | 'username'>[] = [];
+	const profileRows: Pick<ProfileRow, 'user_id' | 'email' | 'username'>[] = [];
 	if (profileIds.length) {
-		let profilesQuery = (await getSupabase()
-			.from('profiles')
-			.select(useLegacyProfileColumns ? PROFILE_IDENTITY_COLUMNS_LEGACY : PROFILE_IDENTITY_COLUMNS)
-			.in('user_id', profileIds)) as { data: unknown[] | null; error: unknown | null };
-
-		if (
-			profilesQuery.error &&
-			!useLegacyProfileColumns &&
-			isMissingSchemaColumnError(profilesQuery.error, 'profiles', 'username')
-		) {
-			profileUsernameSupported = false;
-			loadedProfileUsernames = false;
-			profilesQuery = (await getSupabase()
-				.from('profiles')
-				.select(PROFILE_IDENTITY_COLUMNS_LEGACY)
-				.in('user_id', profileIds)) as { data: unknown[] | null; error: unknown | null };
+		const profiles = await pb.collection('users').getFullList({
+			filter: profileIds.map((id) => `id = "${pbEscapeFilter(id)}"`).join(' || ')
+		});
+		for (const profile of profiles) {
+			const mapped = mapProfileRecord(profile, String(profile.id));
+			profileRows.push({
+				user_id: mapped.user_id,
+				email: mapped.email,
+				username: mapped.username
+			});
 		}
-
-		if (profilesQuery.error) throw profilesQuery.error;
-		if (loadedProfileUsernames) profileUsernameSupported = true;
-		profileRows = (profilesQuery.data || []) as Pick<ProfileRow, 'user_id' | 'email' | 'username'>[];
 	}
 
 	const profileIdentityById = new Map(
@@ -974,7 +947,11 @@ export const fetchWorkspace = async (userId: string) => {
 	}
 
 	const ownerInvitesByProjectId = new Map<string, ProjectInvite[]>();
-	for (const row of (ownerInvitesResult.data || []) as ProjectInviteRow[]) {
+	for (const record of ownerInviteRecords) {
+		const projectClientId = String(
+			(record.expand as { project?: { client_id?: string } })?.project?.client_id || record.project
+		);
+		const row = mapInviteRecord(record, projectClientId);
 		const current = ownerInvitesByProjectId.get(row.project_id) || [];
 		current.push(mapInviteRow(row, findProjectName(projectRows, row.project_id)));
 		ownerInvitesByProjectId.set(row.project_id, current);
@@ -1040,14 +1017,16 @@ export const fetchWorkspace = async (userId: string) => {
 		})
 		.sort(compareProjects);
 
-	const incomingInvites = (
-		(incomingInvitesResult.data || []) as Array<
-			ProjectInviteRow & {
-				projects?: { name?: string | null } | null;
-			}
-		>
-	)
-		.map((row) => mapInviteRow(row, row.projects?.name || undefined))
+	const incomingInvites = incomingInviteRecords
+		.map((record) => {
+			const projectClientId = String(
+				(record.expand as { project?: { client_id?: string; name?: string } })?.project
+					?.client_id || record.project
+			);
+			const projectName =
+				(record.expand as { project?: { name?: string } })?.project?.name || undefined;
+			return mapInviteRow(mapInviteRecord(record, projectClientId), projectName);
+		})
 		.sort((left, right) => right.createdAt - left.createdAt);
 
 	return {
@@ -1070,45 +1049,42 @@ export const createProject = async (
 	};
 	const normalizedSeed = normalizeProjectStructure(seed as Project);
 
-	const { error } = await getSupabase().from('projects').insert({
-		id: normalizedSeed.id,
-		user_id: userId,
+	const pb = getPb();
+	const projectRecord = await pb.collection('projects').create({
+		client_id: normalizedSeed.id,
+		owner: userId,
 		name: normalizedSeed.name,
 		background_theme: normalizedSeed.backgroundTheme,
 		scratchpad_data: serializeScratchpadData(normalizedSeed.scratchpadData),
 		scratchpad_rev: normalizedSeed.scratchpadRev,
-		created_at: new Date(normalizedSeed.createdAt).toISOString(),
-		updated_at: new Date(normalizedSeed.updatedAt).toISOString(),
 		last_opened_at: new Date(normalizedSeed.viewerLastOpenedAt).toISOString()
 	});
 
-	if (error) throw error;
+	await pb.collection('project_memberships').create({
+		project: projectRecord.id,
+		user: userId,
+		role: 'owner',
+		joined_at: new Date().toISOString(),
+		last_opened_at: new Date().toISOString()
+	});
 
-	const boardPayload = normalizedSeed.boards.map((board) => ({
-		id: board.id,
-		project_id: normalizedSeed.id,
-		name: board.name,
-		position: board.position,
-		created_at: new Date(board.createdAt).toISOString(),
-		updated_at: new Date(board.updatedAt).toISOString()
-	}));
-	if (boardPayload.length) {
-		const boardInsert = await getSupabase().from('project_boards').insert(boardPayload);
-		if (boardInsert.error) throw boardInsert.error;
+	for (const board of normalizedSeed.boards) {
+		await pb.collection('project_boards').create({
+			project: projectRecord.id,
+			client_id: board.id,
+			name: board.name,
+			position: board.position
+		});
 	}
 
-	const pagePayload = normalizedSeed.pages.map((page) => ({
-		id: page.id,
-		project_id: normalizedSeed.id,
-		name: page.name,
-		content: page.content,
-		position: page.position,
-		created_at: new Date(page.createdAt).toISOString(),
-		updated_at: new Date(page.updatedAt).toISOString()
-	}));
-	if (pagePayload.length) {
-		const pageInsert = await getSupabase().from('project_pages').insert(pagePayload);
-		if (pageInsert.error) throw pageInsert.error;
+	for (const page of normalizedSeed.pages) {
+		await pb.collection('project_pages').create({
+			project: projectRecord.id,
+			client_id: page.id,
+			name: page.name,
+			content: page.content,
+			position: page.position
+		});
 	}
 
 	for (const board of normalizedSeed.boards) {
@@ -1130,51 +1106,41 @@ export const createProject = async (
 };
 
 export const renameProject = async (projectId: string, nextName: string) => {
-	const { error } = await getSupabase().from('projects').update({ name: nextName }).eq('id', projectId);
-	if (error) throw error;
+	const pb = getPb();
+	const project = await pb.collection('projects').getFirstListItem(projectClientFilter(projectId));
+	await pb.collection('projects').update(project.id, { name: nextName });
 };
 
 export const fetchProjectBoardKanban = async (
 	projectId: string,
 	boardId: string
 ): Promise<Project['kanbanData']> => {
-	const [columnsResult, tasksResult] = await Promise.all([
-		getSupabase()
-			.from('project_columns')
-			.select('*')
-			.eq('project_id', projectId)
-			.eq('board_id', boardId)
-			.order('position', { ascending: true }),
-		getSupabase()
-			.from('project_tasks')
-			.select('*')
-			.eq('project_id', projectId)
-			.eq('board_id', boardId)
-			.order('position', { ascending: true })
+	const pb = getPb();
+	const projectPbId = await getProjectPbId(projectId);
+	const [columnRecords, taskRecords] = await Promise.all([
+		pb.collection('project_columns').getFullList({
+			filter: `${projectRelationFilter(projectPbId)} && board.client_id = "${pbEscapeFilter(boardId)}"`,
+			sort: 'position'
+		}),
+		pb.collection('project_tasks').getFullList({
+			filter: `${projectRelationFilter(projectPbId)} && board.client_id = "${pbEscapeFilter(boardId)}"`,
+			sort: 'position'
+		})
 	]);
 
-	if (columnsResult.error) throw columnsResult.error;
-	if (tasksResult.error) throw tasksResult.error;
-
 	return buildKanbanData(
-		(columnsResult.data || []) as ProjectColumnRow[],
-		(tasksResult.data || []) as ProjectTaskRow[]
+		columnRecords.map((record) => mapColumnRecord(record, projectId, boardId)),
+		taskRecords.map((record) => mapTaskRecord(record, projectId, boardId))
 	);
 };
 
 export const fetchProjectScratchpadMeta = async (projectId: string) => {
-	const { data, error } = await getSupabase()
-		.from('projects')
-		.select('id,name,scratchpad_data,scratchpad_rev')
-		.eq('id', projectId)
-		.maybeSingle();
-
-	if (error) throw error;
-	if (!data) throw new Error('Project not found.');
+	const pb = getPb();
+	const data = await pb.collection('projects').getFirstListItem(projectClientFilter(projectId));
 
 	return {
-		id: data.id as string,
-		name: data.name as string,
+		id: String(data.client_id || data.id),
+		name: String(data.name || ''),
 		scratchpadData: normalizeScratchpadData(data.scratchpad_data),
 		scratchpadRev: typeof data.scratchpad_rev === 'number' ? data.scratchpad_rev : 0
 	};
@@ -1199,74 +1165,77 @@ export const replaceProjectBoard = async (
 };
 
 export const createProjectBoard = async (projectId: string, name: string, position: number) => {
-	const { data, error } = await getSupabase()
-		.from('project_boards')
-		.insert({
-			project_id: projectId,
-			name,
-			position
-		})
-		.select('*')
-		.single();
-
-	if (error) throw error;
-	return mapBoardRow(data as ProjectBoardRow, [], []);
+	const pb = getPb();
+	const projectPbId = await getProjectPbId(projectId);
+	const clientId = createId();
+	const data = await pb.collection('project_boards').create({
+		project: projectPbId,
+		client_id: clientId,
+		name,
+		position
+	});
+	return mapBoardRow(mapBoardRecord(data, projectId), [], []);
 };
 
 export const createProjectPage = async (projectId: string, name: string, position: number) => {
-	const { data, error } = await getSupabase()
-		.from('project_pages')
-		.insert({
-			project_id: projectId,
-			name,
-			content: '',
-			position
-		})
-		.select('*')
-		.single();
+	const pb = getPb();
+	const projectPbId = await getProjectPbId(projectId);
+	const clientId = createId();
+	const data = await pb.collection('project_pages').create({
+		project: projectPbId,
+		client_id: clientId,
+		name,
+		content: '',
+		position
+	});
+	return mapPageRow(mapPageRecord(data, projectId));
+};
 
-	if (error) throw error;
-	return mapPageRow(data as ProjectPageRow);
+const updateProjectChildByClientId = async (
+	collection: string,
+	projectId: string,
+	clientId: string,
+	body: Record<string, unknown>
+) => {
+	const pb = getPb();
+	const projectPbId = await getProjectPbId(projectId);
+	const record = await pb
+		.collection(collection)
+		.getFirstListItem(
+			`${projectRelationFilter(projectPbId)} && client_id = "${pbEscapeFilter(clientId)}"`
+		);
+	await pb.collection(collection).update(record.id, body);
+};
+
+const deleteProjectChildByClientId = async (
+	collection: string,
+	projectId: string,
+	clientId: string
+) => {
+	const pb = getPb();
+	const projectPbId = await getProjectPbId(projectId);
+	const record = await pb
+		.collection(collection)
+		.getFirstListItem(
+			`${projectRelationFilter(projectPbId)} && client_id = "${pbEscapeFilter(clientId)}"`
+		);
+	await pb.collection(collection).delete(record.id);
 };
 
 export const renameProjectBoard = async (projectId: string, boardId: string, name: string) => {
-	const { error } = await getSupabase()
-		.from('project_boards')
-		.update({ name, updated_at: new Date().toISOString() })
-		.eq('project_id', projectId)
-		.eq('id', boardId);
-
-	if (error) throw error;
+	await updateProjectChildByClientId('project_boards', projectId, boardId, { name });
 };
 
 export const deleteProjectBoard = async (projectId: string, boardId: string) => {
-	const { error } = await getSupabase()
-		.from('project_boards')
-		.delete()
-		.eq('project_id', projectId)
-		.eq('id', boardId);
-
-	if (error) throw error;
+	await deleteProjectChildByClientId('project_boards', projectId, boardId);
 };
 
 export const renameProjectPage = async (projectId: string, pageId: string, name: string) => {
-	const { error } = await getSupabase()
-		.from('project_pages')
-		.update({ name, updated_at: new Date().toISOString() })
-		.eq('project_id', projectId)
-		.eq('id', pageId);
-
-	if (error) throw error;
+	await updateProjectChildByClientId('project_pages', projectId, pageId, { name });
 };
 
 export const deleteProjectPage = async (projectId: string, pageId: string) => {
-	const { error } = await getSupabase()
-		.from('project_pages')
-		.delete()
-		.eq('project_id', projectId)
-		.eq('id', pageId);
-
-	if (error) throw error;
+	await deleteProjectChildByClientId('project_pages', projectId, pageId);
 };
 
 export const updateProjectPageContent = async (
@@ -1274,16 +1243,7 @@ export const updateProjectPageContent = async (
 	pageId: string,
 	content: string
 ) => {
-	const { error } = await getSupabase()
-		.from('project_pages')
-		.update({
-			content,
-			updated_at: new Date().toISOString()
-		})
-		.eq('project_id', projectId)
-		.eq('id', pageId);
-
-	if (error) throw error;
+	await updateProjectChildByClientId('project_pages', projectId, pageId, { content });
 };
 
 export const updateProjectScratchpad = async (
@@ -1318,14 +1278,24 @@ export const saveProjectAiState = async (
 	aiSessions: ProjectAiSession[],
 	activeAiSessionId: string
 ) => {
-	const { error: userStateError } = await getSupabase().from('project_user_state').upsert({
-		project_id: projectId,
-		user_id: userId,
-		active_ai_session_id: activeAiSessionId,
-		updated_at: new Date().toISOString()
-	});
+	const pb = getPb();
+	const projectPbId = await getProjectPbId(projectId);
 
-	if (userStateError) throw userStateError;
+	try {
+		const userState = await pb.collection('project_user_state').getFirstListItem(
+			`${projectRelationFilter(projectPbId)} && user = "${pbEscapeFilter(userId)}"`
+		);
+		await pb.collection('project_user_state').update(userState.id, {
+			active_ai_session_id: activeAiSessionId
+		});
+	} catch {
+		await pb.collection('project_user_state').create({
+			project: projectPbId,
+			user: userId,
+			active_ai_session_id: activeAiSessionId,
+			chat_history: []
+		});
+	}
 
 	const normalizedSessions = aiSessions.length
 		? aiSessions
@@ -1336,38 +1306,27 @@ export const saveProjectAiState = async (
 				}
 			];
 
-	const { error: upsertSessionsError } = await getSupabase().from('project_ai_sessions').upsert(
-		normalizedSessions.map((session) => mapAiSessionUpsertRow(projectId, userId, session)),
-		{
-			onConflict: 'id'
-		}
-	);
-
-	if (upsertSessionsError) throw upsertSessionsError;
-
-	const { data: existingSessions, error: existingSessionsError } = await getSupabase()
-		.from('project_ai_sessions')
-		.select('id')
-		.eq('project_id', projectId)
-		.eq('user_id', userId);
-
-	if (existingSessionsError) throw existingSessionsError;
-
-	const nextSessionIds = new Set(normalizedSessions.map((session) => session.id));
-	const staleSessionIds = ((existingSessions || []) as Array<{ id: string }>).flatMap((session) =>
-		nextSessionIds.has(session.id) ? [] : [session.id]
-	);
-
-	if (staleSessionIds.length) {
-		const { error: deleteSessionsError } = await getSupabase()
-			.from('project_ai_sessions')
-			.delete()
-			.eq('project_id', projectId)
-			.eq('user_id', userId)
-			.in('id', staleSessionIds);
-
-		if (deleteSessionsError) throw deleteSessionsError;
+	for (const session of normalizedSessions) {
+		const row = mapAiSessionUpsertRow(projectId, userId, session);
+		await upsertProjectChild('project_ai_sessions', projectId, session.id, {
+			user: userId,
+			title: row.title,
+			model_id: row.model_id,
+			history: row.history,
+			last_message_at: row.last_message_at
+		});
 	}
+
+	const existingSessions = await pb.collection('project_ai_sessions').getFullList({
+		filter: `${projectRelationFilter(projectPbId)} && user = "${pbEscapeFilter(userId)}"`
+	});
+	const nextSessionIds = new Set(normalizedSessions.map((session) => session.id));
+	const staleSessions = existingSessions.filter(
+		(session) => !nextSessionIds.has(String(session.client_id || session.id))
+	);
+	await Promise.all(
+		staleSessions.map((session) => pb.collection('project_ai_sessions').delete(session.id))
+	);
 };
 
 export const touchProjectLastOpened = async (projectId: string) => {
@@ -1443,143 +1402,98 @@ export const leaveProject = async (projectId: string) => {
 };
 
 export const deleteProjectRemote = async (projectId: string) => {
-	const { error } = await getSupabase().from('projects').delete().eq('id', projectId);
-	if (error) throw error;
+	const pb = getPb();
+	const project = await pb.collection('projects').getFirstListItem(projectClientFilter(projectId));
+	await pb.collection('projects').delete(project.id);
 };
 
 export const fetchUserSettings = async (userId: string) => {
-	const useLegacyColumns = profileBackgroundThemeSupported === false;
-	const { data, error } = await getSupabase()
-		.from('profiles')
-		.select(useLegacyColumns ? PROFILE_SETTINGS_COLUMNS_LEGACY : PROFILE_SETTINGS_COLUMNS)
-		.eq('user_id', userId)
-		.maybeSingle();
-
-	if (
-		error &&
-		!useLegacyColumns &&
-		isMissingSchemaColumnError(error, 'profiles', 'background_theme')
-	) {
-		profileBackgroundThemeSupported = false;
-		const legacyResult = await getSupabase()
-			.from('profiles')
-			.select(PROFILE_SETTINGS_COLUMNS_LEGACY)
-			.eq('user_id', userId)
-			.maybeSingle();
-
-		if (legacyResult.error) throw legacyResult.error;
-		return mapSettingsRow(legacyResult.data as ProfileRow | null);
-	}
-
-	if (error) throw error;
-	if (!useLegacyColumns) profileBackgroundThemeSupported = true;
-	return mapSettingsRow(data as ProfileRow | null);
+	const pb = getPb();
+	const data = await pb.collection('users').getOne(userId);
+	return mapSettingsRow(mapProfileRecord(data, userId));
 };
 
 export const fetchUserProfile = async (userId: string) => {
-	const useLegacyColumns = profileUsernameSupported === false;
-	const { data, error } = await getSupabase()
-		.from('profiles')
-		.select(useLegacyColumns ? PROFILE_IDENTITY_COLUMNS_LEGACY : PROFILE_IDENTITY_COLUMNS)
-		.eq('user_id', userId)
-		.maybeSingle();
-
-	if (error && !useLegacyColumns && isMissingSchemaColumnError(error, 'profiles', 'username')) {
-		profileUsernameSupported = false;
-		const legacyResult = await getSupabase()
-			.from('profiles')
-			.select(PROFILE_IDENTITY_COLUMNS_LEGACY)
-			.eq('user_id', userId)
-			.maybeSingle();
-
-		if (legacyResult.error) throw legacyResult.error;
-		return mapProfileRow(
-			legacyResult.data as Pick<ProfileRow, 'user_id' | 'email' | 'username'> | null,
-			userId
-		);
-	}
-
-	if (error) throw error;
-	if (!useLegacyColumns) profileUsernameSupported = true;
-	return mapProfileRow(data as Pick<ProfileRow, 'user_id' | 'email' | 'username'> | null, userId);
+	const pb = getPb();
+	const data = await pb.collection('users').getOne(userId);
+	return mapProfileRow(
+		{
+			user_id: userId,
+			email: typeof data.email === 'string' ? data.email : null,
+			username: typeof data.username === 'string' ? data.username : null
+		},
+		userId
+	);
 };
 
 export const checkUsernameAvailability = async (username: string) => {
-	const { data, error } = await getSupabase().rpc('check_username_available', {
-		candidate_username: username
-	});
-
-	if (error) throw error;
-	return data === true;
+	const pb = getPb();
+	const authUser = pb.authStore.model;
+	const filter = `username = "${pbEscapeFilter(username)}"${
+		authUser?.id ? ` && id != "${pbEscapeFilter(authUser.id)}"` : ''
+	}`;
+	try {
+		await pb.collection('users').getFirstListItem(filter);
+		return false;
+	} catch {
+		return true;
+	}
 };
 
 export const updateUsername = async (userId: string, username: string) => {
-	const { data, error } = await getSupabase()
-		.from('profiles')
-		.update({
-			username,
-			updated_at: new Date().toISOString()
-		})
-		.eq('user_id', userId)
-		.select(PROFILE_IDENTITY_COLUMNS)
-		.single();
-
-	if (error) throw error;
-	profileUsernameSupported = true;
-	return mapProfileRow(data as Pick<ProfileRow, 'user_id' | 'email' | 'username'>, userId);
+	const pb = getPb();
+	const data = await pb.collection('users').update(userId, { username });
+	return mapProfileRow(
+		{
+			user_id: userId,
+			email: typeof data.email === 'string' ? data.email : null,
+			username: typeof data.username === 'string' ? data.username : null
+		},
+		userId
+	);
 };
 
 export const upsertUserSettings = async (userId: string, settings: UserSettings) => {
-	const basePayload = {
-		user_id: userId,
+	const pb = getPb();
+	await pb.collection('users').update(userId, {
 		default_show_checkbox: settings.defaultShowCheckbox,
 		preferred_ai_model_id: settings.preferredAiModelId,
-		updated_at: new Date().toISOString()
-	};
-	const useLegacyPayload = profileBackgroundThemeSupported === false;
-	const { error } = await getSupabase().from('profiles').upsert(
-		useLegacyPayload
-			? basePayload
-			: {
-					...basePayload,
-					background_theme: settings.backgroundTheme
-				}
-	);
-
-	if (
-		error &&
-		!useLegacyPayload &&
-		isMissingSchemaColumnError(error, 'profiles', 'background_theme')
-	) {
-		profileBackgroundThemeSupported = false;
-		const legacyResult = await getSupabase().from('profiles').upsert(basePayload);
-		if (legacyResult.error) throw legacyResult.error;
-		return;
-	}
-
-	if (error) throw error;
-	if (!useLegacyPayload) profileBackgroundThemeSupported = true;
+		background_theme: settings.backgroundTheme
+	});
 };
 
-export const subscribeToWorkspaceChanges = (userId: string, onChange: () => void) => {
-	const channel = getSupabase()
-		.channel(`workspace-${userId}-${createId()}`)
-		.on('postgres_changes', { event: '*', schema: 'public', table: 'projects' }, onChange)
-		.on(
-			'postgres_changes',
-			{ event: '*', schema: 'public', table: 'project_memberships' },
-			onChange
-		)
-		.on('postgres_changes', { event: '*', schema: 'public', table: 'project_invites' }, onChange)
-		.on('postgres_changes', { event: '*', schema: 'public', table: 'project_boards' }, onChange)
-		.on('postgres_changes', { event: '*', schema: 'public', table: 'project_pages' }, onChange)
-		.on('postgres_changes', { event: '*', schema: 'public', table: 'project_columns' }, onChange)
-		.on('postgres_changes', { event: '*', schema: 'public', table: 'project_tasks' }, onChange)
-		.on('postgres_changes', { event: '*', schema: 'public', table: 'project_user_state' }, onChange)
-		.on('postgres_changes', { event: '*', schema: 'public', table: 'project_ai_sessions' }, onChange)
-		.subscribe();
+export const subscribeToWorkspaceChanges = (_userId: string, onChange: () => void) => {
+	const pb = getPb();
+	let debounceTimer: ReturnType<typeof setTimeout> | undefined;
+	const debounced = () => {
+		if (debounceTimer) clearTimeout(debounceTimer);
+		debounceTimer = setTimeout(() => onChange(), 250);
+	};
+
+	const collections = [
+		'projects',
+		'project_memberships',
+		'project_invites',
+		'project_boards',
+		'project_pages',
+		'project_columns',
+		'project_tasks',
+		'project_user_state',
+		'project_ai_sessions'
+	];
+
+	const unsubscribers: Array<() => void> = [];
+	void Promise.all(
+		collections.map(async (collection) => {
+			const unsubscribe = await pb.collection(collection).subscribe('*', debounced);
+			unsubscribers.push(unsubscribe);
+		})
+	);
 
 	return () => {
-		void getSupabase().removeChannel(channel);
+		if (debounceTimer) clearTimeout(debounceTimer);
+		for (const unsubscribe of unsubscribers) {
+			unsubscribe();
+		}
 	};
 };

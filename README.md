@@ -1,134 +1,65 @@
-# Calurcap
+# Kainbu
 
-A SvelteKit + Supabase + Capacitor (Android) application template with Google Sign-In and Tailwind CSS v4.
+Self-hosted kanban workspace: SvelteKit SPA, Hono API, PocketBase (auth + data + files), optional Capacitor Android builds.
 
-## Usage as Template
+## Self-hosting (Docker)
 
-You can easily scaffold a new project from this template using `degit`:
-
-```bash
-npx degit TheAnimatrix/calurcap my-new-app
-cd my-new-app
-npm install
-```
-
-### Quick Setup
-
-Run the setup wizard **before** installing dependencies to automatically configure your project name, ID, and API keys:
+1. Copy environment template and set secrets:
 
 ```bash
-npm run setup
-npm install
+cp .env.example .env
+# Edit OPENROUTER_API_KEY, POCKETBASE_ADMIN_PASSWORD, etc.
 ```
 
-This interactive script will ask for your:
-- App Name & ID
-- Supabase URL & Key
-- Google Client ID
+2. Start the stack:
 
-It will then update `package.json`, `capacitor.config.ts`, `android/app/build.gradle`, and `supabaseClient.ts` for you.
+```bash
+docker compose up --build
+```
 
-### Manual Steps (Required)
+3. Open the app at [http://localhost:3000](http://localhost:3000). PocketBase admin UI: [http://localhost:8090/_/](http://localhost:8090/_/).
 
-Even after running the script, you must manually:
-1.  **Replace `android/app/google-services.json`** with your own file from **Google Cloud Console** (or Firebase Console if you linked them).
-2.  **Run `npx cap sync`** to apply the Android configuration changes.
+Services:
 
-## Features
+| Service | Port | Role |
+|---------|------|------|
+| `web` | 3000 | Static UI (nginx) |
+| `api` | 8788 | Hono API (AI, workspace mutations, CLI auth) |
+| `pocketbase` | 8090 | Auth, database, file storage, realtime |
 
-- **Framework**: SvelteKit v2 (SPA mode) + Svelte v5
-- **Styling**: Tailwind CSS v4 with a custom dark theme
-- **Authentication**: Supabase Auth v2 with Google Sign-In
-- **Mobile**: Capacitor v7 for Android deployment
-- **Live Reload**: Seamless development on Android devices
+Schema is applied from [`pocketbase/pb_migrations/`](pocketbase/pb_migrations/) on PocketBase startup.
 
-## Prerequisites
+### Local development (without Docker)
 
-- Node.js
-- Android Studio
-- Supabase Project
-- Google Cloud Console Project
-- `ANDROID_HOME` or `ANDROID_SDK_ROOT` pointing at your Android SDK if you build from the CLI
+```bash
+# Terminal 1 — PocketBase (download binary or use docker compose up pocketbase)
+# Terminal 2
+cp .env.example .env.local
+npm install --no-engine-strict
+npm run dev:full
+```
 
-## Setup & Installation
+Web: [http://localhost:3001](http://localhost:3001) (Vite proxies `/api` to port 8788).
 
-### 1. Supabase Setup
+## CLI
 
-1.  Create a new Supabase project.
-2.  Go to **Authentication > Providers** and enable **Google**.
-3.  You will need the **Client ID** and **Client Secret** from Google Cloud Console (see below).
-4.  Copy your Supabase URL and Anon Key.
-5.  Add `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY`, and `SUPABASE_SERVICE_ROLE_KEY` to your local server environment.
-6.  Update `src/lib/supabaseClient.ts` with your Supabase URL and Anon Key if you are not using env vars directly.
+See [docs/CLI.md](docs/CLI.md). Configure PocketBase URL:
 
-### 2. Google Cloud Console Setup
+```bash
+kainbu config set --pocketbase-url http://127.0.0.1:8090 --api-base http://127.0.0.1:8788
+kainbu login
+```
 
-1.  Go to the [Google Cloud Console](https://console.cloud.google.com/).
-2.  Create a new project.
-3.  Go to **APIs & Services > OAuth consent screen** and configure it (External or Internal).
-4.  Go to **APIs & Services > Credentials**.
-5.  Create an **OAuth 2.0 Client ID** for **Web application**.
-    *   **Authorized JavaScript origins**: `http://localhost:3000` (and your production domain).
-    *   **Authorized redirect URIs**: `https://<YOUR_PROJECT_ID>.supabase.co/auth/v1/callback`.
-    *   Copy the **Client ID** and **Client Secret** to your Supabase Google Provider settings.
-6.  Create another **OAuth 2.0 Client ID** for **Android**.
-    *   You will need the **SHA-1 certificate fingerprint**.
-    *   To get the SHA-1 for your debug keystore:
-        ```bash
-        keytool -list -v -keystore ~/.android/debug.keystore -alias androiddebugkey -storepass android -keypass android
-        ```
-    *   Package name: `com.avarnic.calurcap`.
-7.  Download the `google-services.json` file for the Android client.
+## Environment variables
 
-### 3. Project Configuration
+| Variable | Purpose |
+|----------|---------|
+| `VITE_POCKETBASE_URL` | Browser PocketBase URL |
+| `POCKETBASE_URL` | Server/CLI PocketBase URL |
+| `POCKETBASE_ADMIN_EMAIL` / `POCKETBASE_ADMIN_PASSWORD` | API admin access to PocketBase |
+| `OPENROUTER_API_KEY` | Workspace AI routes |
+| `KAINBU_PUBLIC_URL` | CLI device-login links |
 
-1.  **Android**:
-    *   Place the `google-services.json` file in `android/app/`.
-2.  **Capacitor**:
-    *   Open `capacitor.config.ts` and update `serverClientId` in the `GoogleAuth` plugin configuration with your **Web Client ID** (not the Android one).
+## Android (optional)
 
-## Development Workflow
-
-### Initial Setup (Run Once)
-
-1.  **Install dependencies**:
-    ```bash
-    npm install
-    ```
-
-2.  **Initialize Native Project**:
-    This builds the web assets and syncs them to the Android project. You only need to repeat this if you install new native plugins (`npm install @capacitor/...`).
-    ```bash
-    npm run build
-    npx cap sync
-    ```
-    CLI Android builds also create `android/local.properties` automatically from `ANDROID_HOME` or `ANDROID_SDK_ROOT` when it is missing.
-
-### Daily Development
-
-1.  **Start the Development Server**:
-    Open a terminal and run:
-    ```bash
-    npm run dev
-    ```
-    This starts the Vite server on port 3000.
-
-2.  **Run on Android with Live Reload**:
-    Open a **second terminal** and run:
-    ```bash
-    npm run dev:android
-    ```
-    Ensure your Android device is connected via USB and USB debugging is enabled.
-
-3.  **Open Android Studio** (optional):
-    If you need to edit native code or debug Java/Kotlin issues:
-    ```bash
-    npx cap open android
-    ```
-
-## Notes
-
-- **Tailwind CSS**: Styles are located in `src/app.css`.
-- **Port**: The development server runs on port `3000` to ensure compatibility with the Android configuration.
-- **Workspace API**: Team-board invite and membership mutations run through the Hono API and require `SUPABASE_SERVICE_ROLE_KEY` on the server.
-- **CLI**: Standalone `kainbu` command — build with `npm run cli:build`, link with `npm run cli:link`. See [docs/CLI.md](docs/CLI.md).
+Capacitor wraps the static `build/` output. After `npm run build`, run `npx cap sync` and open the Android project in Android Studio.

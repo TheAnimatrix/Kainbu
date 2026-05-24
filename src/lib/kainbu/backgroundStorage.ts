@@ -1,10 +1,7 @@
-import {
-	BACKGROUND_SIGNED_URL_TTL_SECONDS,
-	BACKGROUND_STORAGE_BUCKET,
-	buildBackgroundStoragePath
-} from '$lib/kainbu/backgrounds';
+import { buildBackgroundStoragePath } from '$lib/kainbu/backgrounds';
 import type { BackgroundTheme } from '$lib/kainbu/types';
-import { supabase } from '$lib/supabaseClient';
+import { pocketbase } from '$lib/pocketbaseClient';
+import { pbEscapeFilter } from '$lib/kainbu/pbRecords';
 
 export const uploadBackgroundImage = async (
 	scope: 'user' | 'project',
@@ -12,13 +9,25 @@ export const uploadBackgroundImage = async (
 	file: File
 ): Promise<Extract<BackgroundTheme, { kind: 'image' }>> => {
 	const path = buildBackgroundStoragePath(scope, scopeId, file.name, file.type);
-	const { error } = await supabase.storage.from(BACKGROUND_STORAGE_BUCKET).upload(path, file, {
-		contentType: file.type,
-		cacheControl: '3600',
-		upsert: false
-	});
+	const ownerId = scope === 'user' ? scopeId : pocketbase.authStore.model?.id;
+	if (!ownerId) {
+		throw new Error('You must be signed in to upload a background.');
+	}
 
-	if (error) throw error;
+	try {
+		const existing = await pocketbase.collection('background_files').getFirstListItem(
+			`owner = "${pbEscapeFilter(ownerId)}" && path = "${pbEscapeFilter(path)}"`
+		);
+		await pocketbase.collection('background_files').update(existing.id, {
+			file
+		});
+	} catch {
+		await pocketbase.collection('background_files').create({
+			owner: ownerId,
+			path,
+			file
+		});
+	}
 
 	return {
 		kind: 'image',
@@ -28,17 +37,28 @@ export const uploadBackgroundImage = async (
 
 export const deleteBackgroundImage = async (path: string) => {
 	if (!path.trim()) return;
+	const ownerId = pocketbase.authStore.model?.id;
+	if (!ownerId) return;
 
-	const { error } = await supabase.storage.from(BACKGROUND_STORAGE_BUCKET).remove([path]);
-	if (error) throw error;
+	try {
+		const existing = await pocketbase.collection('background_files').getFirstListItem(
+			`owner = "${pbEscapeFilter(ownerId)}" && path = "${pbEscapeFilter(path)}"`
+		);
+		await pocketbase.collection('background_files').delete(existing.id);
+	} catch {
+		// already deleted
+	}
 };
 
 export const createBackgroundSignedUrl = async (path: string) => {
-	const { data, error } = await supabase.storage
-		.from(BACKGROUND_STORAGE_BUCKET)
-		.createSignedUrl(path, BACKGROUND_SIGNED_URL_TTL_SECONDS);
+	const ownerId = pocketbase.authStore.model?.id;
+	if (!ownerId) {
+		throw new Error('You must be signed in to load backgrounds.');
+	}
 
-	if (error) throw error;
+	const record = await pocketbase.collection('background_files').getFirstListItem(
+		`owner = "${pbEscapeFilter(ownerId)}" && path = "${pbEscapeFilter(path)}"`
+	);
 
-	return data.signedUrl;
+	return pocketbase.files.getURL(record, record.file);
 };

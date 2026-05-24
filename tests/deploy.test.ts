@@ -1,17 +1,17 @@
 /**
- * Integration tests for kainbu.vercel.app deployed endpoints.
+ * Integration tests for the self-hosted API (docker compose or dev:full).
  *
  * Usage:
  *   npx vitest run tests/deploy.test.ts
  *
  * For authenticated tests, set KAINBU_TEST_TOKEN and KAINBU_TEST_PROJECT_ID:
- *   KAINBU_TEST_TOKEN=<supabase_jwt> KAINBU_TEST_PROJECT_ID=<uuid> npx vitest run tests/deploy.test.ts
+ *   KAINBU_TEST_TOKEN=<pocketbase_token> KAINBU_TEST_PROJECT_ID=<project_client_id> npx vitest run tests/deploy.test.ts
  *
  * Or sign in locally: kainbu login --token "$KAINBU_TEST_TOKEN"
  */
 import { describe, it, expect } from 'vitest';
 
-const BASE = 'https://kainbu.vercel.app';
+const BASE = process.env.KAINBU_TEST_BASE || 'http://127.0.0.1:8788';
 const TOKEN = process.env.KAINBU_TEST_TOKEN ?? '';
 const PROJECT_ID = process.env.KAINBU_TEST_PROJECT_ID ?? '';
 let modelIdPromise: Promise<string> | null = null;

@@ -21,8 +21,7 @@ async function main() {
 
   const appName = await question('Enter App Name (e.g., My App): ') || 'Calurcap';
   const appId = await question('Enter App ID (e.g., com.example.app): ') || 'com.avarnic.calurcap';
-  const supabaseUrl = await question('Enter Supabase URL (optional): ');
-  const supabaseKey = await question('Enter Supabase Anon Key (optional): ');
+  const pocketbaseUrl = await question('Enter PocketBase URL (optional): ');
   const googleClientId = await question('Enter Google Web Client ID (optional): ');
 
   console.log('\nUpdating files...\n');
@@ -59,16 +58,19 @@ async function main() {
     console.log('✅ Updated android/app/build.gradle');
   }
 
-  // 4. Update src/lib/supabaseClient.ts
-  // 4. Update src/lib/supabaseClient.ts
-  if (supabaseUrl || supabaseKey) {
-    const supabasePath = path.join(process.cwd(), 'src/lib/supabaseClient.ts');
-    if (fs.existsSync(supabasePath)) {
-      let content = fs.readFileSync(supabasePath, 'utf-8');
-      if (supabaseUrl) content = content.replace(/VITE_SUPABASE_URL \|\| '.*'/, `VITE_SUPABASE_URL || '${supabaseUrl}'`);
-      if (supabaseKey) content = content.replace(/VITE_SUPABASE_ANON_KEY \|\| '.*'/, `VITE_SUPABASE_ANON_KEY || '${supabaseKey}'`);
-      fs.writeFileSync(supabasePath, content);
-      console.log('✅ Updated src/lib/supabaseClient.ts');
+  if (pocketbaseUrl) {
+    const envExamplePath = path.join(process.cwd(), '.env.example');
+    const envPath = path.join(process.cwd(), '.env');
+    const target = fs.existsSync(envPath) ? envPath : envExamplePath;
+    if (fs.existsSync(target)) {
+      let content = fs.readFileSync(target, 'utf-8');
+      if (content.includes('VITE_POCKETBASE_URL=')) {
+        content = content.replace(/VITE_POCKETBASE_URL=.*/, `VITE_POCKETBASE_URL=${pocketbaseUrl}`);
+      } else {
+        content += `\nVITE_POCKETBASE_URL=${pocketbaseUrl}\n`;
+      }
+      fs.writeFileSync(target, content);
+      console.log(`✅ Updated ${path.basename(target)}`);
     }
   }
 

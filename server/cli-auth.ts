@@ -1,6 +1,7 @@
 import { randomBytes, randomUUID } from 'node:crypto';
 import type { Context } from 'hono';
-import { createAdminSupabaseClient, getAuthenticatedUserId } from './supabase.js';
+import { createAdminPb, getAuthenticatedUserId } from './pocketbase.js';
+import { pbEscapeFilter } from './pbWorkspace.js';
 
 const DEVICE_CODE_TTL_MS = 10 * 60 * 1000;
 const POLL_INTERVAL_HINT_SEC = 3;
@@ -38,17 +39,20 @@ const getVerificationBaseUrl = () => {
 		process.env.KAINBU_PUBLIC_URL ||
 		process.env.VITE_PUBLIC_APP_URL ||
 		process.env.PUBLIC_APP_URL ||
-		'https://kainbu.vercel.app';
+		'http://localhost:3000';
 	return configured.replace(/\/+$/, '');
 };
 
-const expireStaleDevices = async (admin: ReturnType<typeof createAdminSupabaseClient>) => {
+const expireStaleDevices = async (admin: Awaited<ReturnType<typeof createAdminPb>>) => {
 	const now = new Date().toISOString();
-	await admin
-		.from('cli_device_auth')
-		.update({ status: 'expired', updated_at: now })
-		.eq('status', 'pending')
-		.lt('expires_at', now);
+	const stale = await admin.collection('cli_device_auth').getFullList({
+		filter: `status = "pending" && expires_at < "${now}"`
+	});
+	await Promise.all(
+		stale.map((record) =>
+			admin.collection('cli_device_auth').update(record.id, { status: 'expired' })
+		)
+	);
 };
 
 export const handleCliDeviceStart = async (c: Context) => {
@@ -58,24 +62,26 @@ export const handleCliDeviceStart = async (c: Context) => {
 		deviceId = randomUUID();
 	}
 
-	const admin = createAdminSupabaseClient();
+	const admin = await createAdminPb();
 	await expireStaleDevices(admin);
 
 	const expiresAt = new Date(Date.now() + DEVICE_CODE_TTL_MS).toISOString();
 	let userCode = generateUserCode();
 
 	for (let attempt = 0; attempt < 5; attempt += 1) {
-		const { error } = await admin.from('cli_device_auth').insert({
-			device_id: deviceId,
-			user_code: userCode,
-			status: 'pending',
-			expires_at: expiresAt
-		});
-
-		if (!error) break;
-		userCode = generateUserCode();
-		if (attempt === 4) {
-			return c.json({ error: 'Unable to start CLI login.' }, 500);
+		try {
+			await admin.collection('cli_device_auth').create({
+				device_id: deviceId,
+				user_code: userCode,
+				status: 'pending',
+				expires_at: expiresAt
+			});
+			break;
+		} catch {
+			userCode = generateUserCode();
+			if (attempt === 4) {
+				return c.json({ error: 'Unable to start CLI login.' }, 500);
+			}
 		}
 	}
 
@@ -97,28 +103,20 @@ export const handleCliDevicePoll = async (c: Context) => {
 		return c.json({ error: 'deviceId is required.' }, 400);
 	}
 
-	const admin = createAdminSupabaseClient();
+	const admin = await createAdminPb();
 	await expireStaleDevices(admin);
 
-	const { data, error } = await admin
-		.from('cli_device_auth')
-		.select('status,exchange_token,expires_at')
-		.eq('device_id', deviceId)
-		.maybeSingle();
-
-	if (error) {
-		return c.json({ error: 'Unable to poll CLI login.' }, 500);
-	}
-
-	if (!data) {
+	let data;
+	try {
+		data = await admin
+			.collection('cli_device_auth')
+			.getFirstListItem(`device_id = "${pbEscapeFilter(deviceId)}"`);
+	} catch {
 		return c.json({ status: 'expired' });
 	}
 
-	if (data.status === 'pending' && new Date(data.expires_at).getTime() < Date.now()) {
-		await admin
-			.from('cli_device_auth')
-			.update({ status: 'expired', updated_at: new Date().toISOString() })
-			.eq('device_id', deviceId);
+	if (data.status === 'pending' && new Date(String(data.expires_at)).getTime() < Date.now()) {
+		await admin.collection('cli_device_auth').update(data.id, { status: 'expired' });
 		return c.json({ status: 'expired' });
 	}
 
@@ -140,61 +138,34 @@ export const handleCliDeviceExchange = async (c: Context) => {
 		return c.json({ error: 'exchangeToken is required.' }, 400);
 	}
 
-	const admin = createAdminSupabaseClient();
+	const admin = await createAdminPb();
 
-	const { data, error } = await admin
-		.from('cli_device_auth')
-		.select('device_id,status,user_id,expires_at')
-		.eq('exchange_token', exchangeToken)
-		.eq('status', 'approved')
-		.maybeSingle();
-
-	if (error) {
-		return c.json({ error: 'Unable to exchange CLI login.' }, 500);
-	}
-
-	if (!data?.user_id || new Date(data.expires_at).getTime() < Date.now()) {
+	let data;
+	try {
+		data = await admin.collection('cli_device_auth').getFirstListItem(
+			`exchange_token = "${pbEscapeFilter(exchangeToken)}" && status = "approved"`
+		);
+	} catch {
 		return c.json({ error: 'Invalid or expired exchange token.' }, 401);
 	}
 
-	const { data: userData, error: userError } = await admin.auth.admin.getUserById(data.user_id);
-	const email = userData.user?.email;
-	if (userError || !email) {
-		return c.json({ error: 'Unable to load user for CLI session.' }, 500);
+	if (!data.auth_token || new Date(String(data.expires_at)).getTime() < Date.now()) {
+		return c.json({ error: 'Invalid or expired exchange token.' }, 401);
 	}
 
-	const { data: linkData, error: linkError } = await admin.auth.admin.generateLink({
-		type: 'magiclink',
-		email
+	const userId = typeof data.user === 'string' ? data.user : data.expand?.user?.id;
+	const userRecord = userId ? await admin.collection('users').getOne(String(userId)) : null;
+
+	await admin.collection('cli_device_auth').update(data.id, {
+		status: 'consumed',
+		exchange_token: ''
 	});
-
-	if (linkError || !linkData?.properties?.hashed_token) {
-		return c.json({ error: 'Unable to create CLI session.' }, 500);
-	}
-
-	const { data: sessionData, error: sessionError } = await admin.auth.verifyOtp({
-		token_hash: linkData.properties.hashed_token,
-		type: 'email'
-	});
-
-	if (sessionError || !sessionData.session) {
-		return c.json({ error: 'Unable to finalize CLI session.' }, 500);
-	}
-
-	await admin
-		.from('cli_device_auth')
-		.update({
-			status: 'consumed',
-			exchange_token: null,
-			updated_at: new Date().toISOString()
-		})
-		.eq('device_id', data.device_id);
 
 	return c.json({
-		accessToken: sessionData.session.access_token,
-		refreshToken: sessionData.session.refresh_token,
-		expiresAt: sessionData.session.expires_at,
-		user: sessionData.user
+		accessToken: data.auth_token,
+		refreshToken: data.auth_token,
+		expiresAt: Math.floor(Date.now() / 1000) + 60 * 60 * 24 * 7,
+		user: userRecord
 	});
 };
 
@@ -214,39 +185,34 @@ export const handleCliDeviceApprove = async (c: Context) => {
 		return c.json({ error: 'Unauthorized' }, 401);
 	}
 
-	const admin = createAdminSupabaseClient();
-	await expireStaleDevices(admin);
-
-	const { data, error } = await admin
-		.from('cli_device_auth')
-		.select('device_id,status,expires_at')
-		.eq('user_code', userCode)
-		.eq('status', 'pending')
-		.maybeSingle();
-
-	if (error) {
-		return c.json({ error: 'Unable to approve CLI login.' }, 500);
+	const token = authorization?.startsWith('Bearer ') ? authorization.slice(7).trim() : '';
+	if (!token) {
+		return c.json({ error: 'Unauthorized' }, 401);
 	}
 
-	if (!data || new Date(data.expires_at).getTime() < Date.now()) {
+	const admin = await createAdminPb();
+	await expireStaleDevices(admin);
+
+	let data;
+	try {
+		data = await admin.collection('cli_device_auth').getFirstListItem(
+			`user_code = "${pbEscapeFilter(userCode)}" && status = "pending"`
+		);
+	} catch {
+		return c.json({ error: 'Invalid or expired code.' }, 404);
+	}
+
+	if (new Date(String(data.expires_at)).getTime() < Date.now()) {
 		return c.json({ error: 'Invalid or expired code.' }, 404);
 	}
 
 	const exchangeToken = generateExchangeToken();
-	const { error: updateError } = await admin
-		.from('cli_device_auth')
-		.update({
-			status: 'approved',
-			user_id: userId,
-			exchange_token: exchangeToken,
-			updated_at: new Date().toISOString()
-		})
-		.eq('device_id', data.device_id)
-		.eq('status', 'pending');
-
-	if (updateError) {
-		return c.json({ error: 'Unable to approve CLI login.' }, 500);
-	}
+	await admin.collection('cli_device_auth').update(data.id, {
+		status: 'approved',
+		user: userId,
+		exchange_token: exchangeToken,
+		auth_token: token
+	});
 
 	return c.json({ ok: true });
 };

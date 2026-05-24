@@ -1,12 +1,13 @@
-import type { SupabaseClient } from '@supabase/supabase-js';
-import type {
-	BackgroundTheme,
-	ProfileRow,
-	ProjectInviteRow,
-	ProjectMembershipRow,
-	ProjectRow
-} from '../src/lib/kainbu/types.js';
-import { createAdminSupabaseClient, getAuthenticatedUserId } from './supabase.js';
+import type PocketBase from 'pocketbase';
+import type { BackgroundTheme } from '../src/lib/kainbu/types.js';
+import { createAdminPb, getAuthenticatedUserId } from './pocketbase.js';
+import {
+	getProjectPbId,
+	getProjectRecord,
+	pbEscapeFilter,
+	projectClientFilter,
+	projectRelationFilter
+} from './pbWorkspace.js';
 
 const VALID_GRADIENT_BACKGROUND_IDS = new Set([
 	'ember-haze',
@@ -132,25 +133,32 @@ const requireBackgroundThemeOrNull = (value: unknown, field: string) => {
 	return value;
 };
 
-const getProjectOrThrow = async (admin: SupabaseClient, projectId: string) => {
-	const { data, error } = await admin
-		.from('projects')
-		.select('id,user_id,name,scratchpad_data,scratchpad_rev,updated_at')
-		.eq('id', projectId)
-		.maybeSingle();
-
-	if (error) throw error;
-	if (!data) {
-		throw new WorkspaceApiError(404, 'Project not found.');
+const relationId = (value: unknown) => {
+	if (typeof value === 'string') return value;
+	if (value && typeof value === 'object' && typeof (value as { id?: string }).id === 'string') {
+		return (value as { id: string }).id;
 	}
-
-	return data as Pick<
-		ProjectRow,
-		'id' | 'user_id' | 'name' | 'scratchpad_data' | 'scratchpad_rev' | 'updated_at'
-	>;
+	return '';
 };
 
-const ensureOwnerProject = async (admin: SupabaseClient, projectId: string, userId: string) => {
+const getProjectOrThrow = async (admin: PocketBase, projectId: string) => {
+	try {
+		const data = await getProjectRecord(admin, projectId);
+		return {
+			id: String(data.client_id || data.id),
+			user_id: relationId(data.owner),
+			name: String(data.name || ''),
+			scratchpad_data: String(data.scratchpad_data || ''),
+			scratchpad_rev: typeof data.scratchpad_rev === 'number' ? data.scratchpad_rev : 0,
+			updated_at: String(data.updated || new Date().toISOString()),
+			_pbId: String(data.id)
+		};
+	} catch {
+		throw new WorkspaceApiError(404, 'Project not found.');
+	}
+};
+
+const ensureOwnerProject = async (admin: PocketBase, projectId: string, userId: string) => {
 	const project = await getProjectOrThrow(admin, projectId);
 	if (project.user_id !== userId) {
 		throw new WorkspaceApiError(403, 'Only the project owner can perform this action.');
@@ -159,19 +167,18 @@ const ensureOwnerProject = async (admin: SupabaseClient, projectId: string, user
 	return project;
 };
 
-const getMembership = async (admin: SupabaseClient, projectId: string, userId: string) => {
-	const { data, error } = await admin
-		.from('project_memberships')
-		.select('*')
-		.eq('project_id', projectId)
-		.eq('user_id', userId)
-		.maybeSingle();
-
-	if (error) throw error;
-	return data as ProjectMembershipRow | null;
+const getMembership = async (admin: PocketBase, projectId: string, userId: string) => {
+	const projectPbId = await getProjectPbId(admin, projectId);
+	try {
+		return await admin.collection('project_memberships').getFirstListItem(
+			`${projectRelationFilter(projectPbId)} && user = "${pbEscapeFilter(userId)}"`
+		);
+	} catch {
+		return null;
+	}
 };
 
-const ensureMembership = async (admin: SupabaseClient, projectId: string, userId: string) => {
+const ensureMembership = async (admin: PocketBase, projectId: string, userId: string) => {
 	const membership = await getMembership(admin, projectId, userId);
 	if (!membership) {
 		throw new WorkspaceApiError(404, 'Membership not found.');
@@ -180,30 +187,49 @@ const ensureMembership = async (admin: SupabaseClient, projectId: string, userId
 	return membership;
 };
 
-const getInviteOrThrow = async (admin: SupabaseClient, inviteId: string) => {
-	const { data, error } = await admin.from('project_invites').select('*').eq('id', inviteId).maybeSingle();
-
-	if (error) throw error;
-	if (!data) {
+const getInviteOrThrow = async (admin: PocketBase, inviteId: string) => {
+	try {
+		const data = await admin.collection('project_invites').getOne(inviteId);
+		return {
+			id: String(data.id),
+			project_id: String(
+				(data.expand as { project?: { client_id?: string } })?.project?.client_id || data.project
+			),
+			invitee_user_id: relationId(data.invitee),
+			invitee_email: String(data.invitee_email || ''),
+			invited_by_user_id: relationId(data.invited_by),
+			status:
+				data.status === 'accepted' ||
+				data.status === 'rejected' ||
+				data.status === 'cancelled'
+					? data.status
+					: 'pending',
+			created_at: String(data.created || new Date().toISOString()),
+			updated_at: String(data.updated || new Date().toISOString()),
+			responded_at: data.responded_at ? String(data.responded_at) : null
+		};
+	} catch {
 		throw new WorkspaceApiError(404, 'Invite not found.');
 	}
-
-	return data as ProjectInviteRow;
 };
 
-const getProfileByEmail = async (admin: SupabaseClient, inviteeEmail: string) => {
+const getProfileByEmail = async (admin: PocketBase, inviteeEmail: string) => {
 	const normalizedEmail = inviteeEmail.trim().toLowerCase();
-	const { data, error } = await admin
-		.from('profiles')
-		.select('user_id,email')
-		.ilike('email', normalizedEmail)
-		.maybeSingle();
-
-	if (error) throw error;
-	return data as Pick<ProfileRow, 'user_id' | 'email'> | null;
+	try {
+		const data = await admin
+			.collection('users')
+			.getFirstListItem(`email = "${pbEscapeFilter(normalizedEmail)}"`);
+		return { user_id: String(data.id), email: String(data.email || normalizedEmail) };
+	} catch {
+		return null;
+	}
 };
 
-const jsonProjectScratchpadResult = (row: Pick<ProjectRow, 'scratchpad_data' | 'scratchpad_rev' | 'updated_at'>) => ({
+const jsonProjectScratchpadResult = (row: {
+	scratchpad_data: string;
+	scratchpad_rev: number;
+	updated_at: string;
+}) => ({
 	scratchpadData: row.scratchpad_data,
 	scratchpadRev: row.scratchpad_rev,
 	updatedAt: new Date(row.updated_at).getTime()
@@ -235,20 +261,16 @@ export const handleWorkspaceTouchProjectRequest = async (
 	authorization: string | undefined
 ) => {
 	const userId = await getAuthenticatedUserId(authorization);
-	const admin = createAdminSupabaseClient();
+	const admin = await createAdminPb();
 	const projectId = requireString(body.projectId, 'projectId');
 
 	await ensureMembership(admin, projectId, userId);
 
-	const { error } = await admin
-		.from('project_memberships')
-		.update({
-			last_opened_at: new Date().toISOString()
-		})
-		.eq('project_id', projectId)
-		.eq('user_id', userId);
-
-	if (error) throw error;
+	const membership = await getMembership(admin, projectId, userId);
+	if (!membership) throw new WorkspaceApiError(404, 'Membership not found.');
+	await admin.collection('project_memberships').update(membership.id, {
+		last_opened_at: new Date().toISOString()
+	});
 
 	return { ok: true };
 };
@@ -258,21 +280,17 @@ export const handleWorkspacePinProjectRequest = async (
 	authorization: string | undefined
 ) => {
 	const userId = await getAuthenticatedUserId(authorization);
-	const admin = createAdminSupabaseClient();
+	const admin = await createAdminPb();
 	const projectId = requireString(body.projectId, 'projectId');
 	const pinned = body.pinned === true;
 
 	await ensureMembership(admin, projectId, userId);
 
-	const { error } = await admin
-		.from('project_memberships')
-		.update({
-			pinned_at: pinned ? new Date().toISOString() : null
-		})
-		.eq('project_id', projectId)
-		.eq('user_id', userId);
-
-	if (error) throw error;
+	const membership = await getMembership(admin, projectId, userId);
+	if (!membership) throw new WorkspaceApiError(404, 'Membership not found.');
+	await admin.collection('project_memberships').update(membership.id, {
+		pinned_at: pinned ? new Date().toISOString() : ''
+	});
 
 	return { ok: true, pinned };
 };
@@ -282,39 +300,34 @@ export const handleWorkspaceScratchpadRequest = async (
 	authorization: string | undefined
 ) => {
 	const userId = await getAuthenticatedUserId(authorization);
-	const admin = createAdminSupabaseClient();
+	const admin = await createAdminPb();
 	const projectId = requireString(body.projectId, 'projectId');
 	const scratchpadData = requireString(body.scratchpadData, 'scratchpadData');
 	const expectedRevision = requireInteger(body.expectedRevision, 'expectedRevision');
 
 	await ensureMembership(admin, projectId, userId);
 
-	const { data: updatedProject, error: updateError } = await admin
-		.from('projects')
-		.update({
-			scratchpad_data: scratchpadData,
-			scratchpad_rev: expectedRevision + 1,
-			updated_at: new Date().toISOString()
-		})
-		.eq('id', projectId)
-		.eq('scratchpad_rev', expectedRevision)
-		.select('scratchpad_data,scratchpad_rev,updated_at')
-		.maybeSingle();
-
-	if (updateError) throw updateError;
-	if (updatedProject) {
+	const project = await getProjectOrThrow(admin, projectId);
+	if (project.scratchpad_rev !== expectedRevision) {
 		return {
-			ok: true,
-			...jsonProjectScratchpadResult(
-				updatedProject as Pick<ProjectRow, 'scratchpad_data' | 'scratchpad_rev' | 'updated_at'>
-			)
+			ok: false,
+			...jsonProjectScratchpadResult(project)
 		};
 	}
 
-	const project = await getProjectOrThrow(admin, projectId);
+	const updatedProject = await admin.collection('projects').update(project._pbId, {
+		scratchpad_data: scratchpadData,
+		scratchpad_rev: expectedRevision + 1
+	});
+
 	return {
-		ok: false,
-		...jsonProjectScratchpadResult(project)
+		ok: true,
+		...jsonProjectScratchpadResult({
+			scratchpad_data: String(updatedProject.scratchpad_data || ''),
+			scratchpad_rev:
+				typeof updatedProject.scratchpad_rev === 'number' ? updatedProject.scratchpad_rev : 0,
+			updated_at: String(updatedProject.updated || new Date().toISOString())
+		})
 	};
 };
 
@@ -323,21 +336,16 @@ export const handleWorkspaceProjectBackgroundRequest = async (
 	authorization: string | undefined
 ) => {
 	const userId = await getAuthenticatedUserId(authorization);
-	const admin = createAdminSupabaseClient();
+	const admin = await createAdminPb();
 	const projectId = requireString(body.projectId, 'projectId');
 	const backgroundTheme = requireBackgroundThemeOrNull(body.backgroundTheme, 'backgroundTheme');
 
 	await ensureMembership(admin, projectId, userId);
 
-	const { error } = await admin
-		.from('projects')
-		.update({
-			background_theme: backgroundTheme,
-			updated_at: new Date().toISOString()
-		})
-		.eq('id', projectId);
-
-	if (error) throw error;
+	const project = await getProjectOrThrow(admin, projectId);
+	await admin.collection('projects').update(project._pbId, {
+		background_theme: backgroundTheme
+	});
 
 	return { ok: true };
 };
@@ -347,7 +355,7 @@ export const handleWorkspaceCreateInviteRequest = async (
 	authorization: string | undefined
 ) => {
 	const userId = await getAuthenticatedUserId(authorization);
-	const admin = createAdminSupabaseClient();
+	const admin = await createAdminPb();
 	const projectId = requireString(body.projectId, 'projectId');
 	const inviteeEmail = requireString(body.inviteeEmail, 'inviteeEmail').toLowerCase();
 
@@ -367,21 +375,26 @@ export const handleWorkspaceCreateInviteRequest = async (
 		throw new WorkspaceApiError(400, 'That user is already a collaborator.');
 	}
 
-	const { error } = await admin.from('project_invites').upsert(
-		{
-			project_id: projectId,
-			invitee_user_id: profile.user_id,
+	const projectPbId = await getProjectPbId(admin, projectId);
+	try {
+		const existing = await admin.collection('project_invites').getFirstListItem(
+			`${projectRelationFilter(projectPbId)} && invitee = "${pbEscapeFilter(profile.user_id)}"`
+		);
+		await admin.collection('project_invites').update(existing.id, {
 			invitee_email: profile.email,
-			invited_by_user_id: userId,
+			invited_by: userId,
 			status: 'pending',
-			responded_at: null
-		},
-		{
-			onConflict: 'project_id,invitee_user_id'
-		}
-	);
-
-	if (error) throw error;
+			responded_at: ''
+		});
+	} catch {
+		await admin.collection('project_invites').create({
+			project: projectPbId,
+			invitee: profile.user_id,
+			invitee_email: profile.email,
+			invited_by: userId,
+			status: 'pending'
+		});
+	}
 
 	return { ok: true };
 };
@@ -391,7 +404,7 @@ export const handleWorkspaceRespondInviteRequest = async (
 	authorization: string | undefined
 ) => {
 	const userId = await getAuthenticatedUserId(authorization);
-	const admin = createAdminSupabaseClient();
+	const admin = await createAdminPb();
 	const inviteId = requireString(body.inviteId, 'inviteId');
 	const accept = requireBoolean(body.accept, 'accept');
 	const invite = await getInviteOrThrow(admin, inviteId);
@@ -405,33 +418,28 @@ export const handleWorkspaceRespondInviteRequest = async (
 	}
 
 	const respondedAt = new Date().toISOString();
-	const { error: inviteUpdateError } = await admin
-		.from('project_invites')
-		.update({
-			status: accept ? 'accepted' : 'rejected',
-			responded_at: respondedAt
-		})
-		.eq('id', inviteId);
-
-	if (inviteUpdateError) throw inviteUpdateError;
+	await admin.collection('project_invites').update(inviteId, {
+		status: accept ? 'accepted' : 'rejected',
+		responded_at: respondedAt
+	});
 
 	if (accept) {
+		const projectPbId = await getProjectPbId(admin, invite.project_id);
 		const existingMembership = await getMembership(admin, invite.project_id, invite.invitee_user_id);
 		const now = new Date().toISOString();
-		const { error: membershipError } = await admin.from('project_memberships').upsert(
-			{
-				project_id: invite.project_id,
-				user_id: invite.invitee_user_id,
-				role: 'member',
-				joined_at: existingMembership?.joined_at || now,
+		if (existingMembership) {
+			await admin.collection('project_memberships').update(existingMembership.id, {
 				last_opened_at: now
-			},
-			{
-				onConflict: 'project_id,user_id'
-			}
-		);
-
-		if (membershipError) throw membershipError;
+			});
+		} else {
+			await admin.collection('project_memberships').create({
+				project: projectPbId,
+				user: invite.invitee_user_id,
+				role: 'member',
+				joined_at: now,
+				last_opened_at: now
+			});
+		}
 	}
 
 	return { ok: true };
@@ -442,21 +450,16 @@ export const handleWorkspaceCancelInviteRequest = async (
 	authorization: string | undefined
 ) => {
 	const userId = await getAuthenticatedUserId(authorization);
-	const admin = createAdminSupabaseClient();
+	const admin = await createAdminPb();
 	const inviteId = requireString(body.inviteId, 'inviteId');
 	const invite = await getInviteOrThrow(admin, inviteId);
 
 	await ensureOwnerProject(admin, invite.project_id, userId);
 
-	const { error } = await admin
-		.from('project_invites')
-		.update({
-			status: 'cancelled',
-			responded_at: new Date().toISOString()
-		})
-		.eq('id', inviteId);
-
-	if (error) throw error;
+	await admin.collection('project_invites').update(inviteId, {
+		status: 'cancelled',
+		responded_at: new Date().toISOString()
+	});
 
 	return { ok: true };
 };
@@ -466,7 +469,7 @@ export const handleWorkspaceRemoveMemberRequest = async (
 	authorization: string | undefined
 ) => {
 	const userId = await getAuthenticatedUserId(authorization);
-	const admin = createAdminSupabaseClient();
+	const admin = await createAdminPb();
 	const projectId = requireString(body.projectId, 'projectId');
 	const memberUserId = requireString(body.memberUserId, 'memberUserId');
 	const project = await ensureOwnerProject(admin, projectId, userId);
@@ -475,26 +478,22 @@ export const handleWorkspaceRemoveMemberRequest = async (
 		throw new WorkspaceApiError(400, 'Use board deletion to remove the owner.');
 	}
 
-	const { error: userStateError } = await admin
-		.from('project_user_state')
-		.delete()
-		.eq('project_id', projectId)
-		.eq('user_id', memberUserId);
-	if (userStateError) throw userStateError;
+	const projectPbId = await getProjectPbId(admin, projectId);
+	const userStates = await admin.collection('project_user_state').getFullList({
+		filter: `${projectRelationFilter(projectPbId)} && user = "${pbEscapeFilter(memberUserId)}"`
+	});
+	const aiSessions = await admin.collection('project_ai_sessions').getFullList({
+		filter: `${projectRelationFilter(projectPbId)} && user = "${pbEscapeFilter(memberUserId)}"`
+	});
+	const membership = await getMembership(admin, projectId, memberUserId);
 
-	const { error: aiSessionsError } = await admin
-		.from('project_ai_sessions')
-		.delete()
-		.eq('project_id', projectId)
-		.eq('user_id', memberUserId);
-	if (aiSessionsError) throw aiSessionsError;
-
-	const { error: membershipError } = await admin
-		.from('project_memberships')
-		.delete()
-		.eq('project_id', projectId)
-		.eq('user_id', memberUserId);
-	if (membershipError) throw membershipError;
+	await Promise.all([
+		...userStates.map((record) => admin.collection('project_user_state').delete(record.id)),
+		...aiSessions.map((record) => admin.collection('project_ai_sessions').delete(record.id)),
+		membership
+			? admin.collection('project_memberships').delete(membership.id)
+			: Promise.resolve()
+	]);
 
 	return { ok: true };
 };
@@ -504,7 +503,7 @@ export const handleWorkspaceLeaveProjectRequest = async (
 	authorization: string | undefined
 ) => {
 	const userId = await getAuthenticatedUserId(authorization);
-	const admin = createAdminSupabaseClient();
+	const admin = await createAdminPb();
 	const projectId = requireString(body.projectId, 'projectId');
 	const membership = await ensureMembership(admin, projectId, userId);
 
@@ -512,26 +511,19 @@ export const handleWorkspaceLeaveProjectRequest = async (
 		throw new WorkspaceApiError(400, 'The owner cannot leave their own board.');
 	}
 
-	const { error: userStateError } = await admin
-		.from('project_user_state')
-		.delete()
-		.eq('project_id', projectId)
-		.eq('user_id', userId);
-	if (userStateError) throw userStateError;
+	const projectPbId = await getProjectPbId(admin, projectId);
+	const userStates = await admin.collection('project_user_state').getFullList({
+		filter: `${projectRelationFilter(projectPbId)} && user = "${pbEscapeFilter(userId)}"`
+	});
+	const aiSessions = await admin.collection('project_ai_sessions').getFullList({
+		filter: `${projectRelationFilter(projectPbId)} && user = "${pbEscapeFilter(userId)}"`
+	});
 
-	const { error: aiSessionsError } = await admin
-		.from('project_ai_sessions')
-		.delete()
-		.eq('project_id', projectId)
-		.eq('user_id', userId);
-	if (aiSessionsError) throw aiSessionsError;
-
-	const { error: membershipError } = await admin
-		.from('project_memberships')
-		.delete()
-		.eq('project_id', projectId)
-		.eq('user_id', userId);
-	if (membershipError) throw membershipError;
+	await Promise.all([
+		...userStates.map((record) => admin.collection('project_user_state').delete(record.id)),
+		...aiSessions.map((record) => admin.collection('project_ai_sessions').delete(record.id)),
+		admin.collection('project_memberships').delete(membership.id)
+	]);
 
 	return { ok: true };
 };

@@ -28,6 +28,14 @@ Thumbs.db
 !.env.example
 !.env.test
 
+# Editor / MCP (local; often holds API keys and machine-specific URLs)
+.cursor/
+.mcp.json
+mcp.json
+
+# Local kanban exports (user data, not app source)
+*.kanban
+
 # Vite
 vite.config.js.timestamp-*
 vite.config.ts.timestamp-*

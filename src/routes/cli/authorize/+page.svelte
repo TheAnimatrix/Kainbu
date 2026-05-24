@@ -2,7 +2,7 @@
 	import { onMount } from 'svelte';
 	import { page } from '$app/stores';
 	import AuthView from '$lib/components/AuthView.svelte';
-	import { supabase, isSupabaseConfigured } from '$lib/supabaseClient';
+	import { pocketbase, isPocketBaseConfigured } from '$lib/pocketbaseClient';
 	import { getWorkspaceApiAccessToken, resolveWorkspaceApiUrl } from '$lib/kainbu/api';
 	import { BRAND_NAME } from '$lib/kainbu/constants';
 
@@ -23,10 +23,7 @@
 
 	const refreshSession = async () => {
 		loading = true;
-		const {
-			data: { session }
-		} = await supabase.auth.getSession();
-		sessionEmail = session?.user?.email || '';
+		sessionEmail = pocketbase.authStore.model?.email || '';
 		loading = false;
 	};
 
@@ -34,12 +31,10 @@
 		const code = $page.url.searchParams.get('code');
 		if (code) userCode = formatCode(code);
 		void refreshSession();
-		const {
-			data: { subscription }
-		} = supabase.auth.onAuthStateChange(() => {
+		const unsubscribe = pocketbase.authStore.onChange(() => {
 			void refreshSession();
 		});
-		return () => subscription.unsubscribe();
+		return () => unsubscribe();
 	});
 
 	const handleAuthSubmit = async (event: CustomEvent<{ email: string; password: string; isSignUp: boolean }>) => {
@@ -48,20 +43,19 @@
 		infoMessage = '';
 		const { email, password, isSignUp } = event.detail;
 
-		if (isSignUp) {
-			const { error } = await supabase.auth.signUp({
-				email,
-				password,
-				options: { emailRedirectTo: window.location.href }
-			});
-			if (error) {
-				errorMessage = error.message;
+		try {
+			if (isSignUp) {
+				await pocketbase.collection('users').create({
+					email,
+					password,
+					passwordConfirm: password
+				});
+				infoMessage = 'Account created. Sign in, then authorize the CLI.';
 			} else {
-				infoMessage = 'Check your email to confirm your account, then authorize the CLI.';
+				await pocketbase.collection('users').authWithPassword(email, password);
 			}
-		} else {
-			const { error } = await supabase.auth.signInWithPassword({ email, password });
-			if (error) errorMessage = error.message;
+		} catch (error) {
+			errorMessage = error instanceof Error ? error.message : 'Unable to authenticate.';
 		}
 
 		authLoading = false;
@@ -109,14 +103,14 @@
 </svelte:head>
 
 <div class="mx-auto flex min-h-[100dvh] max-w-lg flex-col justify-center gap-4 px-4 py-8 text-app-text">
-	{#if !isSupabaseConfigured}
-		<p class="rounded-lg border border-app-border bg-app-surface p-4 text-sm">Supabase is not configured.</p>
+	{#if !isPocketBaseConfigured}
+		<p class="rounded-lg border border-app-border bg-app-surface p-4 text-sm">PocketBase is not configured.</p>
 	{:else if loading}
 		<p class="text-sm text-app-subtext">Loading session…</p>
 	{:else if !sessionEmail}
 		<AuthView
 			loading={authLoading}
-			configured={isSupabaseConfigured}
+			configured={isPocketBaseConfigured}
 			{infoMessage}
 			{errorMessage}
 			on:submit={handleAuthSubmit}

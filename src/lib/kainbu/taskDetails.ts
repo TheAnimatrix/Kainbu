@@ -1,43 +1,10 @@
-import { supabase } from '$lib/supabaseClient';
+import { pocketbase } from '$lib/pocketbaseClient';
 import { createId } from '$lib/kainbu/id';
-import type {
-	ProjectTaskAssetRow,
-	ProjectTaskCommentRow,
-	TaskAsset,
-	TaskAssetKind,
-	TaskComment
-} from '$lib/kainbu/types';
-
-export const TASK_ASSET_STORAGE_BUCKET = 'task-assets';
+import { getProjectPbId } from '$lib/kainbu/pbHelpers';
+import { pbEscapeFilter, projectRelationFilter } from '$lib/kainbu/pbRecords';
+import type { TaskAsset, TaskAssetKind, TaskComment } from '$lib/kainbu/types';
 
 const DEFAULT_FILE_MIME_TYPE = 'application/octet-stream';
-
-type StorageErrorLike = {
-	message?: string;
-	error?: string;
-};
-
-const normalizeStorageErrorMessage = (error: StorageErrorLike | null | undefined) =>
-	`${error?.message || ''} ${error?.error || ''}`.trim().toLowerCase();
-
-const isBucketNotFoundError = (error: StorageErrorLike | null | undefined) => {
-	const message = normalizeStorageErrorMessage(error);
-	return message.includes('bucket') && message.includes('not found');
-};
-
-const toTaskAssetStorageError = (
-	error: StorageErrorLike | null | undefined,
-	action: 'upload' | 'delete' | 'download'
-) => {
-	if (isBucketNotFoundError(error)) {
-		return new Error(
-			`Attachment storage is not configured. Bucket "${TASK_ASSET_STORAGE_BUCKET}" was not found. Apply migration "202603310001_task_assets_comments.sql" and retry ${action}.`
-		);
-	}
-	return error instanceof Error
-		? error
-		: new Error(error?.message || `Unable to ${action} attachment.`);
-};
 
 const sanitizeFileName = (name: string) => {
 	const trimmed = name.trim() || 'file';
@@ -54,51 +21,56 @@ export const buildTaskAssetStoragePath = (
 	fileName: string
 ) => `project/${projectId}/task/${taskId}/${assetId}/${sanitizeFileName(fileName)}`;
 
-const mapTaskAssetRow = (row: ProjectTaskAssetRow): TaskAsset => ({
-	id: row.id,
-	projectId: row.project_id,
-	taskId: row.task_id,
-	kind: row.kind,
-	name: row.name,
-	mimeType: row.mime_type,
-	sizeBytes: Number(row.size_bytes) || 0,
-	storagePath: row.storage_path,
-	uploadedByUserId: row.uploaded_by_user_id,
-	createdAt: new Date(row.created_at).getTime()
+const mapTaskAssetRecord = (record: Record<string, unknown>, projectId: string): TaskAsset => ({
+	id: String(record.id),
+	projectId,
+	taskId: String(record.task_client_id || ''),
+	kind: record.kind === 'embed' ? 'embed' : 'attachment',
+	name: String(record.name || ''),
+	mimeType: String(record.mime_type || DEFAULT_FILE_MIME_TYPE),
+	sizeBytes: typeof record.size_bytes === 'number' ? record.size_bytes : 0,
+	storagePath: buildTaskAssetStoragePath(
+		projectId,
+		String(record.task_client_id || ''),
+		String(record.id),
+		String(record.name || 'file')
+	),
+	uploadedByUserId:
+		typeof record.uploaded_by === 'string'
+			? record.uploaded_by
+			: String((record.expand as { uploaded_by?: { id?: string } })?.uploaded_by?.id || ''),
+	createdAt: new Date(String(record.created || Date.now())).getTime()
 });
 
-const mapTaskCommentRow = (row: ProjectTaskCommentRow): TaskComment => ({
-	id: row.id,
-	projectId: row.project_id,
-	taskId: row.task_id,
-	body: row.body,
-	authorUserId: row.author_user_id,
-	createdAt: new Date(row.created_at).getTime(),
-	updatedAt: new Date(row.updated_at).getTime()
+const mapTaskCommentRecord = (record: Record<string, unknown>, projectId: string): TaskComment => ({
+	id: String(record.id),
+	projectId,
+	taskId: String(record.task_client_id || ''),
+	body: String(record.body || ''),
+	authorUserId:
+		typeof record.author === 'string'
+			? record.author
+			: String((record.expand as { author?: { id?: string } })?.author?.id || ''),
+	createdAt: new Date(String(record.created || Date.now())).getTime(),
+	updatedAt: new Date(String(record.updated || record.created || Date.now())).getTime()
 });
 
 export const fetchTaskAssets = async (projectId: string, taskId: string) => {
-	const { data, error } = await supabase
-		.from('project_task_assets')
-		.select('*')
-		.eq('project_id', projectId)
-		.eq('task_id', taskId)
-		.order('created_at', { ascending: false });
-
-	if (error) throw error;
-	return ((data || []) as ProjectTaskAssetRow[]).map(mapTaskAssetRow);
+	const projectPbId = await getProjectPbId(projectId);
+	const records = await pocketbase.collection('project_task_assets').getFullList({
+		filter: `${projectRelationFilter(projectPbId)} && task_client_id = "${pbEscapeFilter(taskId)}"`,
+		sort: '-created'
+	});
+	return records.map((record) => mapTaskAssetRecord(record, projectId));
 };
 
 export const fetchTaskComments = async (projectId: string, taskId: string) => {
-	const { data, error } = await supabase
-		.from('project_task_comments')
-		.select('*')
-		.eq('project_id', projectId)
-		.eq('task_id', taskId)
-		.order('created_at', { ascending: true });
-
-	if (error) throw error;
-	return ((data || []) as ProjectTaskCommentRow[]).map(mapTaskCommentRow);
+	const projectPbId = await getProjectPbId(projectId);
+	const records = await pocketbase.collection('project_task_comments').getFullList({
+		filter: `${projectRelationFilter(projectPbId)} && task_client_id = "${pbEscapeFilter(taskId)}"`,
+		sort: 'created'
+	});
+	return records.map((record) => mapTaskCommentRecord(record, projectId));
 };
 
 export const fetchTaskDetails = async (projectId: string, taskId: string) => {
@@ -119,56 +91,29 @@ export const uploadTaskAsset = async (
 	file: File,
 	kind: TaskAssetKind
 ) => {
-	const assetId = createId();
+	const projectPbId = await getProjectPbId(projectId);
 	const mimeType = file.type || DEFAULT_FILE_MIME_TYPE;
-	const storagePath = buildTaskAssetStoragePath(projectId, taskId, assetId, file.name);
-	const { error: uploadError } = await supabase.storage
-		.from(TASK_ASSET_STORAGE_BUCKET)
-		.upload(storagePath, file, {
-			contentType: mimeType,
-			cacheControl: '3600',
-			upsert: false
-		});
-
-	if (uploadError) throw toTaskAssetStorageError(uploadError, 'upload');
-
-	const { data, error } = await supabase
-		.from('project_task_assets')
-		.insert({
-			id: assetId,
-			project_id: projectId,
-			task_id: taskId,
-			kind,
-			name: file.name || 'file',
-			mime_type: mimeType,
-			size_bytes: file.size,
-			storage_path: storagePath
-		})
-		.select('*')
-		.single();
-
-	if (error) {
-		await supabase.storage.from(TASK_ASSET_STORAGE_BUCKET).remove([storagePath]);
-		throw error;
+	const userId = pocketbase.authStore.model?.id;
+	if (!userId) {
+		throw new Error('You must be signed in to upload attachments.');
 	}
 
-	return mapTaskAssetRow(data as ProjectTaskAssetRow);
+	const record = await pocketbase.collection('project_task_assets').create({
+		project: projectPbId,
+		task_client_id: taskId,
+		kind,
+		name: file.name || 'file',
+		mime_type: mimeType,
+		size_bytes: file.size,
+		uploaded_by: userId,
+		file
+	});
+
+	return mapTaskAssetRecord(record, projectId);
 };
 
 export const deleteTaskAsset = async (asset: TaskAsset) => {
-	const { error: storageError } = await supabase.storage
-		.from(TASK_ASSET_STORAGE_BUCKET)
-		.remove([asset.storagePath]);
-
-	if (storageError) throw toTaskAssetStorageError(storageError, 'delete');
-
-	const { error } = await supabase
-		.from('project_task_assets')
-		.delete()
-		.eq('project_id', asset.projectId)
-		.eq('id', asset.id);
-
-	if (error) throw error;
+	await pocketbase.collection('project_task_assets').delete(asset.id);
 };
 
 export const addTaskComment = async (projectId: string, taskId: string, body: string) => {
@@ -177,25 +122,32 @@ export const addTaskComment = async (projectId: string, taskId: string, body: st
 		throw new Error('Comment cannot be empty.');
 	}
 
-	const { data, error } = await supabase
-		.from('project_task_comments')
-		.insert({
-			project_id: projectId,
-			task_id: taskId,
-			body: trimmedBody
-		})
-		.select('*')
-		.single();
+	const userId = pocketbase.authStore.model?.id;
+	if (!userId) {
+		throw new Error('You must be signed in to comment.');
+	}
 
-	if (error) throw error;
-	return mapTaskCommentRow(data as ProjectTaskCommentRow);
+	const projectPbId = await getProjectPbId(projectId);
+	const record = await pocketbase.collection('project_task_comments').create({
+		project: projectPbId,
+		task_client_id: taskId,
+		body: trimmedBody,
+		author: userId
+	});
+
+	return mapTaskCommentRecord(record, projectId);
 };
 
-export const downloadTaskAssetBlob = async (storagePath: string) => {
-	const { data, error } = await supabase.storage
-		.from(TASK_ASSET_STORAGE_BUCKET)
-		.download(storagePath);
-
-	if (error) throw toTaskAssetStorageError(error, 'download');
-	return data;
+export const downloadTaskAssetBlob = async (asset: TaskAsset) => {
+	const record = await pocketbase.collection('project_task_assets').getOne(asset.id);
+	const url = pocketbase.files.getURL(record, record.file);
+	const response = await fetch(url, {
+		headers: {
+			Authorization: pocketbase.authStore.token ? `Bearer ${pocketbase.authStore.token}` : ''
+		}
+	});
+	if (!response.ok) {
+		throw new Error('Unable to download attachment.');
+	}
+	return response.blob();
 };

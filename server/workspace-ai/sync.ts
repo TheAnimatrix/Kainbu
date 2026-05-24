@@ -20,7 +20,8 @@ import type {
     Tag,
     Task,
 } from "./types.js";
-import { createAdminSupabaseClient, getAuthenticatedUserId } from "../supabase.js";
+import { createAdminPb, getAuthenticatedUserId } from "../pocketbase.js";
+import { getProjectPbId, pbEscapeFilter, projectClientFilter, projectRelationFilter } from "../pbWorkspace.js";
 import type { BoardRefMap } from "./kanban-ops.js";
 
 const CURRENT_BOARD_FILE = "current-board.json";
@@ -300,19 +301,100 @@ const mapPageRow = (row: ProjectPageRow) => ({
     content: row.content || "",
 });
 
+const relationId = (value: unknown) => {
+    if (typeof value === "string") return value;
+    if (value && typeof value === "object" && typeof (value as { id?: string }).id === "string") {
+        return (value as { id: string }).id;
+    }
+    return "";
+};
+
+const iso = (value: unknown) =>
+    typeof value === "string" && value.trim() ? value : new Date().toISOString();
+
+const mapPbProject = (record: Record<string, unknown>): ProjectRow => ({
+    id: String(record.client_id || record.id),
+    user_id: relationId(record.owner),
+    name: String(record.name || ""),
+    background_theme: (record.background_theme as ProjectRow["background_theme"]) ?? null,
+    scratchpad_data: String(record.scratchpad_data || ""),
+    scratchpad_rev: typeof record.scratchpad_rev === "number" ? record.scratchpad_rev : 0,
+    created_at: iso(record.created),
+    updated_at: iso(record.updated),
+});
+
+const mapPbBoard = (record: Record<string, unknown>, projectId: string): ProjectBoardRow => ({
+    id: String(record.client_id || record.id),
+    project_id: projectId,
+    name: String(record.name || ""),
+    position: typeof record.position === "number" ? record.position : 0,
+    created_at: iso(record.created),
+    updated_at: iso(record.updated),
+});
+
+const mapPbPage = (record: Record<string, unknown>, projectId: string): ProjectPageRow => ({
+    id: String(record.client_id || record.id),
+    project_id: projectId,
+    name: String(record.name || ""),
+    content: String(record.content || ""),
+    position: typeof record.position === "number" ? record.position : 0,
+    created_at: iso(record.created),
+    updated_at: iso(record.updated),
+});
+
+const mapPbColumn = (
+    record: Record<string, unknown>,
+    projectId: string,
+    boardId: string | null
+): ProjectColumnRow => ({
+    project_id: projectId,
+    board_id: boardId,
+    id: String(record.client_id || record.id),
+    title: String(record.title || ""),
+    color: typeof record.color === "string" ? record.color : null,
+    width: typeof record.width === "number" ? record.width : DEFAULT_COLUMN_WIDTH,
+    position: typeof record.position === "number" ? record.position : 0,
+    created_at: iso(record.created),
+    updated_at: iso(record.updated),
+});
+
+const mapPbTask = (
+    record: Record<string, unknown>,
+    projectId: string,
+    boardId: string | null
+): ProjectTaskRow => ({
+    project_id: projectId,
+    board_id: boardId,
+    id: String(record.client_id || record.id),
+    column_id: String(record.column_id || ""),
+    title: String(record.title || ""),
+    description: String(record.description || ""),
+    color: typeof record.color === "string" ? record.color : null,
+    tags: Array.isArray(record.tags) ? (record.tags as Tag[]) : [],
+    has_checkbox: Boolean(record.has_checkbox),
+    checked: Boolean(record.checked),
+    completed_at: typeof record.completed_at === "number" ? record.completed_at : null,
+    countdown_at: typeof record.countdown_at === "number" ? record.countdown_at : null,
+    alarm_at: typeof record.alarm_at === "number" ? record.alarm_at : null,
+    assigned_to: record.assigned_to ? relationId(record.assigned_to) : null,
+    linked_task_ids: Array.isArray(record.linked_task_ids)
+        ? (record.linked_task_ids as string[])
+        : null,
+    position: typeof record.position === "number" ? record.position : 0,
+    created_at: iso(record.created),
+    updated_at: iso(record.updated),
+});
+
 const ensureProjectAccess = async (projectId: string, authorization: string | undefined) => {
     const userId = await getAuthenticatedUserId(authorization);
-    const admin = createAdminSupabaseClient();
+    const admin = await createAdminPb();
+    const projectPbId = await getProjectPbId(admin, projectId);
 
-    const { data: membership, error: membershipError } = await admin
-        .from("project_memberships")
-        .select("project_id")
-        .eq("project_id", projectId)
-        .eq("user_id", userId)
-        .maybeSingle();
-
-    if (membershipError) throw membershipError;
-    if (!membership) {
+    try {
+        await admin.collection("project_memberships").getFirstListItem(
+            `${projectRelationFilter(projectPbId)} && user = "${pbEscapeFilter(userId)}"`
+        );
+    } catch {
         throw new Error("Project not found or you do not have access.");
     }
 
@@ -325,34 +407,47 @@ const loadProjectWorkspaceState = async (
     scope?: AiScopeHint
 ) => {
     const admin = await ensureProjectAccess(projectId, authorization);
+    const projectPbId = await getProjectPbId(admin, projectId);
 
-    const [projectResult, boardsResult, pagesResult, columnsResult, tasksResult] = await Promise.all([
-        admin.from("projects").select("*").eq("id", projectId).maybeSingle(),
-        admin.from("project_boards").select("*").eq("project_id", projectId).order("position", { ascending: true }),
-        admin.from("project_pages").select("*").eq("project_id", projectId).order("position", { ascending: true }),
-        admin.from("project_columns").select("*").eq("project_id", projectId).order("position", { ascending: true }),
-        admin.from("project_tasks").select("*").eq("project_id", projectId).order("position", { ascending: true }),
+    const [projectRecord, boardRecords, pageRecords, columnRecords, taskRecords] = await Promise.all([
+        admin.collection("projects").getFirstListItem(projectClientFilter(projectId)),
+        admin.collection("project_boards").getFullList({
+            filter: projectRelationFilter(projectPbId),
+            sort: "position",
+        }),
+        admin.collection("project_pages").getFullList({
+            filter: projectRelationFilter(projectPbId),
+            sort: "position",
+        }),
+        admin.collection("project_columns").getFullList({
+            filter: projectRelationFilter(projectPbId),
+            sort: "position",
+        }),
+        admin.collection("project_tasks").getFullList({
+            filter: projectRelationFilter(projectPbId),
+            sort: "position",
+        }),
     ]);
 
-    if (projectResult.error) throw projectResult.error;
-    if (boardsResult.error) throw boardsResult.error;
-    if (pagesResult.error) throw pagesResult.error;
-    if (columnsResult.error) throw columnsResult.error;
-    if (tasksResult.error) throw tasksResult.error;
-
-    const project = projectResult.data as ProjectRow | null;
-    const boards = ((boardsResult.data || []) as ProjectBoardRow[]).sort(
-        (left, right) => left.position - right.position || left.created_at.localeCompare(right.created_at)
+    const project = mapPbProject(projectRecord);
+    const boards = boardRecords
+        .map((record) => mapPbBoard(record, projectId))
+        .sort(
+            (left, right) =>
+                left.position - right.position || left.created_at.localeCompare(right.created_at)
+        );
+    const pages = pageRecords
+        .map((record) => mapPbPage(record, projectId))
+        .sort(
+            (left, right) =>
+                left.position - right.position || left.created_at.localeCompare(right.created_at)
+        );
+    const columns = columnRecords.map((record) =>
+        mapPbColumn(record, projectId, String(record.board || "") || null)
     );
-    const pages = ((pagesResult.data || []) as ProjectPageRow[]).sort(
-        (left, right) => left.position - right.position || left.created_at.localeCompare(right.created_at)
+    const tasks = taskRecords.map((record) =>
+        mapPbTask(record, projectId, String(record.board || "") || null)
     );
-    const columns = (columnsResult.data || []) as ProjectColumnRow[];
-    const tasks = (tasksResult.data || []) as ProjectTaskRow[];
-
-    if (!project) {
-        throw new Error("Project not found.");
-    }
 
     if (!boards.length) {
         throw new Error("The project does not have a board to edit yet.");

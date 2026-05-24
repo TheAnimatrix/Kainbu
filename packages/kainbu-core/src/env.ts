@@ -2,7 +2,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { config as loadDotenv } from 'dotenv';
 import { parseJsonFile } from './jsonFile.js';
-import { getCliConfigDir, getCliConfigPath } from './supabase.js';
+import { getCliConfigDir, getCliConfigPath } from './pocketbase.js';
 
 const normalizeEnvValue = (value: string | undefined) =>
 	(value || '')
@@ -56,25 +56,18 @@ export const loadCliEnv = () => {
 	}
 };
 
-export const getSupabaseEnv = () => {
+export const getPocketBaseEnv = () => {
 	loadCliEnv();
 	const fileConfig = readConfigFileSync();
 
 	const url = normalizeEnvValue(
-		process.env.KAINBU_SUPABASE_URL ||
-			process.env.VITE_SUPABASE_URL ||
-			process.env.PUBLIC_SUPABASE_URL ||
-			(typeof fileConfig.supabaseUrl === 'string' ? fileConfig.supabaseUrl : '')
+		process.env.KAINBU_POCKETBASE_URL ||
+			process.env.POCKETBASE_URL ||
+			process.env.VITE_POCKETBASE_URL ||
+			(typeof fileConfig.pocketbaseUrl === 'string' ? fileConfig.pocketbaseUrl : '')
 	);
 
-	const anonKey = normalizeEnvValue(
-		process.env.KAINBU_SUPABASE_ANON_KEY ||
-			process.env.VITE_SUPABASE_ANON_KEY ||
-			process.env.PUBLIC_SUPABASE_ANON_KEY ||
-			(typeof fileConfig.supabaseAnonKey === 'string' ? fileConfig.supabaseAnonKey : '')
-	);
-
-	return { url, anonKey };
+	return { url };
 };
 
 export const getDefaultApiBase = () => {
@@ -84,6 +77,7 @@ export const getDefaultApiBase = () => {
 		process.env.KAINBU_API_BASE ||
 			process.env.VITE_API_BASE_URL ||
 			process.env.PUBLIC_API_BASE_URL ||
+			process.env.KAINBU_PUBLIC_URL ||
 			(typeof fileConfig.apiBase === 'string' ? fileConfig.apiBase : '')
 	);
 
@@ -91,23 +85,22 @@ export const getDefaultApiBase = () => {
 		return configured.replace(/\/+$/, '');
 	}
 
-	return 'https://kainbu.vercel.app';
+	return 'http://127.0.0.1:8788';
 };
 
-export const formatMissingSupabaseConfigHelp = () => {
+export const formatMissingPocketBaseConfigHelp = () => {
 	const configDir = getCliConfigDir();
 	const globalEnv = join(configDir, '.env');
 	const cwdEnv = join(process.cwd(), '.env');
 
 	return [
-		'Supabase is not configured.',
+		'PocketBase is not configured.',
 		'',
 		'Add credentials using one of:',
 		`  1. ${globalEnv}`,
-		'     KAINBU_SUPABASE_URL=https://….supabase.co',
-		'     KAINBU_SUPABASE_ANON_KEY=eyJ…',
-		`  2. ${cwdEnv} (or a parent directory — same VITE_* names as the web app)`,
-		'  3. export KAINBU_SUPABASE_URL / KAINBU_SUPABASE_ANON_KEY in your shell',
+		'     KAINBU_POCKETBASE_URL=http://127.0.0.1:8090',
+		`  2. ${cwdEnv} (or a parent directory — same VITE_POCKETBASE_URL as the web app)`,
+		'  3. export KAINBU_POCKETBASE_URL in your shell',
 		'',
 		'From a kainbu repo with .env:  kainbu config import-env'
 	].join('\n');

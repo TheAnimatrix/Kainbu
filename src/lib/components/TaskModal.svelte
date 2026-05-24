@@ -241,7 +241,7 @@
 
 		loadingAssetIds.add(asset.id);
 		try {
-			const blob = await downloadTaskAssetBlob(asset.storagePath);
+			const blob = await downloadTaskAssetBlob(asset);
 			setObjectUrl(asset.id, URL.createObjectURL(blob));
 		} catch (error) {
 			console.error(error);
@@ -544,7 +544,7 @@
 
 	const handleDownloadAsset = async (asset: TaskAsset) => {
 		try {
-			const blob = await downloadTaskAssetBlob(asset.storagePath);
+			const blob = await downloadTaskAssetBlob(asset);
 			const objectUrl = URL.createObjectURL(blob);
 			const link = document.createElement('a');
 			link.href = objectUrl;
@@ -586,7 +586,7 @@
 			throw new Error('Image is still loading. Try again in a moment.');
 		}
 
-		const blob = await downloadTaskAssetBlob(asset.storagePath);
+		const blob = await downloadTaskAssetBlob(asset);
 		const mimeType = asset.mimeType || blob.type || 'image/png';
 		const content = await blobToDataUrl(blob);
 		onAddAttachments([

@@ -2,7 +2,7 @@ export * from '../../../src/lib/kainbu/types.js';
 export * from '../../../src/lib/kainbu/boardRefs.js';
 export { findColumnByRefOrTitle } from '../../../src/lib/kainbu/boardRefs.js';
 export * from '../../../src/lib/kainbu/boardList.js';
-export * from '../../../src/lib/kainbu/supabaseContext.js';
+export * from '../../../src/lib/kainbu/pocketbaseContext.js';
 export * from '../../../src/lib/kainbu/workspaceApi.js';
 export {
 	fetchWorkspace,
@@ -21,19 +21,20 @@ export {
 	updateProjectScratchpad
 } from '../../../src/lib/kainbu/persistence.js';
 export {
-	createCliSupabaseClient,
-	createFileAuthStorage,
+	createCliPocketBaseClient,
 	deleteCliSession,
-	formatMissingSupabaseConfigHelp,
+	formatMissingPocketBaseConfigHelp,
 	getCliConfigDir,
 	getCliConfigPath,
 	getDefaultApiBase,
-	getSupabaseEnv,
+	getPocketBaseEnv,
 	loadCliEnv,
 	readCliConfig,
+	readCliSession,
 	writeCliConfig,
+	writeCliSession,
 	type CliConfig
-} from './supabase.js';
+} from './pocketbase.js';
 export { setProjectActiveBoard, getProjectBoard } from '../../../src/lib/kainbu/projectStructure.js';
 export { createId } from '../../../src/lib/kainbu/id.js';
 export { normalizeScratchpadData, serializeScratchpadData } from '../../../src/lib/kainbu/scratchpad.js';

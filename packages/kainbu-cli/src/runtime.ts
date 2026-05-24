@@ -1,22 +1,22 @@
 import {
-	createCliSupabaseClient,
+	createCliPocketBaseClient,
 	getDefaultApiBase,
 	loadCliEnv,
 	readCliConfig,
-	setSupabaseClient,
+	setPocketBaseClient,
 	setWorkspaceApiConfig,
 	type CliConfig
 } from '@kainbu/core';
 import { invokeWorkspaceApi } from '../../../src/lib/kainbu/workspaceApi.js';
 
 let initialized = false;
-let supabase: ReturnType<typeof createCliSupabaseClient> | null = null;
+let pocketbase: ReturnType<typeof createCliPocketBaseClient> | null = null;
 
 export const initRuntime = async (configPatch?: Partial<CliConfig>) => {
 	if (!initialized) {
 		loadCliEnv();
-		supabase = createCliSupabaseClient();
-		setSupabaseClient(supabase);
+		pocketbase = createCliPocketBaseClient();
+		setPocketBaseClient(pocketbase);
 
 		const config = await readCliConfig();
 		const apiBase = configPatch?.apiBase || config.apiBase || getDefaultApiBase();
@@ -24,13 +24,11 @@ export const initRuntime = async (configPatch?: Partial<CliConfig>) => {
 		setWorkspaceApiConfig({
 			getApiBaseUrl: () => apiBase,
 			getAccessToken: async () => {
-				const {
-					data: { session }
-				} = await supabase.auth.getSession();
-				if (!session?.access_token) {
+				const token = pocketbase!.authStore.token;
+				if (!token) {
 					throw new Error('Not logged in. Run: kainbu login');
 				}
-				return session.access_token;
+				return token;
 			}
 		});
 
@@ -38,25 +36,25 @@ export const initRuntime = async (configPatch?: Partial<CliConfig>) => {
 	}
 };
 
-export const getSupabaseClient = () => {
-	if (!supabase) {
+export const getPocketBaseClient = () => {
+	if (!pocketbase) {
 		throw new Error('CLI runtime is not initialized.');
 	}
-	return supabase;
+	return pocketbase;
 };
+
+/** @deprecated Use getPocketBaseClient */
+export const getSupabaseClient = getPocketBaseClient;
 
 export const requireUser = async () => {
 	await initRuntime();
-	const {
-		data: { user },
-		error
-	} = await supabase.auth.getUser();
+	const model = pocketbase!.authStore.model;
 
-	if (error || !user) {
+	if (!pocketbase!.authStore.isValid || !model?.id) {
 		throw new Error('Not logged in. Run: kainbu login');
 	}
 
-	return user;
+	return model;
 };
 
 export const getApiBase = async () => {

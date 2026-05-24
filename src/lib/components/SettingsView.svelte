@@ -322,7 +322,7 @@
 						<ul class="mt-2 space-y-1 text-sm text-app-subtext">
 							<li>Personal: dashboard, settings, and fallback workspace mood.</li>
 							<li>Board: the selected board's Kanban, notes, and chat.</li>
-							<li>Uploaded images sync through Supabase Storage.</li>
+							<li>Uploaded images are stored in PocketBase.</li>
 						</ul>
 					</div>
 				</div>

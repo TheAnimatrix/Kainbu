@@ -4,7 +4,7 @@ import { promisify } from 'node:util';
 import { deleteCliSession, getDefaultApiBase, readCliConfig } from '@kainbu/core';
 import type { Command } from 'commander';
 import { readJsonResponse } from '../http.js';
-import { getApiBase, initRuntime, getSupabaseClient } from '../runtime.js';
+import { getApiBase, getPocketBaseClient, initRuntime } from '../runtime.js';
 import { printError, printResult, type OutputMode } from '../output.js';
 
 const execAsync = promisify(exec);
@@ -35,22 +35,15 @@ export const registerAuthCommands = (program: Command) => {
 		.command('login')
 		.description('Sign in via browser device code')
 		.option('--code <code>', 'Approve using a code from the browser')
-		.option('--token <jwt>', 'Sign in with a Supabase access token (CI/debug)')
+		.option('--token <jwt>', 'Sign in with a PocketBase auth token (CI/debug)')
 		.option('--no-open', 'Do not open the browser automatically')
 		.action(async (options: { code?: string; token?: string; open?: boolean }) => {
 			const mode: OutputMode = { json: false, quiet: false };
 			await initRuntime();
 
 			if (options.token) {
-				const supabase = getSupabaseClient();
-				const { error } = await supabase.auth.setSession({
-					access_token: options.token,
-					refresh_token: options.token
-				});
-				if (error) {
-					printError(error.message);
-					process.exit(1);
-				}
+				const pb = getPocketBaseClient();
+				pb.authStore.save(options.token, null);
 				printResult(mode, { ok: true }, ['Logged in with provided token.']);
 				return;
 			}
@@ -131,16 +124,11 @@ export const registerAuthCommands = (program: Command) => {
 						process.exit(1);
 					}
 
-					const supabase = getSupabaseClient();
-					const { error } = await supabase.auth.setSession({
-						access_token: exchangePayload.accessToken,
-						refresh_token: exchangePayload.refreshToken
-					});
-
-					if (error) {
-						printError(error.message);
-						process.exit(1);
-					}
+					const pb = getPocketBaseClient();
+					pb.authStore.save(
+						exchangePayload.accessToken,
+						(exchangePayload as { user?: Record<string, unknown> }).user || null
+					);
 
 					printResult(mode, { ok: true, email: exchangePayload }, ['Logged in successfully.']);
 					return;
@@ -159,7 +147,7 @@ export const registerAuthCommands = (program: Command) => {
 		.description('Remove the local CLI session')
 		.action(async () => {
 			await initRuntime();
-			await getSupabaseClient().auth.signOut();
+			getPocketBaseClient().authStore.clear();
 			await deleteCliSession();
 			console.log('Logged out.');
 		});
@@ -172,7 +160,7 @@ export const registerAuthCommands = (program: Command) => {
 			await initRuntime();
 			const {
 				data: { user }
-			} = await getSupabaseClient().auth.getUser();
+			} = { data: { user: getPocketBaseClient().authStore.model } };
 			if (!user) {
 				printError('Not logged in.', 'Run: kainbu login');
 				process.exit(1);
@@ -195,7 +183,16 @@ export const registerAuthCommands = (program: Command) => {
 			const config = await readCliConfig();
 			const {
 				data: { session }
-			} = await getSupabaseClient().auth.getSession();
+			} = {
+				data: {
+					session: getPocketBaseClient().authStore.isValid
+						? {
+								user: getPocketBaseClient().authStore.model,
+								expires_at: undefined
+							}
+						: null
+				}
+			};
 			const apiBase = await getApiBase();
 
 			printResult(

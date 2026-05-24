@@ -1,7 +1,5 @@
-import { supabase } from '$lib/supabaseClient';
+import { pocketbase } from '$lib/pocketbaseClient';
 import { invokeWorkspaceApi as invokeSharedWorkspaceApi, setWorkspaceApiConfig } from '$lib/kainbu/workspaceApi';
-
-const DEFAULT_PRODUCTION_API_BASE_URL = 'https://kainbu.vercel.app';
 
 const normalizeBaseUrl = (value: string) => value.trim().replace(/\/+$/, '');
 const isLocalHostname = (hostname: string) =>
@@ -25,7 +23,7 @@ const inferDefaultApiBaseUrl = () => {
 			: '';
 	}
 
-	return DEFAULT_PRODUCTION_API_BASE_URL;
+	return '';
 };
 
 const apiBaseUrl = normalizeBaseUrl(
@@ -35,30 +33,25 @@ const apiBaseUrl = normalizeBaseUrl(
 setWorkspaceApiConfig({
 	getApiBaseUrl: () => apiBaseUrl,
 	getAccessToken: async () => {
-		const {
-			data: { session }
-		} = await supabase.auth.getSession();
-
-		if (!session?.access_token) {
+		const token = pocketbase.authStore.token;
+		if (!token) {
 			throw new Error('You need to sign in again before using workspace actions.');
 		}
-
-		return session.access_token;
+		return token;
 	}
 });
 
 export const getWorkspaceApiAccessToken = async () => {
-	const {
-		data: { session }
-	} = await supabase.auth.getSession();
-
-	if (!session?.access_token) {
+	const token = pocketbase.authStore.token;
+	if (!token) {
 		throw new Error('You need to sign in again before using workspace actions.');
 	}
-
-	return session.access_token;
+	return token;
 };
 
-export const resolveWorkspaceApiUrl = (path: string) => `${apiBaseUrl}${path}`;
-
 export const invokeWorkspaceApi = invokeSharedWorkspaceApi;
+
+export const resolveWorkspaceApiUrl = (path: string) => {
+	const normalizedPath = path.startsWith('/') ? path : `/${path}`;
+	return apiBaseUrl ? `${apiBaseUrl}${normalizedPath}` : normalizedPath;
+};
