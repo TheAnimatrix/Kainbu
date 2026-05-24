@@ -28,116 +28,94 @@
 </script>
 
 <section class:hidden={!active} class="absolute inset-0 flex h-full flex-col overflow-hidden">
-	<div class="border-b border-app-border px-4 py-3">
-		<div class="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-			<div>
-				<h2 class="text-lg font-bold text-app-text">Scratchpad</h2>
-				<p class="text-xs uppercase tracking-[0.25em] text-app-subtext">Markdown notebook</p>
-			</div>
+	<div class="flex items-center gap-2 border-b border-app-border/60 px-3 py-2">
+		<label class="sr-only" for="scratchpad-pad-select">Select pad</label>
+		<select
+			id="scratchpad-pad-select"
+			class="min-w-0 flex-1 truncate rounded-md border border-app-border/60 bg-transparent px-2 py-1.5 text-sm font-medium text-app-text outline-none transition hover:border-app-primary/40 focus:border-app-primary/60 disabled:cursor-not-allowed disabled:opacity-60 sm:max-w-[16rem]"
+			value={activePad?.id || ''}
+			disabled={isDiffMode || isLocked}
+			on:change={(event) => onSelectPad((event.currentTarget as HTMLSelectElement).value)}
+		>
+			{#each pads as pad}
+				<option value={pad.id}>{pad.name}</option>
+			{/each}
+		</select>
 
-			<div class="flex items-center gap-3">
-				<span
-					class="rounded-full border border-app-border bg-app-element/80 px-3 py-1 text-[10px] font-bold uppercase tracking-[0.22em] text-app-subtext"
-				>
-					{pads.length} pad{pads.length === 1 ? '' : 's'}
-				</span>
+		<span class="text-xs text-app-subtext/80">
+			{pads.length} pad{pads.length === 1 ? '' : 's'}
+		</span>
 
-				{#if isDiffMode}
-					<span
-						class="rounded-full border border-app-accent/30 bg-app-accent/10 px-3 py-1 text-[10px] font-bold uppercase tracking-[0.25em] text-app-accent"
-					>
-						Reviewing changes
-					</span>
-				{:else}
-					<button
-						type="button"
-						class="inline-flex items-center gap-2 rounded-lg border border-app-border bg-app-element px-3 py-2 text-sm text-app-text transition hover:border-app-primary/40 hover:text-app-primary"
-						on:click={() => (isPreview = !isPreview)}
-					>
-						{#if isPreview}
-							<Edit3 size={16} />
-							Edit
-						{:else}
-							<Eye size={16} />
-							Preview
-						{/if}
-					</button>
-				{/if}
-			</div>
-		</div>
-
-		<div class="mt-3 flex flex-wrap items-center gap-2">
-			<label class="sr-only" for="scratchpad-pad-select">Select scratchpad pad</label>
-			<select
-				id="scratchpad-pad-select"
-				class="min-w-0 flex-1 rounded-xl border border-app-border bg-app-element px-3 py-2.5 text-sm font-medium text-app-text outline-none transition hover:border-app-primary/35 focus:border-app-primary/50 disabled:cursor-not-allowed disabled:opacity-60 sm:max-w-xs"
-				value={activePad?.id || ''}
+		<div class="ml-auto flex items-center gap-1">
+			<button
+				type="button"
+				class="inline-flex h-8 w-8 items-center justify-center rounded-md text-app-subtext transition hover:bg-app-element hover:text-app-text disabled:cursor-not-allowed disabled:opacity-50"
 				disabled={isDiffMode || isLocked}
-				on:change={(event) => onSelectPad((event.currentTarget as HTMLSelectElement).value)}
+				title="New pad"
+				aria-label="New pad"
+				on:click={onCreatePad}
 			>
-				{#each pads as pad}
-					<option value={pad.id}>{pad.name}</option>
-				{/each}
-			</select>
+				<Plus size={15} />
+			</button>
 
-			<div class="flex items-center gap-2">
-				<button
-					type="button"
-					class="inline-flex items-center gap-2 rounded-xl border border-app-border bg-app-element px-3 py-2.5 text-sm font-medium text-app-text transition hover:border-app-primary/40 hover:text-app-primary disabled:cursor-not-allowed disabled:opacity-60"
-					disabled={isDiffMode || isLocked}
-					on:click={onCreatePad}
-				>
-					<Plus size={16} />
-					New pad
-				</button>
+			<button
+				type="button"
+				class="inline-flex h-8 w-8 items-center justify-center rounded-md text-app-subtext transition hover:bg-rose-500/10 hover:text-rose-300 disabled:cursor-not-allowed disabled:opacity-50"
+				disabled={isDiffMode || isLocked || !canDeletePad}
+				title={canDeletePad && activePad ? `Delete ${activePad.name}` : 'Keep at least one pad'}
+				aria-label="Delete pad"
+				on:click={() => activePad && onDeletePad(activePad.id)}
+			>
+				<Trash2 size={15} />
+			</button>
 
-				<button
-					type="button"
-					class="inline-flex items-center gap-2 rounded-xl border border-app-border bg-app-element px-3 py-2.5 text-sm font-medium text-app-text transition hover:border-rose-400/40 hover:text-rose-200 disabled:cursor-not-allowed disabled:opacity-60"
-					disabled={isDiffMode || isLocked || !canDeletePad}
-					title={canDeletePad && activePad ? `Delete ${activePad.name}` : 'Keep at least one pad'}
-					on:click={() => activePad && onDeletePad(activePad.id)}
-				>
-					<Trash2 size={16} />
-					Delete
-				</button>
-			</div>
-		</div>
-
-		<p class="mt-2 text-xs text-app-subtext">
-			AI usually edits the active pad and can pull other pads only when it needs more context.
-		</p>
-	</div>
-
-	<div class="min-h-0 flex-1 overflow-hidden p-2 lg:p-3">
-		<div class="h-full overflow-hidden rounded-[1.1rem] border border-app-border bg-app-bg/70">
 			{#if isDiffMode}
-				<div class="h-full overflow-y-auto p-4 font-mono text-sm leading-relaxed">
-					{#each diffParts as part}
-						{#if part.added}
-							<span class="rounded bg-emerald-500/15 px-0.5 text-emerald-200">{part.value}</span>
-						{:else if part.removed}
-							<span class="rounded bg-rose-500/15 px-0.5 text-rose-200 line-through opacity-70">
-								{part.value}
-							</span>
-						{:else}
-							<span class="text-app-text">{part.value}</span>
-						{/if}
-					{/each}
-				</div>
-			{:else if isPreview}
-				<div class="kainbu-prose h-full overflow-y-auto p-4">
-					<RichText value={content || '*No content to preview*'} />
-				</div>
+				<span class="ml-1 text-xs text-app-accent">Reviewing changes</span>
 			{:else}
-				<textarea
-					class="h-full w-full resize-none bg-transparent p-4 font-mono text-sm leading-relaxed text-app-text outline-none placeholder:text-app-subtext/50"
-					placeholder="Start typing your notes here..."
-					value={content}
-					disabled={isLocked}
-					on:input={(event) => onChange((event.currentTarget as HTMLTextAreaElement).value)}
-				></textarea>
+				<button
+					type="button"
+					class="ml-1 inline-flex h-8 items-center gap-1.5 rounded-md px-2 text-xs font-medium text-app-subtext transition hover:bg-app-element hover:text-app-text"
+					on:click={() => (isPreview = !isPreview)}
+				>
+					{#if isPreview}
+						<Edit3 size={13} />
+						Edit
+					{:else}
+						<Eye size={13} />
+						Preview
+					{/if}
+				</button>
 			{/if}
 		</div>
+	</div>
+
+	<div class="min-h-0 flex-1 overflow-hidden">
+		{#if isDiffMode}
+			<div class="h-full overflow-y-auto px-4 py-3 font-mono text-sm leading-relaxed">
+				{#each diffParts as part}
+					{#if part.added}
+						<span class="rounded bg-emerald-500/15 px-0.5 text-emerald-200">{part.value}</span>
+					{:else if part.removed}
+						<span class="rounded bg-rose-500/15 px-0.5 text-rose-200 line-through opacity-70">
+							{part.value}
+						</span>
+					{:else}
+						<span class="text-app-text">{part.value}</span>
+					{/if}
+				{/each}
+			</div>
+		{:else if isPreview}
+			<div class="kainbu-prose h-full overflow-y-auto px-4 py-3">
+				<RichText value={content || '*No content to preview*'} />
+			</div>
+		{:else}
+			<textarea
+				class="h-full w-full resize-none bg-transparent px-4 py-3 font-mono text-sm leading-relaxed text-app-text outline-none placeholder:text-app-subtext/40"
+				placeholder="Start typing…"
+				value={content}
+				disabled={isLocked}
+				on:input={(event) => onChange((event.currentTarget as HTMLTextAreaElement).value)}
+			></textarea>
+		{/if}
 	</div>
 </section>

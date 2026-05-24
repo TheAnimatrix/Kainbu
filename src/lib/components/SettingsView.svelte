@@ -191,7 +191,7 @@
 								title={settings.backgroundTheme.kind === 'image' ? 'Uploaded image' : 'Upload image'}
 								on:click={() => personalUploadInput?.click()}
 							>
-								<span class="absolute inset-0 inline-flex items-center justify-center rounded-[0.4rem] bg-black/20 text-white">
+								<span class="absolute inset-0 inline-flex items-center justify-center rounded bg-black/20 text-white">
 									<ImageUp size={14} />
 								</span>
 							</button>
@@ -280,7 +280,7 @@
 									title={currentProject.backgroundTheme?.kind === 'image' ? 'Uploaded image' : 'Upload image'}
 									on:click={() => boardUploadInput?.click()}
 								>
-									<span class="absolute inset-0 inline-flex items-center justify-center rounded-[0.4rem] bg-black/20 text-white">
+									<span class="absolute inset-0 inline-flex items-center justify-center rounded bg-black/20 text-white">
 										<ImageUp size={14} />
 									</span>
 								</button>

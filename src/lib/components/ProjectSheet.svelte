@@ -1,6 +1,5 @@
 <script lang="ts">
 	import {
-		ChevronDown,
 		ChevronRight,
 		Download,
 		FileText,
@@ -103,14 +102,17 @@
 					<div class="group flex items-center gap-2 rounded-lg px-2 py-2 transition hover:bg-app-element/40">
 						<button
 							type="button"
-							class="shrink-0 text-app-subtext/50 transition hover:text-app-text"
+							class="shrink-0 text-app-subtext/50 transition-colors duration-200 hover:text-app-text"
 							on:click={() => toggleProjectExpansion(project.id)}
+							aria-expanded={expandedSet.has(project.id)}
+							aria-label={expandedSet.has(project.id) ? 'Collapse' : 'Expand'}
 						>
-							{#if expandedSet.has(project.id)}
-								<ChevronDown size={14} />
-							{:else}
-								<ChevronRight size={14} />
-							{/if}
+							<ChevronRight
+								size={14}
+								class={`transition-transform duration-200 ease-out ${
+									expandedSet.has(project.id) ? 'rotate-90' : ''
+								}`}
+							/>
 						</button>
 						<div class="min-w-0 flex-1">
 							{#if editingId === project.id}
@@ -131,7 +133,15 @@
 								/>
 							{:else}
 								<button type="button" class="block w-full text-left" on:click={() => onOpenBoard(project.id, project.activeBoardId)}>
-									<p class={`truncate text-sm ${project.id === currentProjectId ? 'font-semibold text-app-text' : 'font-medium text-app-subtext'}`}>{project.name}</p>
+									<p
+										class={`truncate text-sm transition-colors duration-200 ${
+											project.id === currentProjectId
+												? 'font-semibold text-app-text'
+												: 'font-medium text-app-subtext'
+										}`}
+									>
+										{project.name}
+									</p>
 								</button>
 							{/if}
 						</div>
@@ -155,8 +165,13 @@
 						</div>
 					</div>
 
-					{#if expandedSet.has(project.id)}
-						<div class="ml-6 border-l border-app-border/40 pl-2 pb-1">
+					<div
+						class={`grid transition-[grid-template-rows] duration-200 ease-out motion-reduce:transition-none ${
+							expandedSet.has(project.id) ? 'grid-rows-[1fr]' : 'grid-rows-[0fr]'
+						}`}
+					>
+						<div class="overflow-hidden">
+							<div class="ml-6 border-l border-app-border/40 pl-2 pb-1">
 							{#each project.boards as board (board.id)}
 								<div
 									class={`group/item flex items-center gap-2 rounded-md px-2 py-1.5 text-sm transition ${
@@ -253,8 +268,9 @@
 									Page
 								</button>
 							</div>
+							</div>
 						</div>
-					{/if}
+					</div>
 				</div>
 			{/each}
 		</div>

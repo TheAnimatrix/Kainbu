@@ -1,6 +1,5 @@
 <script lang="ts">
 	import {
-		ChevronDown,
 		ChevronRight,
 		ChevronsDownUp,
 		Download,
@@ -212,10 +211,10 @@
 						{#each projects as project (project.id)}
 							<button
 								type="button"
-								class={`grid h-10 w-10 shrink-0 place-items-center rounded-xl border text-[10px] font-bold uppercase tracking-[0.12em] transition ${
+								class={`grid h-10 w-10 shrink-0 place-items-center rounded-xl border text-[10px] font-bold uppercase tracking-[0.12em] transition-all duration-200 ease-out motion-reduce:transition-none ${
 									project.id === currentProjectId
-										? 'border-app-primary/35 bg-app-primary/12 text-app-text'
-										: 'border-transparent bg-app-element/25 text-app-subtext hover:border-app-border/50 hover:text-app-text'
+										? 'scale-100 border-app-primary/45 bg-app-primary/16 text-app-text shadow-[0_0_0_1px_rgba(194,65,12,0.28)]'
+										: 'scale-[0.94] border-transparent bg-app-element/25 text-app-subtext hover:scale-[0.98] hover:border-app-border/50 hover:text-app-text'
 								}`}
 								on:click={() => onOpenBoard(project.id, project.activeBoardId)}
 								aria-label={`Open ${project.name}`}
@@ -330,15 +329,17 @@
 								<div class="group flex items-center gap-1 rounded-md px-2 py-1.5 transition hover:bg-app-element/40">
 									<button
 										type="button"
-										class="shrink-0 text-app-subtext/50 transition hover:text-app-text"
+										class="shrink-0 text-app-subtext/50 transition-colors duration-200 hover:text-app-text"
 										on:click={() => toggleProjectExpansion(project.id)}
 										aria-label={expandedSet.has(project.id) ? 'Collapse' : 'Expand'}
+										aria-expanded={expandedSet.has(project.id)}
 									>
-										{#if expandedSet.has(project.id)}
-											<ChevronDown size={13} />
-										{:else}
-											<ChevronRight size={13} />
-										{/if}
+										<ChevronRight
+											size={13}
+											class={`transition-transform duration-200 ease-out ${
+												expandedSet.has(project.id) ? 'rotate-90' : ''
+											}`}
+										/>
 									</button>
 
 									<div class="min-w-0 flex-1">
@@ -358,11 +359,15 @@
 												class="block w-full text-left"
 												on:click={() => onOpenBoard(project.id, project.activeBoardId)}
 											>
-												<p class={`truncate text-sm ${
-													project.id === currentProjectId
-														? 'font-semibold text-app-text'
-														: 'font-medium text-app-subtext hover:text-app-text'
-												}`}>{project.name}</p>
+												<p
+													class={`truncate text-sm transition-colors duration-200 ${
+														project.id === currentProjectId
+															? 'font-semibold text-app-text'
+															: 'font-medium text-app-subtext hover:text-app-text'
+													}`}
+												>
+													{project.name}
+												</p>
 											</button>
 										{/if}
 									</div>
@@ -387,8 +392,13 @@
 									</div>
 								</div>
 
-								{#if expandedSet.has(project.id)}
-									<div class="ml-5 border-l border-app-border/40 pb-1 pl-2">
+								<div
+									class={`grid transition-[grid-template-rows] duration-200 ease-out motion-reduce:transition-none ${
+										expandedSet.has(project.id) ? 'grid-rows-[1fr]' : 'grid-rows-[0fr]'
+									}`}
+								>
+									<div class="overflow-hidden">
+										<div class="ml-5 border-l border-app-border/40 pb-1 pl-2">
 										{#each project.boards as board (board.id)}
 											<div
 												class={`group/item flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-[13px] transition ${
@@ -563,8 +573,9 @@
 												Page
 											</button>
 										</div>
+										</div>
 									</div>
-								{/if}
+								</div>
 							</div>
 						{/each}
 					</div>
