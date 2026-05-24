@@ -63,7 +63,8 @@ migrate(
 			type: 'base',
 			listRule: projectMemberViaProject,
 			viewRule: projectMemberViaProject,
-			createRule: null,
+			createRule:
+				'@request.auth.id != "" && (user.id = @request.auth.id || project.owner.id = @request.auth.id)',
 			updateRule:
 				'@request.auth.id != "" && (user.id = @request.auth.id || project.owner.id = @request.auth.id)',
 			deleteRule:
