@@ -22,7 +22,6 @@ async function main() {
   const appName = await question('Enter App Name (e.g., My App): ') || 'Calurcap';
   const appId = await question('Enter App ID (e.g., com.example.app): ') || 'com.avarnic.calurcap';
   const pocketbaseUrl = await question('Enter PocketBase URL (optional): ');
-  const googleClientId = await question('Enter Google Web Client ID (optional): ');
 
   console.log('\nUpdating files...\n');
 
@@ -41,9 +40,6 @@ async function main() {
     let content = fs.readFileSync(capConfigPath, 'utf-8');
     content = content.replace(/appId: '.*'/, `appId: '${appId}'`);
     content = content.replace(/appName: '.*'/, `appName: '${appName}'`);
-    if (googleClientId) {
-      content = content.replace(/serverClientId: '.*'/, `serverClientId: '${googleClientId}'`);
-    }
     fs.writeFileSync(capConfigPath, content);
     console.log('✅ Updated capacitor.config.ts');
   }

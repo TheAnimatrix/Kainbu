@@ -4,13 +4,6 @@ const config: CapacitorConfig = {
   appId: 'com.avarnic.kainbu',
   appName: 'Kainbu',
   webDir: 'build',
-  plugins: {
-    GoogleAuth: {
-      scopes: ['profile', 'email'],
-      serverClientId: 'YOUR_GOOGLE_CLIENT_ID.apps.googleusercontent.com',
-      forceCodeForRefreshToken: true,
-    },
-  },
   // server: {
   //   url: 'http://192.168.0.9:3000',
   //   cleartext: true,
