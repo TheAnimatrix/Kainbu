@@ -1,5 +1,11 @@
 <script lang="ts">
-	import { Editor, Extension, Node, type NodeViewRendererProps } from '@tiptap/core';
+	import {
+		Editor,
+		Extension,
+		Node,
+		type JSONContent,
+		type NodeViewRendererProps
+	} from '@tiptap/core';
 	import CodeBlockLowlight from '@tiptap/extension-code-block-lowlight';
 	import Image from '@tiptap/extension-image';
 	import Link from '@tiptap/extension-link';
@@ -93,6 +99,12 @@
 	export let referenceOptions: TaskReferenceOption[] = [];
 	export let onCheckboxToggle: ((index: number, checked: boolean) => void) | undefined = undefined;
 	export let onReferenceNavigate:
+		| ((reference: TaskReferenceOption) => void)
+		| undefined = undefined;
+	export let onReferenceRemove:
+		| ((reference: TaskReferenceOption) => void)
+		| undefined = undefined;
+	export let onReferencePromote:
 		| ((reference: TaskReferenceOption) => void)
 		| undefined = undefined;
 	export let onEmbedDelete: ((assetId: string) => Promise<void> | void) | undefined = undefined;
@@ -214,6 +226,10 @@
 	];
 
 	const TRAILING_BLOCK_HINT = '@ for reference  / for command';
+	const EMPTY_EDITOR_DOC: JSONContent = {
+		type: 'doc',
+		content: [{ type: 'paragraph' }]
+	};
 	const IMAGE_BLOCK_DEFAULT_WIDTH = 520;
 	const IMAGE_BLOCK_MIN_WIDTH = 180;
 	const IMAGE_BLOCK_MAX_WIDTH = 920;
@@ -332,6 +348,21 @@
 						width ? Number(width) : IMAGE_BLOCK_DEFAULT_WIDTH
 					)
 			);
+
+	const hasMarkdownContent = (source: string) =>
+		preprocessMarkdownForEditor(source || '').trim().length > 0;
+
+	const applyEditorContent = (target: Editor, source: string) => {
+		if (!hasMarkdownContent(source)) {
+			target.commands.setContent(EMPTY_EDITOR_DOC, { emitUpdate: false });
+			return;
+		}
+
+		target.commands.setContent(preprocessMarkdownForEditor(source), {
+			contentType: 'markdown',
+			emitUpdate: false
+		});
+	};
 
 	type MenuRendererOptions<T extends MenuRenderableItem> = {
 		pluginKey: PluginKey;
@@ -498,6 +529,13 @@
 	let blockHandleTop = 0;
 	let blockHandleVisible = false;
 	let blockMenuOpen = false;
+	let refMenuOpen: {
+		kind: TaskReferenceOption['kind'];
+		id: string;
+		label: string;
+		x: number;
+		y: number;
+	} | null = null;
 	let blockMenuAnchor: DOMRect | null = null;
 	let blockMenuStyle = '';
 	let draggingBlock:
@@ -541,15 +579,32 @@
 		onChange(nextValue, options);
 	};
 
+	const assetViewRenderers = new Set<() => void>();
+
 	const refreshEditorViews = () => {
-		if (!editor) return;
-		editor.view.dispatch(editor.state.tr.setMeta('kainbu-refresh', Date.now()));
+		for (const render of assetViewRenderers) render();
 	};
 
 	const closeBlockMenu = () => {
 		blockMenuOpen = false;
 		blockMenuAnchor = null;
 		blockMenuStyle = '';
+	};
+
+	const closeRefMenu = () => {
+		refMenuOpen = null;
+	};
+
+	const resolveRefMenuReference = (): TaskReferenceOption | null => {
+		if (!refMenuOpen) return null;
+		return (
+			referenceLookup[getReferenceKey(refMenuOpen.kind, refMenuOpen.id)] || {
+				kind: refMenuOpen.kind,
+				id: refMenuOpen.id,
+				label: refMenuOpen.label,
+				searchText: refMenuOpen.label
+			}
+		);
 	};
 
 	const syncBlockMenuPosition = async () => {
@@ -1133,6 +1188,7 @@
 					};
 
 					dom.addEventListener('mousedown', (event) => {
+						if (event.button === 2) return;
 						event.preventDefault();
 						event.stopPropagation();
 						const reference =
@@ -1144,6 +1200,18 @@
 								searchText: currentNode.attrs.label
 							} satisfies TaskReferenceOption);
 						onReferenceNavigate?.(reference);
+					});
+
+					dom.addEventListener('contextmenu', (event) => {
+						event.preventDefault();
+						event.stopPropagation();
+						refMenuOpen = {
+							kind: currentNode.attrs.kind,
+							id: currentNode.attrs.id,
+							label: currentNode.attrs.label,
+							x: event.clientX,
+							y: event.clientY
+						};
 					});
 
 					render();
@@ -1440,6 +1508,7 @@
 						);
 					});
 
+					assetViewRenderers.add(render);
 					render();
 
 					return {
@@ -1466,6 +1535,7 @@
 							return true;
 						},
 						destroy() {
+							assetViewRenderers.delete(render);
 							clearResize();
 						}
 					};
@@ -1536,10 +1606,13 @@
 	const createEditor = () => {
 		if (!editorElement) return null;
 
+		const initialMarkdown = preprocessMarkdownForEditor(value || '');
+		const hasContent = initialMarkdown.trim().length > 0;
+
 		return new Editor({
 			element: editorElement,
-			content: preprocessMarkdownForEditor(value || ''),
-			contentType: 'markdown',
+			content: hasContent ? initialMarkdown : EMPTY_EDITOR_DOC,
+			...(hasContent ? { contentType: 'markdown' as const } : {}),
 			editable: !disabled,
 			injectCSS: false,
 			extensions: [
@@ -1557,8 +1630,12 @@
 					}
 				}),
 				Placeholder.configure({
-					placeholder: () => placeholder || TRAILING_BLOCK_HINT,
-					emptyEditorClass: 'is-editor-empty'
+					placeholder: () =>
+						placeholder || (isPageBlockHandleMode ? TRAILING_BLOCK_HINT : ''),
+					emptyEditorClass: 'is-editor-empty',
+					showOnlyCurrent: false,
+					showOnlyWhenEditable: true,
+					includeChildren: false
 				}),
 				TaskList,
 				TaskItem.configure({
@@ -1651,6 +1728,7 @@
 			window.removeEventListener('keydown', handleKeyDown);
 			editor?.destroy();
 			editor = null;
+			assetViewRenderers.clear();
 		};
 	});
 
@@ -1658,15 +1736,13 @@
 		cleanupBlockDrag();
 		editor?.destroy();
 		editor = null;
+		assetViewRenderers.clear();
 	});
 
 	$: if (editor && value !== editorValue) {
 		syncingFromValue = true;
 		editorValue = value;
-		editor.commands.setContent(preprocessMarkdownForEditor(value || ''), {
-			contentType: 'markdown',
-			emitUpdate: false
-		});
+		applyEditorContent(editor, value);
 		syncingFromValue = false;
 	}
 
@@ -1734,10 +1810,14 @@
 				on:pointerdown={startBlockDrag}
 				on:click|stopPropagation={() => void openBlockMenu()}
 			>
-				<span></span>
-				<span></span>
-				<span></span>
-				<span></span>
+				<svg viewBox="0 0 10 16" aria-hidden="true" width="10" height="16">
+					<circle cx="2.5" cy="3" r="1.2" />
+					<circle cx="2.5" cy="8" r="1.2" />
+					<circle cx="2.5" cy="13" r="1.2" />
+					<circle cx="7.5" cy="3" r="1.2" />
+					<circle cx="7.5" cy="8" r="1.2" />
+					<circle cx="7.5" cy="13" r="1.2" />
+				</svg>
 			</button>
 		</div>
 	{/if}
@@ -1753,51 +1833,90 @@
 			style={blockMenuStyle}
 		>
 			<div class="markdown-editor__block-menu-panel">
-				<div class="markdown-editor__block-menu-header">
-					<span class="markdown-editor__block-menu-kicker">Block</span>
-					<span class="markdown-editor__block-menu-title">{getBlockTypeLabel(activeBlock)}</span>
+				<div class="markdown-editor__block-menu-list">
+					{#each visibleBlockEditActions as action (action.id)}
+						<button
+							type="button"
+							class="markdown-editor__block-menu-item"
+							class:is-danger={action.id === 'delete'}
+							on:click={() => applyBlockMenuAction(action)}
+						>
+							{action.label}
+						</button>
+					{/each}
 				</div>
 
 				{#if visibleBlockTransformActions.length}
-					<div class="markdown-editor__block-menu-section">
-						<div class="markdown-editor__block-menu-label">Turn into</div>
-						<div class="markdown-editor__block-menu-list">
-							{#each visibleBlockTransformActions as action (action.id)}
-								<button
-									type="button"
-									class="markdown-editor__block-menu-item"
-									on:click={() => applyBlockMenuAction(action)}
-								>
-									<span class="markdown-editor__block-menu-item-copy">
-										<span class="markdown-editor__block-menu-item-title">{action.label}</span>
-										<span class="markdown-editor__block-menu-item-description">{action.description}</span>
-									</span>
-									<span class="markdown-editor__block-menu-item-badge">Type</span>
-								</button>
-							{/each}
-						</div>
-					</div>
-				{/if}
-
-				<div class="markdown-editor__block-menu-section">
-					<div class="markdown-editor__block-menu-label">Actions</div>
+					<div class="markdown-editor__block-menu-divider"></div>
 					<div class="markdown-editor__block-menu-list">
-						{#each visibleBlockEditActions as action (action.id)}
+						<div class="markdown-editor__block-menu-heading">Turn into</div>
+						{#each visibleBlockTransformActions as action (action.id)}
 							<button
 								type="button"
 								class="markdown-editor__block-menu-item"
-								class:is-danger={action.id === 'delete'}
 								on:click={() => applyBlockMenuAction(action)}
 							>
-								<span class="markdown-editor__block-menu-item-copy">
-									<span class="markdown-editor__block-menu-item-title">{action.label}</span>
-									<span class="markdown-editor__block-menu-item-description">{action.description}</span>
-								</span>
-								<span class="markdown-editor__block-menu-item-badge">
-									{action.id === 'delete' ? 'Careful' : 'Edit'}
-								</span>
+								{action.label}
 							</button>
 						{/each}
+					</div>
+				{/if}
+			</div>
+		</div>
+	{/if}
+
+	{#if refMenuOpen}
+		<div
+			class="fixed inset-0 z-[200]"
+			role="presentation"
+			on:mousedown={closeRefMenu}
+			on:contextmenu|preventDefault={closeRefMenu}
+		>
+			<div
+				class="markdown-editor__block-menu"
+				style={`top:${refMenuOpen.y}px; left:${refMenuOpen.x}px;`}
+				on:mousedown|stopPropagation
+				on:click|stopPropagation
+			>
+				<div class="markdown-editor__block-menu-panel">
+					<div class="markdown-editor__block-menu-list">
+						<button
+							type="button"
+							class="markdown-editor__block-menu-item"
+							on:click={() => {
+								const reference = resolveRefMenuReference();
+								if (reference) onReferenceNavigate?.(reference);
+								closeRefMenu();
+							}}
+						>
+							Open linked item
+						</button>
+						{#if onReferencePromote && refMenuOpen.kind === 'task'}
+							<button
+								type="button"
+								class="markdown-editor__block-menu-item"
+								on:click={() => {
+									const reference = resolveRefMenuReference();
+									if (reference) onReferencePromote?.(reference);
+									closeRefMenu();
+								}}
+							>
+								Link explicitly
+							</button>
+						{/if}
+						{#if onReferenceRemove}
+							<button
+								type="button"
+								class="markdown-editor__block-menu-item is-danger"
+								on:click={() => {
+									const reference = resolveRefMenuReference();
+									if (reference) onReferenceRemove?.(reference);
+									closeRefMenu();
+								}}
+							>
+								Remove reference
+							</button>
+						{/if}
 					</div>
 				</div>
 			</div>
