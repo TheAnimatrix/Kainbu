@@ -1,5 +1,12 @@
 export type AiModelId = string;
 export type AiThinkingLevel = 'none' | 'low' | 'medium' | 'high';
+
+export interface AiThinkingConfig {
+	type: 'enabled';
+	budget_tokens: number;
+	temperature?: number;
+	level?: Exclude<AiThinkingLevel, 'none'>;
+}
 export type WorkspaceTab = 'dashboard' | 'kanban' | 'scratchpad' | 'chat' | 'settings';
 export type SettingsSection = 'account' | 'appearance';
 export type SyncStatus = 'idle' | 'local' | 'syncing' | 'synced' | 'error';
@@ -49,6 +56,7 @@ export interface Task {
 	countdownAt?: number;
 	alarmAt?: number;
 	assignedTo?: string;
+	linkedTaskIds?: string[];
 	createdAt?: number;
 	updatedAt?: number;
 }
@@ -129,7 +137,7 @@ export interface MessageMetadata {
 export interface AiModelConfig {
 	id: AiModelId;
 	model: string;
-	thinking: Record<string, unknown> | null;
+	thinking: AiThinkingConfig | null;
 }
 
 export interface CitationAnnotation {
@@ -154,7 +162,12 @@ export interface AiUsage {
 	capReached?: boolean;
 }
 
-export type AiProgressEventKind = 'status' | 'tool_call' | 'tool_result' | 'assistant_draft';
+export type AiProgressEventKind =
+	| 'status'
+	| 'thinking'
+	| 'tool_call'
+	| 'tool_result'
+	| 'assistant_draft';
 
 export interface AiProgressEvent {
 	id: string;
@@ -281,6 +294,7 @@ export interface Project {
 	createdAt: number;
 	updatedAt: number;
 	viewerLastOpenedAt: number;
+	viewerPinnedAt?: number;
 }
 
 export interface DashboardTimedTask {
@@ -626,6 +640,7 @@ export interface ProjectMembershipRow {
 	role: ProjectAccessRole;
 	joined_at: string;
 	last_opened_at: string;
+	pinned_at: string | null;
 	created_at: string;
 	updated_at: string;
 }
@@ -690,6 +705,7 @@ export interface ProjectTaskRow {
 	countdown_at: number | null;
 	alarm_at: number | null;
 	assigned_to?: string | null;
+	linked_task_ids?: string[] | null;
 	position: number;
 	created_at: string;
 	updated_at: string;

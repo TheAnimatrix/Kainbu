@@ -7,6 +7,8 @@
 		FolderPlus,
 		Mail,
 		Pencil,
+		Pin,
+		PinOff,
 		Trash2,
 		Users,
 		X
@@ -30,6 +32,7 @@
 	export let onLeaveProject: (projectId: string) => void;
 	export let onRenameProject: (projectId: string, newName: string) => void;
 	export let onDeleteProject: (projectId: string) => void;
+	export let onToggleProjectPin: (projectId: string, pinned: boolean) => void;
 	export let onClearTimedTaskDue: (projectId: string, columnId: string, taskId: string) => void;
 
 	let inviteDrafts: Record<string, string> = {};
@@ -96,9 +99,28 @@
 
 	const memberLabel = (project: Project) => `${project.members.length} people`;
 	const getMemberName = (member: Project['members'][number]) => getProjectMemberDisplayName(member);
+	const isPinned = (project: Project) => Boolean(project.viewerPinnedAt);
+	const projectCardClass = (project: Project, pinnedHighlight = false) => {
+		const active = project.id === currentProjectId;
+		if (active) return 'border-app-primary/30 bg-app-primary/5';
+		if (pinnedHighlight) return 'border-app-primary/20 bg-app-primary/5';
+		return 'border-app-border/50 bg-app-surface/60';
+	};
+	const compareByPinThenName = (left: Project, right: Project) => {
+		const leftPinned = left.viewerPinnedAt ?? 0;
+		const rightPinned = right.viewerPinnedAt ?? 0;
+		if (leftPinned !== rightPinned) return rightPinned - leftPinned;
 
-	$: ownedProjects = projects.filter((project) => project.accessRole === 'owner');
-	$: sharedProjects = projects.filter((project) => project.accessRole === 'member');
+		return left.name.localeCompare(right.name, undefined, { sensitivity: 'base' });
+	};
+
+	$: pinnedProjects = projects.filter(isPinned).sort(compareByPinThenName);
+	$: ownedProjects = projects
+		.filter((project) => project.accessRole === 'owner' && !isPinned(project))
+		.sort(compareByPinThenName);
+	$: sharedProjects = projects
+		.filter((project) => project.accessRole === 'member' && !isPinned(project))
+		.sort(compareByPinThenName);
 
 </script>
 
@@ -114,6 +136,7 @@
 					</h2>
 					<div class="mt-2 flex flex-wrap gap-3 text-xs text-app-subtext">
 						<span><span class="font-semibold text-app-text">{projects.length}</span> boards</span>
+						<span><span class="font-semibold text-app-text">{pinnedProjects.length}</span> pinned</span>
 						<span><span class="font-semibold text-app-text">{sharedProjects.length}</span> shared</span>
 						<span><span class="font-semibold text-app-text">{timedTasks.length}</span> due items</span>
 					</div>
@@ -176,6 +199,208 @@
 			{/if}
 
 			<div class="space-y-5">
+				{#if pinnedProjects.length}
+					<section>
+						<div class="mb-2.5 flex items-center justify-between gap-3 px-1">
+							<p class="text-[10px] font-semibold uppercase tracking-[0.2em] text-app-primary">
+								Pinned <span class="text-app-primary/50">· {pinnedProjects.length}</span>
+							</p>
+						</div>
+						<div class="flex gap-3 overflow-x-auto pb-2">
+							{#each pinnedProjects as project (project.id)}
+								{#if project.accessRole === 'owner'}
+									<article
+										class={`w-80 shrink-0 rounded-xl border p-4 transition ${projectCardClass(project, true)}`}
+									>
+										<div class="flex items-start justify-between gap-3">
+											<div class="min-w-0 flex-1">
+												{#if renamingId === project.id}
+													<input
+														bind:value={renameValue}
+														class="w-full rounded-md border border-app-primary/40 bg-app-bg px-2 py-1 text-sm font-semibold text-app-text outline-none"
+														on:keydown={(event) => {
+															if (event.key === 'Enter') commitRename();
+															if (event.key === 'Escape') renamingId = null;
+														}}
+														on:blur={commitRename}
+													/>
+												{:else}
+													<h3 class="truncate text-lg font-bold text-app-text">
+														{project.name}
+													</h3>
+												{/if}
+												<p class="mt-0.5 text-[11px] text-app-subtext">
+													Updated {new Date(project.updatedAt).toLocaleDateString()}
+												</p>
+											</div>
+											<button
+												type="button"
+												class="inline-flex items-center gap-1 rounded-lg border border-app-border/50 px-2.5 py-1.5 text-xs font-medium text-app-text transition hover:text-app-primary"
+												on:click={() => onOpenProject(project.id)}
+											>
+												Open
+												<ArrowRight size={11} />
+											</button>
+										</div>
+
+										<div class="mt-3 flex items-center gap-1.5 text-[11px] text-app-subtext">
+											<Users size={11} />
+											<span>{memberLabel(project)}</span>
+											<div class="ml-1 flex flex-wrap gap-1">
+												{#each project.members.slice(0, 4) as member (`pinned-${project.id}-${member.userId}`)}
+													<span class="inline-flex items-center gap-1 rounded-md bg-app-element/40 px-1.5 py-0.5 text-[10px] text-app-text/80">
+														<span class="max-w-24 truncate">{getMemberName(member)}</span>
+														{#if member.role !== 'owner'}
+															<button
+																type="button"
+																class="text-app-subtext/40 transition hover:text-rose-400"
+																on:click={() => onRemoveMember(project.id, member.userId)}
+															>
+																<X size={9} />
+															</button>
+														{/if}
+													</span>
+												{/each}
+											</div>
+										</div>
+
+										{#if project.invites.length}
+											<div class="mt-2 flex flex-wrap gap-1">
+												{#each project.invites as invite (`pinned-${project.id}-${invite.id}`)}
+													<button
+														type="button"
+														class="inline-flex items-center gap-1 rounded-md bg-app-element/30 px-1.5 py-0.5 text-[10px] text-app-subtext transition hover:text-rose-300"
+														on:click={() => onCancelInvite(invite.id)}
+													>
+														<span class="truncate max-w-24">{invite.inviteeEmail}</span>
+														<X size={9} />
+													</button>
+												{/each}
+											</div>
+										{/if}
+
+										<div class="mt-3 flex items-center gap-1.5">
+											<button
+												type="button"
+												class="rounded-md p-1.5 text-app-primary transition hover:text-app-primary-hover"
+												on:click={() => onToggleProjectPin(project.id, false)}
+												aria-label="Unpin board"
+												title="Unpin"
+											>
+												<PinOff size={13} />
+											</button>
+											<button
+												type="button"
+												class="rounded-md p-1.5 text-app-subtext/60 transition hover:text-app-primary"
+												on:click={() => startRename(project)}
+												aria-label="Rename"
+											>
+												<Pencil size={13} />
+											</button>
+											<button
+												type="button"
+												class="rounded-md p-1.5 text-app-subtext/60 transition hover:text-app-primary"
+												on:click={() =>
+													(inviteOpenFor = inviteOpenFor === project.id ? null : project.id)}
+												aria-label="Invite"
+											>
+												<Mail size={13} />
+											</button>
+											<button
+												type="button"
+												class="rounded-md p-1.5 text-app-subtext/60 transition hover:text-rose-400"
+												on:click={() => onDeleteProject(project.id)}
+												aria-label="Delete"
+											>
+												<Trash2 size={13} />
+											</button>
+										</div>
+
+										{#if inviteOpenFor === project.id}
+											<div class="mt-2 flex gap-2">
+												<input
+													value={inviteDrafts[project.id] || ''}
+													type="email"
+													placeholder="teammate@example.com"
+													class="min-w-0 flex-1 rounded-lg border border-app-border/50 bg-app-bg px-3 py-1.5 text-xs text-app-text outline-none transition focus:border-app-primary/40"
+													on:input={(event) =>
+														setInviteDraft(project.id, (event.currentTarget as HTMLInputElement).value)}
+													on:keydown={(event) => {
+														if (event.key === 'Enter') submitInvite(project.id);
+													}}
+												/>
+												<button
+													type="button"
+													class="rounded-lg bg-app-primary px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-app-primary-hover"
+													on:click={() => submitInvite(project.id)}
+												>
+													Send
+												</button>
+											</div>
+										{/if}
+									</article>
+								{:else}
+									<article
+										class={`w-72 shrink-0 rounded-xl border p-4 transition ${projectCardClass(project, true)}`}
+									>
+										<div class="flex items-start justify-between gap-3">
+											<div class="min-w-0">
+												<h3 class="truncate text-lg font-bold text-app-text">{project.name}</h3>
+												<p class="mt-0.5 text-[11px] text-app-subtext">
+													{memberLabel(project)}
+												</p>
+											</div>
+											<button
+												type="button"
+												class="inline-flex items-center gap-1 rounded-lg border border-app-border/50 px-2.5 py-1.5 text-xs font-medium text-app-text transition hover:text-app-primary"
+												on:click={() => onOpenProject(project.id)}
+											>
+												Open
+												<ArrowRight size={11} />
+											</button>
+										</div>
+										<div class="mt-2 flex flex-wrap gap-1">
+											{#each project.members.slice(0, 5) as member (`pinned-shared-${project.id}-${member.userId}`)}
+												<span class="inline-flex rounded-md bg-app-element/40 px-1.5 py-0.5 text-[10px] text-app-text/80">
+													{getMemberName(member)}
+												</span>
+											{/each}
+										</div>
+										<div class="mt-3 flex items-center justify-between gap-2">
+											<div class="flex items-center gap-1.5">
+												<button
+													type="button"
+													class="rounded-md p-1.5 text-app-primary transition hover:text-app-primary-hover"
+													on:click={() => onToggleProjectPin(project.id, false)}
+													aria-label="Unpin board"
+													title="Unpin"
+												>
+													<PinOff size={13} />
+												</button>
+												<button
+													type="button"
+													class="inline-flex items-center gap-1 text-xs font-medium text-app-subtext transition hover:text-app-primary"
+													on:click={() => onOpenProject(project.id)}
+												>
+													Open board
+													<ArrowRight size={11} />
+												</button>
+											</div>
+											<button
+												type="button"
+												class="text-xs text-app-subtext/60 transition hover:text-rose-400"
+												on:click={() => onLeaveProject(project.id)}
+											>
+												Leave
+											</button>
+										</div>
+									</article>
+								{/if}
+							{/each}
+						</div>
+					</section>
+				{/if}
+
 				<section>
 					<div class="mb-2.5 flex items-center justify-between gap-3 px-1">
 						<p class="text-[10px] font-semibold uppercase tracking-[0.2em] text-app-subtext">
@@ -187,11 +412,7 @@
 						<div class="flex gap-3 overflow-x-auto pb-2">
 							{#each ownedProjects as project (project.id)}
 								<article
-									class={`w-80 shrink-0 rounded-xl border p-4 transition ${
-										project.id === currentProjectId
-											? 'border-app-primary/30 bg-app-primary/5'
-											: 'border-app-border/50 bg-app-surface/60'
-									}`}
+									class={`w-80 shrink-0 rounded-xl border p-4 transition ${projectCardClass(project)}`}
 								>
 									<div class="flex items-start justify-between gap-3">
 										<div class="min-w-0 flex-1">
@@ -263,6 +484,23 @@
 									<div class="mt-3 flex items-center gap-1.5">
 										<button
 											type="button"
+											class={`rounded-md p-1.5 transition ${
+												isPinned(project)
+													? 'text-app-primary hover:text-app-primary-hover'
+													: 'text-app-subtext/60 hover:text-app-primary'
+											}`}
+											on:click={() => onToggleProjectPin(project.id, !isPinned(project))}
+											aria-label={isPinned(project) ? 'Unpin board' : 'Pin board'}
+											title={isPinned(project) ? 'Unpin' : 'Pin'}
+										>
+											{#if isPinned(project)}
+												<PinOff size={13} />
+											{:else}
+												<Pin size={13} />
+											{/if}
+										</button>
+										<button
+											type="button"
 											class="rounded-md p-1.5 text-app-subtext/60 transition hover:text-app-primary"
 											on:click={() => startRename(project)}
 											aria-label="Rename"
@@ -331,11 +569,7 @@
 						<div class="flex gap-3 overflow-x-auto pb-2">
 							{#each sharedProjects as project (project.id)}
 								<article
-									class={`w-72 shrink-0 rounded-xl border p-4 transition ${
-										project.id === currentProjectId
-											? 'border-app-primary/30 bg-app-primary/5'
-											: 'border-app-border/50 bg-app-surface/60'
-									}`}
+									class={`w-72 shrink-0 rounded-xl border p-4 transition ${projectCardClass(project)}`}
 								>
 									<div class="flex items-start justify-between gap-3">
 										<div class="min-w-0">
@@ -360,15 +594,34 @@
 											</span>
 										{/each}
 									</div>
-									<div class="mt-3 flex items-center justify-between">
-										<button
-											type="button"
-											class="inline-flex items-center gap-1 text-xs font-medium text-app-subtext transition hover:text-app-primary"
-											on:click={() => onOpenProject(project.id)}
-										>
-											Open board
-											<ArrowRight size={11} />
-										</button>
+									<div class="mt-3 flex items-center justify-between gap-2">
+										<div class="flex items-center gap-1.5">
+											<button
+												type="button"
+												class={`rounded-md p-1.5 transition ${
+													isPinned(project)
+														? 'text-app-primary hover:text-app-primary-hover'
+														: 'text-app-subtext/60 hover:text-app-primary'
+												}`}
+												on:click={() => onToggleProjectPin(project.id, !isPinned(project))}
+												aria-label={isPinned(project) ? 'Unpin board' : 'Pin board'}
+												title={isPinned(project) ? 'Unpin' : 'Pin'}
+											>
+												{#if isPinned(project)}
+													<PinOff size={13} />
+												{:else}
+													<Pin size={13} />
+												{/if}
+											</button>
+											<button
+												type="button"
+												class="inline-flex items-center gap-1 text-xs font-medium text-app-subtext transition hover:text-app-primary"
+												on:click={() => onOpenProject(project.id)}
+											>
+												Open board
+												<ArrowRight size={11} />
+											</button>
+										</div>
 										<button
 											type="button"
 											class="text-xs text-app-subtext/60 transition hover:text-rose-400"

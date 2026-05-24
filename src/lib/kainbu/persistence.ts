@@ -6,12 +6,12 @@ import {
 } from '$lib/kainbu/constants';
 import { DEFAULT_AI_MODEL_ID } from '$lib/kainbu/models';
 import { normalizeNullableBackgroundTheme } from '$lib/kainbu/backgrounds';
-import { invokeWorkspaceApi } from '$lib/kainbu/api';
+import { invokeWorkspaceApi } from '$lib/kainbu/workspaceApi';
 import { createId } from '$lib/kainbu/id';
 import { normalizeProjectStructure } from '$lib/kainbu/projectStructure';
 import { normalizeScratchpadData, serializeScratchpadData } from '$lib/kainbu/scratchpad';
 import { normalizeUserSettings } from '$lib/kainbu/settings';
-import { supabase } from '$lib/supabaseClient';
+import { getSupabase } from '$lib/kainbu/supabaseContext';
 import type {
 	BackgroundTheme,
 	ChatAttachment,
@@ -55,6 +55,7 @@ const PROFILE_IDENTITY_COLUMNS_LEGACY = 'user_id,email';
 let profileBackgroundThemeSupported: boolean | null = null;
 let profileUsernameSupported: boolean | null = null;
 let projectTaskAssignmentsSupported: boolean | null = null;
+let projectTaskLinksSupported: boolean | null = null;
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 const toNumber = (value: unknown) => {
@@ -174,6 +175,7 @@ const normalizeToolActions = (value: unknown): WorkspaceAction[] =>
 
 const VALID_PROGRESS_KINDS = new Set<AiProgressEventKind>([
 	'status',
+	'thinking',
 	'tool_call',
 	'tool_result',
 	'assistant_draft'
@@ -415,10 +417,28 @@ const mapInviteRow = (row: ProjectInviteRow, projectName?: string): ProjectInvit
 	respondedAt: row.responded_at ? new Date(row.responded_at).getTime() : undefined
 });
 
-const compareProjects = (left: Project, right: Project) =>
-	left.name.localeCompare(right.name, undefined, { sensitivity: 'base' }) ||
-	right.updatedAt - left.updatedAt ||
-	left.id.localeCompare(right.id);
+const compareProjects = (left: Project, right: Project) => {
+	const leftPinned = left.viewerPinnedAt ?? 0;
+	const rightPinned = right.viewerPinnedAt ?? 0;
+	if (leftPinned !== rightPinned) return rightPinned - leftPinned;
+
+	return (
+		left.name.localeCompare(right.name, undefined, { sensitivity: 'base' }) ||
+		right.updatedAt - left.updatedAt ||
+		left.id.localeCompare(right.id)
+	);
+};
+
+const normalizeLinkedTaskIds = (value: unknown): string[] => {
+	if (!Array.isArray(value)) return [];
+	return [
+		...new Set(
+			value.filter(
+				(entry): entry is string => typeof entry === 'string' && entry.trim().length > 0
+			)
+		)
+	];
+};
 
 const mapTaskRow = (row: ProjectTaskRow): Task => ({
 	id: row.id,
@@ -432,6 +452,7 @@ const mapTaskRow = (row: ProjectTaskRow): Task => ({
 	countdownAt: row.countdown_at ?? undefined,
 	alarmAt: row.alarm_at ?? undefined,
 	assignedTo: row.assigned_to ?? undefined,
+	linkedTaskIds: normalizeLinkedTaskIds(row.linked_task_ids),
 	createdAt: new Date(row.created_at).getTime(),
 	updatedAt: new Date(row.updated_at).getTime()
 });
@@ -497,6 +518,7 @@ const mapAiSessionUpsertRow = (
 });
 
 const tagSignature = (tag: Tag) => `${tag.id}|${tag.label}|${tag.color}`;
+const linkSignature = (ids: string[] | undefined) => [...new Set(ids || [])].sort().join('|');
 
 const areTasksEqual = (left: Task, right: Task) => {
 	if (left.title !== right.title) return false;
@@ -508,6 +530,7 @@ const areTasksEqual = (left: Task, right: Task) => {
 	if (left.countdownAt !== right.countdownAt) return false;
 	if (left.alarmAt !== right.alarmAt) return false;
 	if ((left.assignedTo || '') !== (right.assignedTo || '')) return false;
+	if (linkSignature(left.linkedTaskIds) !== linkSignature(right.linkedTaskIds)) return false;
 
 	const leftTags = (left.tags || []).map(tagSignature).sort();
 	const rightTags = (right.tags || []).map(tagSignature).sort();
@@ -554,22 +577,45 @@ const mapTaskUpsertRow = (
 		typeof task.assignedTo === 'string' && UUID_PATTERN.test(task.assignedTo.trim())
 			? task.assignedTo.trim()
 			: null,
+	linked_task_ids: normalizeLinkedTaskIds(task.linkedTaskIds),
 	position
 });
 
 const stripAssignedToFromTaskUpserts = (rows: ReturnType<typeof mapTaskUpsertRow>[]) =>
 	rows.map(({ assigned_to: _assignedTo, ...row }) => row);
 
+const stripLinkedTaskIdsFromTaskUpserts = (rows: ReturnType<typeof mapTaskUpsertRow>[]) =>
+	rows.map(({ linked_task_ids: _linkedTaskIds, ...row }) => row);
+
+const stripOptionalTaskColumnsFromUpserts = (rows: ReturnType<typeof mapTaskUpsertRow>[]) => {
+	let next: ReturnType<typeof mapTaskUpsertRow>[] = rows;
+	if (projectTaskAssignmentsSupported === false) {
+		next = stripAssignedToFromTaskUpserts(next) as ReturnType<typeof mapTaskUpsertRow>[];
+	}
+	if (projectTaskLinksSupported === false) {
+		next = stripLinkedTaskIdsFromTaskUpserts(next) as ReturnType<typeof mapTaskUpsertRow>[];
+	}
+	return next;
+};
+
 const upsertProjectTasks = async (rows: ReturnType<typeof mapTaskUpsertRow>[]) => {
 	const shouldIncludeAssignments = projectTaskAssignmentsSupported !== false;
-	const payload = shouldIncludeAssignments ? rows : stripAssignedToFromTaskUpserts(rows);
-	const result = await supabase.from('project_tasks').upsert(payload, {
+	const shouldIncludeLinks = projectTaskLinksSupported !== false;
+	let payload = rows;
+	if (!shouldIncludeAssignments || !shouldIncludeLinks) {
+		payload = stripOptionalTaskColumnsFromUpserts(rows);
+	}
+
+	const result = await getSupabase().from('project_tasks').upsert(payload, {
 		onConflict: 'project_id,id'
 	});
 
 	if (!result.error) {
 		if (shouldIncludeAssignments) {
 			projectTaskAssignmentsSupported = true;
+		}
+		if (shouldIncludeLinks) {
+			projectTaskLinksSupported = true;
 		}
 		return;
 	}
@@ -579,9 +625,24 @@ const upsertProjectTasks = async (rows: ReturnType<typeof mapTaskUpsertRow>[]) =
 		isMissingSchemaColumnError(result.error, 'project_tasks', 'assigned_to')
 	) {
 		projectTaskAssignmentsSupported = false;
-		const retry = await supabase
+		const retry = await getSupabase()
 			.from('project_tasks')
-			.upsert(stripAssignedToFromTaskUpserts(rows), {
+			.upsert(stripOptionalTaskColumnsFromUpserts(rows), {
+				onConflict: 'project_id,id'
+			});
+
+		if (retry.error) throw retry.error;
+		return;
+	}
+
+	if (
+		shouldIncludeLinks &&
+		isMissingSchemaColumnError(result.error, 'project_tasks', 'linked_task_ids')
+	) {
+		projectTaskLinksSupported = false;
+		const retry = await getSupabase()
+			.from('project_tasks')
+			.upsert(stripOptionalTaskColumnsFromUpserts(rows), {
 				onConflict: 'project_id,id'
 			});
 
@@ -667,7 +728,7 @@ const applyBoardMutations = async (
 	mutations: ReturnType<typeof deriveBoardMutations>
 ) => {
 	if (mutations.upsertColumns.length) {
-		const { error } = await supabase.from('project_columns').upsert(mutations.upsertColumns, {
+		const { error } = await getSupabase().from('project_columns').upsert(mutations.upsertColumns, {
 			onConflict: 'project_id,id'
 		});
 		if (error) throw error;
@@ -678,7 +739,7 @@ const applyBoardMutations = async (
 	}
 
 	if (mutations.deleteTaskIds.length) {
-		const { error } = await supabase
+		const { error } = await getSupabase()
 			.from('project_tasks')
 			.delete()
 			.eq('project_id', projectId)
@@ -687,7 +748,7 @@ const applyBoardMutations = async (
 	}
 
 	if (mutations.deleteColumnIds.length) {
-		const { error } = await supabase
+		const { error } = await getSupabase()
 			.from('project_columns')
 			.delete()
 			.eq('project_id', projectId)
@@ -700,7 +761,7 @@ const findProjectName = (projectRows: ProjectRow[], projectId: string) =>
 	projectRows.find((project) => project.id === projectId)?.name;
 
 export const fetchWorkspace = async (userId: string) => {
-	const membershipsResult = await supabase
+	const membershipsResult = await getSupabase()
 		.from('project_memberships')
 		.select('*')
 		.eq('user_id', userId)
@@ -725,55 +786,55 @@ export const fetchWorkspace = async (userId: string) => {
 		incomingInvitesResult
 	] = await Promise.all([
 		accessibleProjectIds.length
-			? supabase.from('projects').select('*').in('id', accessibleProjectIds)
+			? getSupabase().from('projects').select('*').in('id', accessibleProjectIds)
 			: Promise.resolve({ data: [], error: null }),
 		accessibleProjectIds.length
-			? supabase.from('project_memberships').select('*').in('project_id', accessibleProjectIds)
+			? getSupabase().from('project_memberships').select('*').in('project_id', accessibleProjectIds)
 			: Promise.resolve({ data: [], error: null }),
 		accessibleProjectIds.length
-			? supabase
+			? getSupabase()
 					.from('project_boards')
 					.select('*')
 					.in('project_id', accessibleProjectIds)
 					.order('position', { ascending: true })
 			: Promise.resolve({ data: [], error: null }),
 		accessibleProjectIds.length
-			? supabase
+			? getSupabase()
 					.from('project_pages')
 					.select('*')
 					.in('project_id', accessibleProjectIds)
 					.order('position', { ascending: true })
 			: Promise.resolve({ data: [], error: null }),
 		accessibleProjectIds.length
-			? supabase
+			? getSupabase()
 					.from('project_columns')
 					.select('*')
 					.in('project_id', accessibleProjectIds)
 					.order('position', { ascending: true })
 			: Promise.resolve({ data: [], error: null }),
 		accessibleProjectIds.length
-			? supabase
+			? getSupabase()
 					.from('project_tasks')
 					.select('*')
 					.in('project_id', accessibleProjectIds)
 					.order('position', { ascending: true })
 			: Promise.resolve({ data: [], error: null }),
 		accessibleProjectIds.length
-			? supabase
+			? getSupabase()
 					.from('project_user_state')
 					.select('*')
 					.eq('user_id', userId)
 					.in('project_id', accessibleProjectIds)
 			: Promise.resolve({ data: [], error: null }),
 		accessibleProjectIds.length
-			? supabase
+			? getSupabase()
 					.from('project_ai_sessions')
 					.select('*')
 					.eq('user_id', userId)
 					.in('project_id', accessibleProjectIds)
 					.order('updated_at', { ascending: true })
 			: Promise.resolve({ data: [], error: null }),
-		supabase
+		getSupabase()
 			.from('project_invites')
 			.select('*, projects(name)')
 			.eq('invitee_user_id', userId)
@@ -802,7 +863,7 @@ export const fetchWorkspace = async (userId: string) => {
 		.filter((project) => project.user_id === userId)
 		.map((project) => project.id);
 	const ownerInvitesResult = ownedProjectIds.length
-		? await supabase
+		? await getSupabase()
 				.from('project_invites')
 				.select('*')
 				.in('project_id', ownedProjectIds)
@@ -816,7 +877,7 @@ export const fetchWorkspace = async (userId: string) => {
 	let loadedProfileUsernames = !useLegacyProfileColumns;
 	let profileRows: Pick<ProfileRow, 'user_id' | 'email' | 'username'>[] = [];
 	if (profileIds.length) {
-		let profilesQuery = (await supabase
+		let profilesQuery = (await getSupabase()
 			.from('profiles')
 			.select(useLegacyProfileColumns ? PROFILE_IDENTITY_COLUMNS_LEGACY : PROFILE_IDENTITY_COLUMNS)
 			.in('user_id', profileIds)) as { data: unknown[] | null; error: unknown | null };
@@ -828,7 +889,7 @@ export const fetchWorkspace = async (userId: string) => {
 		) {
 			profileUsernameSupported = false;
 			loadedProfileUsernames = false;
-			profilesQuery = (await supabase
+			profilesQuery = (await getSupabase()
 				.from('profiles')
 				.select(PROFILE_IDENTITY_COLUMNS_LEGACY)
 				.in('user_id', profileIds)) as { data: unknown[] | null; error: unknown | null };
@@ -968,7 +1029,10 @@ export const fetchWorkspace = async (userId: string) => {
 				),
 				createdAt: new Date(row.created_at).getTime(),
 				updatedAt: new Date(row.updated_at).getTime(),
-				viewerLastOpenedAt: new Date(ownMembership.last_opened_at).getTime()
+				viewerLastOpenedAt: new Date(ownMembership.last_opened_at).getTime(),
+				viewerPinnedAt: ownMembership.pinned_at
+					? new Date(ownMembership.pinned_at).getTime()
+					: undefined
 			});
 			return [
 				normalizedProject satisfies Project
@@ -1006,7 +1070,7 @@ export const createProject = async (
 	};
 	const normalizedSeed = normalizeProjectStructure(seed as Project);
 
-	const { error } = await supabase.from('projects').insert({
+	const { error } = await getSupabase().from('projects').insert({
 		id: normalizedSeed.id,
 		user_id: userId,
 		name: normalizedSeed.name,
@@ -1029,7 +1093,7 @@ export const createProject = async (
 		updated_at: new Date(board.updatedAt).toISOString()
 	}));
 	if (boardPayload.length) {
-		const boardInsert = await supabase.from('project_boards').insert(boardPayload);
+		const boardInsert = await getSupabase().from('project_boards').insert(boardPayload);
 		if (boardInsert.error) throw boardInsert.error;
 	}
 
@@ -1043,7 +1107,7 @@ export const createProject = async (
 		updated_at: new Date(page.updatedAt).toISOString()
 	}));
 	if (pagePayload.length) {
-		const pageInsert = await supabase.from('project_pages').insert(pagePayload);
+		const pageInsert = await getSupabase().from('project_pages').insert(pagePayload);
 		if (pageInsert.error) throw pageInsert.error;
 	}
 
@@ -1066,8 +1130,54 @@ export const createProject = async (
 };
 
 export const renameProject = async (projectId: string, nextName: string) => {
-	const { error } = await supabase.from('projects').update({ name: nextName }).eq('id', projectId);
+	const { error } = await getSupabase().from('projects').update({ name: nextName }).eq('id', projectId);
 	if (error) throw error;
+};
+
+export const fetchProjectBoardKanban = async (
+	projectId: string,
+	boardId: string
+): Promise<Project['kanbanData']> => {
+	const [columnsResult, tasksResult] = await Promise.all([
+		getSupabase()
+			.from('project_columns')
+			.select('*')
+			.eq('project_id', projectId)
+			.eq('board_id', boardId)
+			.order('position', { ascending: true }),
+		getSupabase()
+			.from('project_tasks')
+			.select('*')
+			.eq('project_id', projectId)
+			.eq('board_id', boardId)
+			.order('position', { ascending: true })
+	]);
+
+	if (columnsResult.error) throw columnsResult.error;
+	if (tasksResult.error) throw tasksResult.error;
+
+	return buildKanbanData(
+		(columnsResult.data || []) as ProjectColumnRow[],
+		(tasksResult.data || []) as ProjectTaskRow[]
+	);
+};
+
+export const fetchProjectScratchpadMeta = async (projectId: string) => {
+	const { data, error } = await getSupabase()
+		.from('projects')
+		.select('id,name,scratchpad_data,scratchpad_rev')
+		.eq('id', projectId)
+		.maybeSingle();
+
+	if (error) throw error;
+	if (!data) throw new Error('Project not found.');
+
+	return {
+		id: data.id as string,
+		name: data.name as string,
+		scratchpadData: normalizeScratchpadData(data.scratchpad_data),
+		scratchpadRev: typeof data.scratchpad_rev === 'number' ? data.scratchpad_rev : 0
+	};
 };
 
 export const syncProjectBoard = async (
@@ -1089,7 +1199,7 @@ export const replaceProjectBoard = async (
 };
 
 export const createProjectBoard = async (projectId: string, name: string, position: number) => {
-	const { data, error } = await supabase
+	const { data, error } = await getSupabase()
 		.from('project_boards')
 		.insert({
 			project_id: projectId,
@@ -1104,7 +1214,7 @@ export const createProjectBoard = async (projectId: string, name: string, positi
 };
 
 export const createProjectPage = async (projectId: string, name: string, position: number) => {
-	const { data, error } = await supabase
+	const { data, error } = await getSupabase()
 		.from('project_pages')
 		.insert({
 			project_id: projectId,
@@ -1120,7 +1230,7 @@ export const createProjectPage = async (projectId: string, name: string, positio
 };
 
 export const renameProjectBoard = async (projectId: string, boardId: string, name: string) => {
-	const { error } = await supabase
+	const { error } = await getSupabase()
 		.from('project_boards')
 		.update({ name, updated_at: new Date().toISOString() })
 		.eq('project_id', projectId)
@@ -1130,7 +1240,7 @@ export const renameProjectBoard = async (projectId: string, boardId: string, nam
 };
 
 export const deleteProjectBoard = async (projectId: string, boardId: string) => {
-	const { error } = await supabase
+	const { error } = await getSupabase()
 		.from('project_boards')
 		.delete()
 		.eq('project_id', projectId)
@@ -1140,7 +1250,7 @@ export const deleteProjectBoard = async (projectId: string, boardId: string) => 
 };
 
 export const renameProjectPage = async (projectId: string, pageId: string, name: string) => {
-	const { error } = await supabase
+	const { error } = await getSupabase()
 		.from('project_pages')
 		.update({ name, updated_at: new Date().toISOString() })
 		.eq('project_id', projectId)
@@ -1150,7 +1260,7 @@ export const renameProjectPage = async (projectId: string, pageId: string, name:
 };
 
 export const deleteProjectPage = async (projectId: string, pageId: string) => {
-	const { error } = await supabase
+	const { error } = await getSupabase()
 		.from('project_pages')
 		.delete()
 		.eq('project_id', projectId)
@@ -1164,7 +1274,7 @@ export const updateProjectPageContent = async (
 	pageId: string,
 	content: string
 ) => {
-	const { error } = await supabase
+	const { error } = await getSupabase()
 		.from('project_pages')
 		.update({
 			content,
@@ -1208,7 +1318,7 @@ export const saveProjectAiState = async (
 	aiSessions: ProjectAiSession[],
 	activeAiSessionId: string
 ) => {
-	const { error: userStateError } = await supabase.from('project_user_state').upsert({
+	const { error: userStateError } = await getSupabase().from('project_user_state').upsert({
 		project_id: projectId,
 		user_id: userId,
 		active_ai_session_id: activeAiSessionId,
@@ -1226,7 +1336,7 @@ export const saveProjectAiState = async (
 				}
 			];
 
-	const { error: upsertSessionsError } = await supabase.from('project_ai_sessions').upsert(
+	const { error: upsertSessionsError } = await getSupabase().from('project_ai_sessions').upsert(
 		normalizedSessions.map((session) => mapAiSessionUpsertRow(projectId, userId, session)),
 		{
 			onConflict: 'id'
@@ -1235,7 +1345,7 @@ export const saveProjectAiState = async (
 
 	if (upsertSessionsError) throw upsertSessionsError;
 
-	const { data: existingSessions, error: existingSessionsError } = await supabase
+	const { data: existingSessions, error: existingSessionsError } = await getSupabase()
 		.from('project_ai_sessions')
 		.select('id')
 		.eq('project_id', projectId)
@@ -1249,7 +1359,7 @@ export const saveProjectAiState = async (
 	);
 
 	if (staleSessionIds.length) {
-		const { error: deleteSessionsError } = await supabase
+		const { error: deleteSessionsError } = await getSupabase()
 			.from('project_ai_sessions')
 			.delete()
 			.eq('project_id', projectId)
@@ -1264,6 +1374,15 @@ export const touchProjectLastOpened = async (projectId: string) => {
 	await invokeWorkspaceApi('/api/workspace/projects/touch', {
 		body: {
 			projectId
+		}
+	});
+};
+
+export const setProjectPinned = async (projectId: string, pinned: boolean) => {
+	await invokeWorkspaceApi('/api/workspace/projects/pin', {
+		body: {
+			projectId,
+			pinned
 		}
 	});
 };
@@ -1324,13 +1443,13 @@ export const leaveProject = async (projectId: string) => {
 };
 
 export const deleteProjectRemote = async (projectId: string) => {
-	const { error } = await supabase.from('projects').delete().eq('id', projectId);
+	const { error } = await getSupabase().from('projects').delete().eq('id', projectId);
 	if (error) throw error;
 };
 
 export const fetchUserSettings = async (userId: string) => {
 	const useLegacyColumns = profileBackgroundThemeSupported === false;
-	const { data, error } = await supabase
+	const { data, error } = await getSupabase()
 		.from('profiles')
 		.select(useLegacyColumns ? PROFILE_SETTINGS_COLUMNS_LEGACY : PROFILE_SETTINGS_COLUMNS)
 		.eq('user_id', userId)
@@ -1342,7 +1461,7 @@ export const fetchUserSettings = async (userId: string) => {
 		isMissingSchemaColumnError(error, 'profiles', 'background_theme')
 	) {
 		profileBackgroundThemeSupported = false;
-		const legacyResult = await supabase
+		const legacyResult = await getSupabase()
 			.from('profiles')
 			.select(PROFILE_SETTINGS_COLUMNS_LEGACY)
 			.eq('user_id', userId)
@@ -1359,7 +1478,7 @@ export const fetchUserSettings = async (userId: string) => {
 
 export const fetchUserProfile = async (userId: string) => {
 	const useLegacyColumns = profileUsernameSupported === false;
-	const { data, error } = await supabase
+	const { data, error } = await getSupabase()
 		.from('profiles')
 		.select(useLegacyColumns ? PROFILE_IDENTITY_COLUMNS_LEGACY : PROFILE_IDENTITY_COLUMNS)
 		.eq('user_id', userId)
@@ -1367,7 +1486,7 @@ export const fetchUserProfile = async (userId: string) => {
 
 	if (error && !useLegacyColumns && isMissingSchemaColumnError(error, 'profiles', 'username')) {
 		profileUsernameSupported = false;
-		const legacyResult = await supabase
+		const legacyResult = await getSupabase()
 			.from('profiles')
 			.select(PROFILE_IDENTITY_COLUMNS_LEGACY)
 			.eq('user_id', userId)
@@ -1386,7 +1505,7 @@ export const fetchUserProfile = async (userId: string) => {
 };
 
 export const checkUsernameAvailability = async (username: string) => {
-	const { data, error } = await supabase.rpc('check_username_available', {
+	const { data, error } = await getSupabase().rpc('check_username_available', {
 		candidate_username: username
 	});
 
@@ -1395,7 +1514,7 @@ export const checkUsernameAvailability = async (username: string) => {
 };
 
 export const updateUsername = async (userId: string, username: string) => {
-	const { data, error } = await supabase
+	const { data, error } = await getSupabase()
 		.from('profiles')
 		.update({
 			username,
@@ -1418,7 +1537,7 @@ export const upsertUserSettings = async (userId: string, settings: UserSettings)
 		updated_at: new Date().toISOString()
 	};
 	const useLegacyPayload = profileBackgroundThemeSupported === false;
-	const { error } = await supabase.from('profiles').upsert(
+	const { error } = await getSupabase().from('profiles').upsert(
 		useLegacyPayload
 			? basePayload
 			: {
@@ -1433,7 +1552,7 @@ export const upsertUserSettings = async (userId: string, settings: UserSettings)
 		isMissingSchemaColumnError(error, 'profiles', 'background_theme')
 	) {
 		profileBackgroundThemeSupported = false;
-		const legacyResult = await supabase.from('profiles').upsert(basePayload);
+		const legacyResult = await getSupabase().from('profiles').upsert(basePayload);
 		if (legacyResult.error) throw legacyResult.error;
 		return;
 	}
@@ -1443,7 +1562,7 @@ export const upsertUserSettings = async (userId: string, settings: UserSettings)
 };
 
 export const subscribeToWorkspaceChanges = (userId: string, onChange: () => void) => {
-	const channel = supabase
+	const channel = getSupabase()
 		.channel(`workspace-${userId}-${createId()}`)
 		.on('postgres_changes', { event: '*', schema: 'public', table: 'projects' }, onChange)
 		.on(
@@ -1461,6 +1580,6 @@ export const subscribeToWorkspaceChanges = (userId: string, onChange: () => void
 		.subscribe();
 
 	return () => {
-		void supabase.removeChannel(channel);
+		void getSupabase().removeChannel(channel);
 	};
 };

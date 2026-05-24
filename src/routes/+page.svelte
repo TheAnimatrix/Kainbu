@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { onDestroy, onMount } from 'svelte';
+	import { fade } from 'svelte/transition';
 	import type { AuthChangeEvent, User } from '@supabase/supabase-js';
 	import {
 		LayoutDashboard,
@@ -9,10 +10,12 @@
 		MessageSquare,
 		NotebookPen,
 		Redo2,
+		Search,
 		Settings2,
 		Sparkles,
 		Undo2
 	} from 'lucide-svelte';
+	import Icon from '@iconify/svelte';
 	import AuthView from '$lib/components/AuthView.svelte';
 	import BrandMark from '$lib/components/BrandMark.svelte';
 	import ChatPane from '$lib/components/ChatPane.svelte';
@@ -65,7 +68,11 @@
 		loadWorkspaceSnapshot,
 		saveWorkspaceSnapshot
 	} from '$lib/kainbu/localSnapshot';
-	import { DEFAULT_AI_MODEL_CONFIGS, DEFAULT_AI_MODEL_ID } from '$lib/kainbu/models';
+	import {
+		DEFAULT_AI_MODEL_CONFIGS,
+		DEFAULT_AI_MODEL_ID,
+		defaultThinkingLevelForModel
+	} from '$lib/kainbu/models';
 	import {
 		checkUsernameAvailability,
 		cancelProjectInvite,
@@ -89,6 +96,7 @@
 		supportsProfileBackgroundTheme,
 		subscribeToWorkspaceChanges,
 		syncProjectBoard,
+		setProjectPinned,
 		touchProjectLastOpened,
 		updateProjectBackground,
 		updateProjectPageContent as syncProjectPageContent,
@@ -164,7 +172,9 @@
 	let settings: UserSettings = structuredClone(DEFAULT_SETTINGS);
 	let aiModels: AiModelConfig[] = structuredClone(DEFAULT_AI_MODEL_CONFIGS);
 	let aiThinkingLevel: import('$lib/kainbu/types').AiThinkingLevel = 'none';
+	let lastSyncedAiThinkingModelId = '';
 	let profile: UserProfile | null = null;
+	let profileLoaded = false;
 	let desktopWorkspaceTab: WorkspaceTab = 'dashboard';
 	let mobileTab: WorkspaceTab = 'dashboard';
 	let settingsSection: SettingsSection = 'appearance';
@@ -180,8 +190,15 @@
 	let syncErrorMessage = '';
 	let syncStatus: SyncStatus = 'idle';
 	let pendingProposals: PendingProposal[] = [];
+	let proposalApplyErrors: Record<string, string> = {};
+	let applyingProposalId: string | null = null;
 	let highlightedTaskIds: string[] = [];
+	let boardSearchActive = false;
+	let boardSearchQuery = '';
 	let projectRailCompact = true;
+
+	const projectSwitchFadeIn = { duration: 200 };
+	const projectSwitchFadeOut = { duration: 150 };
 	let showProjectSheet = false;
 	let desktopChatWidth = DESKTOP_CHAT_WIDTH;
 	let desktopChatCollapsed = true;
@@ -268,6 +285,13 @@
 	$: currentProject = projects.find((project) => project.id === currentProjectId) || null;
 	$: activeAiSession = currentProject ? getActiveProjectAiSession(currentProject) : null;
 	$: activeAiModelId = activeAiSession?.modelId || settings.preferredAiModelId || DEFAULT_AI_MODEL_ID;
+	$: if (activeAiModelId && activeAiModelId !== lastSyncedAiThinkingModelId) {
+		const model = aiModels.find((entry) => entry.id === activeAiModelId);
+		if (model) {
+			aiThinkingLevel = defaultThinkingLevelForModel(model);
+			lastSyncedAiThinkingModelId = activeAiModelId;
+		}
+	}
 	$: currentBoardId = currentProject?.activeBoardId || '';
 	$: currentPageId = currentProject?.activePageId || '';
 	$: currentPage = currentProject ? getProjectPage(currentProject, currentPageId) : null;
@@ -345,6 +369,7 @@
 		currentBoardHistory &&
 		(currentBoardHistory.past.length || currentBoardHistory.future.length)
 	);
+	$: showBoardSearchControls = Boolean(currentProject && visibleWorkspaceTab === 'kanban');
 	$: boardBackgroundActive = Boolean(
 		currentProject?.backgroundTheme && isBoardWorkspaceTab(visibleWorkspaceTab)
 	);
@@ -387,12 +412,43 @@
 		}));
 		return [...taskRefs, ...memberRefs, ...columnRefs];
 	})();
-	$: requiresUsername = false;
+	$: requiresUsername =
+		Boolean(user) &&
+		profileLoaded &&
+		!authHydrating &&
+		!workspaceHydrating &&
+		!normalizeUsername(profile?.username);
 	$: void ensureBackgroundSignedUrl('personal', settings.backgroundTheme);
 	$: void ensureBackgroundSignedUrl('project', currentProject?.backgroundTheme ?? null);
 	function isBoardWorkspaceTab(tab: WorkspaceTab) {
 		return tab === 'kanban' || tab === 'scratchpad' || tab === 'chat';
 	}
+
+	const isEditableKeyboardTarget = (target: EventTarget | null) => {
+		const element = target as HTMLElement | null;
+		if (!element) return false;
+		return Boolean(
+			element.closest('input, textarea, select, [contenteditable="true"], [contenteditable=""]')
+		);
+	};
+
+	const closeBoardSearch = () => {
+		boardSearchActive = false;
+		boardSearchQuery = '';
+	};
+
+	$: if (!showBoardSearchControls && (boardSearchActive || boardSearchQuery)) {
+		closeBoardSearch();
+	}
+
+	const handleWorkspaceKeydown = (event: KeyboardEvent) => {
+		if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'f') {
+			if (!showBoardSearchControls) return;
+			if (isEditableKeyboardTarget(event.target)) return;
+			event.preventDefault();
+			boardSearchActive = true;
+		}
+	};
 
 	function getWorkspaceTitle(tab: WorkspaceTab, project: Project | null) {
 		if (tab === 'dashboard') return 'Dashboard';
@@ -424,10 +480,17 @@
 		hasKeyWithPrefix(pendingBoardSyncs.keys(), `${projectId}::board::`);
 	const hasPendingPageSyncForProject = (projectId: string) =>
 		hasKeyWithPrefix(pendingScratchpadSyncs.keys(), `${projectId}::page::`);
-	const compareProjects = (left: Project, right: Project) =>
-		left.name.localeCompare(right.name, undefined, { sensitivity: 'base' }) ||
-		right.updatedAt - left.updatedAt ||
-		left.id.localeCompare(right.id);
+	const compareProjects = (left: Project, right: Project) => {
+		const leftPinned = left.viewerPinnedAt ?? 0;
+		const rightPinned = right.viewerPinnedAt ?? 0;
+		if (leftPinned !== rightPinned) return rightPinned - leftPinned;
+
+		return (
+			left.name.localeCompare(right.name, undefined, { sensitivity: 'base' }) ||
+			right.updatedAt - left.updatedAt ||
+			left.id.localeCompare(right.id)
+		);
+	};
 	const sortProjects = (nextProjects: Project[]) => [...nextProjects].sort(compareProjects);
 	const resolveCurrentProjectId = (nextProjects: Project[], preferredProjectId: string) =>
 		nextProjects.some((project) => project.id === preferredProjectId)
@@ -476,6 +539,20 @@
 		email: currentUser.email || null,
 		username: null
 	});
+	const resolveProfileAfterFetch = (
+		currentUser: User,
+		profileResult: PromiseSettledResult<UserProfile>
+	) => {
+		if (profileResult.status === 'fulfilled') {
+			return profileResult.value;
+		}
+
+		if (profile?.userId === currentUser.id) {
+			return profile;
+		}
+
+		return createFallbackUserProfile(currentUser);
+	};
 	const setUsernameStatus = (state: UsernameAvailabilityState, message: string) => {
 		usernameAvailability = state;
 		usernameFeedback = message;
@@ -587,19 +664,11 @@
 		settingsSection = nextSection;
 	};
 	const isProposalStaleForProject = (proposal: PendingProposal, project: Project) => {
-		const currentRevision = getProjectRevisionState(project.id);
-
 		if (proposal.target === 'kanban') {
-			return (
-				currentRevision.kanban > proposal.baseRevision ||
-				getKanbanFingerprint(project.kanbanData) !== proposal.baseFingerprint
-			);
+			return getKanbanFingerprint(project.kanbanData) !== proposal.baseFingerprint;
 		}
 
-		return (
-			currentRevision.scratchpad > proposal.baseRevision ||
-			getScratchpadFingerprint(project.scratchpadData) !== proposal.baseFingerprint
-		);
+		return getScratchpadFingerprint(project.scratchpadData) !== proposal.baseFingerprint;
 	};
 	const refreshPendingProposalStaleness = (nextProjects = projects) => {
 		pendingProposals = pendingProposals.map((proposal) => {
@@ -711,13 +780,23 @@
 		}));
 
 	const appendAiProgressEvent = (event: AiProgressEvent) => {
-		aiProgressEvents =
-			event.kind === 'status'
-				? [
-						...aiProgressEvents.filter((existingEvent) => existingEvent.kind !== 'status'),
-						event
-					].slice(-12)
-				: [...aiProgressEvents, event].slice(-12);
+		if (event.kind === 'status') {
+			aiProgressEvents = [
+				...aiProgressEvents.filter((existingEvent) => existingEvent.kind !== 'status'),
+				event
+			].slice(-24);
+			return;
+		}
+
+		if (event.kind === 'thinking' || event.kind === 'assistant_draft') {
+			const withoutSame = aiProgressEvents.filter(
+				(existingEvent) => !(existingEvent.kind === event.kind && existingEvent.id === event.id)
+			);
+			aiProgressEvents = [...withoutSame, event].slice(-24);
+			return;
+		}
+
+		aiProgressEvents = [...aiProgressEvents, event].slice(-24);
 	};
 
 	const getAttachmentSignature = (attachment: ChatAttachment) =>
@@ -1081,6 +1160,7 @@
 		currentProjectId = '';
 		settings = structuredClone(DEFAULT_SETTINGS);
 		profile = null;
+		profileLoaded = false;
 		settingsSection = 'appearance';
 		dirtySettings = false;
 		usernameDraft = '';
@@ -1524,7 +1604,9 @@
 		workspaceHydrating = true;
 		workspaceError = '';
 		const localSnapshot = loadWorkspaceSnapshot(currentUser.id);
-		syncUsernameDraftFromProfile(createFallbackUserProfile(currentUser));
+		if (!profile || profile.userId !== currentUser.id) {
+			syncUsernameDraftFromProfile(createFallbackUserProfile(currentUser));
+		}
 
 		if (localSnapshot) {
 			applyWorkspaceState({
@@ -1604,16 +1686,26 @@
 				nextLastSuccessfulSyncAt: localSnapshot?.lastSuccessfulSyncAt
 			});
 
-			syncUsernameDraftFromProfile(
-				profileResult.status === 'fulfilled' ? profileResult.value : createFallbackUserProfile(currentUser)
-			);
+			syncUsernameDraftFromProfile(resolveProfileAfterFetch(currentUser, profileResult));
 		} catch (error) {
 			console.error(error);
 			workspaceError = error instanceof Error ? error.message : 'Unable to load your workspace.';
 		} finally {
 			if (loadVersion === workspaceLoadVersion) {
 				workspaceHydrating = false;
+				profileLoaded = true;
 			}
+		}
+	};
+
+	const refreshUserProfile = async (currentUser: User) => {
+		try {
+			const nextProfile = await fetchUserProfile(currentUser.id);
+			if (user?.id !== currentUser.id) return;
+			syncUsernameDraftFromProfile(nextProfile);
+			profileLoaded = true;
+		} catch (error) {
+			console.error(error);
 		}
 	};
 
@@ -1679,6 +1771,9 @@
 		if (workspaceHydrating || Boolean(workspaceError)) {
 			void bootstrapWorkspace(user);
 			return;
+		}
+		if (!normalizeUsername(profile?.username)) {
+			void refreshUserProfile(user);
 		}
 		void refreshWorkspaceFromRemote(user);
 	};
@@ -2311,6 +2406,36 @@
 		}
 	};
 
+	const handleToggleProjectPin = async (projectId: string, pinned: boolean) => {
+		const project = projects.find((entry) => entry.id === projectId);
+		if (!project) return;
+
+		const previousProjects = projects;
+		const pinnedAt = pinned ? Date.now() : undefined;
+		applyWorkspaceState({
+			nextProjects: sortProjects(
+				previousProjects.map((entry) =>
+					entry.id === projectId ? { ...entry, viewerPinnedAt: pinnedAt } : entry
+				)
+			),
+			preferredProjectId: currentProjectId
+		});
+
+		try {
+			await runSyncAction(
+				() => setProjectPinned(projectId, pinned),
+				pinned ? 'Unable to pin this board right now.' : 'Unable to unpin this board right now.'
+			);
+			scheduleSnapshotPersist();
+		} catch (error) {
+			console.error(error);
+			applyWorkspaceState({
+				nextProjects: previousProjects,
+				preferredProjectId: currentProjectId
+			});
+		}
+	};
+
 	const handleSettingsChange = (nextSettings: UserSettings) => {
 		settings = normalizeAiSettings(nextSettings);
 		dirtySettings = true;
@@ -2585,6 +2710,11 @@
 
 	const handleAiModelChange = (modelId: AiModelId) => {
 		const nextModelId = normalizePreferredAiModelId(modelId);
+		const nextModel = aiModels.find((entry) => entry.id === nextModelId);
+		if (nextModel) {
+			aiThinkingLevel = defaultThinkingLevelForModel(nextModel);
+			lastSyncedAiThinkingModelId = nextModelId;
+		}
 		handleSettingsChange({
 			...settings,
 			preferredAiModelId: nextModelId
@@ -2841,7 +2971,6 @@
 						...proposal,
 						projectId: projectSnapshot.id,
 						stale:
-							getProjectRevisionState(projectSnapshot.id).kanban > proposal.baseRevision ||
 							getKanbanFingerprint(projectSnapshot.kanbanData) !== proposal.baseFingerprint,
 						originalKanbanData: structuredClone(projectSnapshot.kanbanData)
 					}
@@ -2849,8 +2978,8 @@
 						...proposal,
 						projectId: projectSnapshot.id,
 						stale:
-							getProjectRevisionState(projectSnapshot.id).scratchpad > proposal.baseRevision ||
-							getScratchpadFingerprint(projectSnapshot.scratchpadData) !== proposal.baseFingerprint,
+							getScratchpadFingerprint(projectSnapshot.scratchpadData) !==
+							proposal.baseFingerprint,
 						originalScratchpadState: structuredClone(projectSnapshot.scratchpadData)
 					}
 		);
@@ -2922,18 +3051,41 @@
 		const proposal = activePendingProposals.find((entry) => entry.id === proposalId);
 		if (!proposal) return;
 
+		applyingProposalId = proposalId;
+		const nextErrors = { ...proposalApplyErrors };
+		delete nextErrors[proposalId];
+		proposalApplyErrors = nextErrors;
+
 		refreshPendingProposalStaleness();
 		const nextProject = projects.find((entry) => entry.id === currentProject.id) || currentProject;
 		const refreshedProposal = pendingProposals.find((entry) => entry.id === proposalId) || proposal;
-		if (!nextProject) return;
+		if (!nextProject) {
+			applyingProposalId = null;
+			return;
+		}
+
+		let applied = false;
+		let applyError = '';
 
 		if (refreshedProposal.target === 'kanban') {
 			logWorkspaceAiProposalDebug('accept:start', nextProject.id, refreshedProposal, {
-				currentFingerprint: getKanbanFingerprint(nextProject.kanbanData)
+				currentFingerprint: getKanbanFingerprint(nextProject.kanbanData),
+				stale: refreshedProposal.stale
 			});
-			const applied = applyLocalKanbanChange(nextProject, refreshedProposal.preview.kanbanData, {
-				syncDelay: 0
-			});
+			if (!nextProject.activeBoardId) {
+				applyError = 'No active board is selected for this project.';
+			} else {
+				applied = applyLocalKanbanChange(nextProject, refreshedProposal.preview.kanbanData, {
+					syncDelay: 0
+				});
+				if (!applied) {
+					applyError =
+						'Could not apply board changes. The board may already match the preview, or the change could not be saved.';
+				} else {
+					desktopWorkspaceTab = 'kanban';
+					mobileTab = 'kanban';
+				}
+			}
 			const updatedProject =
 				projects.find((entry) => entry.id === nextProject.id) || nextProject;
 			logWorkspaceAiProposalDebug('accept:finish', nextProject.id, refreshedProposal, {
@@ -2943,11 +3095,7 @@
 					getKanbanFingerprint(updatedProject.kanbanData) ===
 					getKanbanFingerprint(refreshedProposal.preview.kanbanData)
 			});
-			desktopWorkspaceTab = 'kanban';
-			mobileTab = 'kanban';
-		}
-
-		if (refreshedProposal.target === 'scratchpad') {
+		} else if (refreshedProposal.target === 'scratchpad') {
 			const nextScratchpadState = refreshedProposal.preview.scratchpadState;
 			const targetPadId = refreshedProposal.padId || nextScratchpadState.activePadId;
 			const nextPad =
@@ -2955,32 +3103,48 @@
 				getActiveScratchpadPad(nextScratchpadState);
 			const nextContent = nextPad?.content || '';
 			const pageId = nextPad?.id || nextProject.activePageId;
-			if (!pageId) return;
-
-			logWorkspaceAiProposalDebug('accept:start', nextProject.id, refreshedProposal, {
-				currentFingerprint: getScratchpadFingerprint(nextProject.scratchpadData),
-				targetPageId: pageId,
-				currentActivePageId: nextProject.activePageId
-			});
-			const updateResult = updateProjectLocal(nextProject.id, (project) =>
-				updateProjectPageState(setProjectActivePage(project, pageId), pageId, nextContent)
-			);
-			if (updateResult) {
-				bumpProjectRevision(nextProject.id, 'scratchpad');
-				scheduleScratchpadSync(nextProject.id, pageId, nextContent, 0);
+			if (!pageId) {
+				applyError = 'Could not find the page to update.';
+			} else {
+				logWorkspaceAiProposalDebug('accept:start', nextProject.id, refreshedProposal, {
+					currentFingerprint: getScratchpadFingerprint(nextProject.scratchpadData),
+					targetPageId: pageId,
+					currentActivePageId: nextProject.activePageId,
+					stale: refreshedProposal.stale
+				});
+				const updateResult = updateProjectLocal(nextProject.id, (project) =>
+					updateProjectPageState(setProjectActivePage(project, pageId), pageId, nextContent)
+				);
+				applied = Boolean(updateResult);
+				if (applied) {
+					bumpProjectRevision(nextProject.id, 'scratchpad');
+					scheduleScratchpadSync(nextProject.id, pageId, nextContent, 0);
+					desktopWorkspaceTab = 'scratchpad';
+					mobileTab = 'scratchpad';
+				} else {
+					applyError = 'Could not apply page changes.';
+				}
+				const updatedProject =
+					projects.find((entry) => entry.id === nextProject.id) || nextProject;
+				logWorkspaceAiProposalDebug('accept:finish', nextProject.id, refreshedProposal, {
+					applied,
+					targetPageId: pageId,
+					resultFingerprint: getScratchpadFingerprint(updatedProject.scratchpadData),
+					resultMatchesPreview:
+						getScratchpadFingerprint(updatedProject.scratchpadData) ===
+						getScratchpadFingerprint(refreshedProposal.preview.scratchpadState)
+				});
 			}
-			const updatedProject =
-				projects.find((entry) => entry.id === nextProject.id) || nextProject;
-			logWorkspaceAiProposalDebug('accept:finish', nextProject.id, refreshedProposal, {
-				applied: Boolean(updateResult),
-				targetPageId: pageId,
-				resultFingerprint: getScratchpadFingerprint(updatedProject.scratchpadData),
-				resultMatchesPreview:
-					getScratchpadFingerprint(updatedProject.scratchpadData) ===
-					getScratchpadFingerprint(refreshedProposal.preview.scratchpadState)
-			});
-			desktopWorkspaceTab = 'scratchpad';
-			mobileTab = 'scratchpad';
+		}
+
+		applyingProposalId = null;
+
+		if (!applied) {
+			proposalApplyErrors = {
+				...proposalApplyErrors,
+				[proposalId]: applyError || 'Could not apply changes.'
+			};
+			return;
 		}
 
 		updateProjectLocal(nextProject.id, (project) => ({
@@ -2994,6 +3158,9 @@
 		scheduleChatSync(nextProject.id, 0);
 
 		pendingProposals = pendingProposals.filter((entry) => entry.id !== refreshedProposal.id);
+		const remainingErrors = { ...proposalApplyErrors };
+		delete remainingErrors[proposalId];
+		proposalApplyErrors = remainingErrors;
 		if (proposalPreviewTarget === refreshedProposal.target) {
 			proposalPreviewTarget = null;
 		}
@@ -3131,7 +3298,9 @@
 				},
 				annotations: response.annotations,
 				toolActions: response.toolActions,
-				progressEvents: aiProgressEvents.filter((e) => e.kind !== 'assistant_draft'),
+				progressEvents: aiProgressEvents.filter(
+					(e) => e.kind !== 'assistant_draft' && e.kind !== 'thinking'
+				),
 				...(response.question ? { question: response.question } : {}),
 				usage: response.usage,
 				...(response.stoppedReason ? { stoppedReason: response.stoppedReason } : {})
@@ -3451,11 +3620,17 @@
 		}
 
 		user = nextUser;
-		syncUsernameDraftFromProfile(createFallbackUserProfile(nextUser));
+		const userChanged = previousUserId !== nextUser.id;
+		if (userChanged) {
+			profileLoaded = false;
+			syncUsernameDraftFromProfile(createFallbackUserProfile(nextUser));
+		}
 		authHydrating = false;
 
 		if (shouldReloadWorkspaceForAuthEvent(event, previousUserId, nextUser)) {
 			scheduleWorkspaceReload(nextUser);
+		} else if (!normalizeUsername(profile?.username)) {
+			void refreshUserProfile(nextUser);
 		}
 	};
 
@@ -3526,7 +3701,11 @@
 	});
 </script>
 
-<svelte:window bind:innerWidth={viewportWidth} on:focus={recoverWorkspaceIfNeeded} />
+<svelte:window
+	bind:innerWidth={viewportWidth}
+	on:focus={recoverWorkspaceIfNeeded}
+	on:keydown={handleWorkspaceKeydown}
+/>
 
 <svelte:head>
 	<title>{currentProject ? `${currentProject.name} | Kainbu` : 'Kainbu'}</title>
@@ -3536,24 +3715,10 @@
 	<div
 		class="relative flex min-h-[100dvh] items-center justify-center overflow-hidden bg-app-bg pt-[var(--safe-top)] pb-[var(--safe-bottom)] pl-[var(--safe-left)] pr-[var(--safe-right)] text-app-text"
 	>
-		<div class="absolute inset-0 bg-kainbu-grid opacity-35"></div>
-		<div
-			class="absolute left-[-8%] top-[-10%] h-[26rem] w-[26rem] rounded-full bg-app-primary/12 blur-[110px]"
-		></div>
-		<div
-			class="absolute bottom-[-12%] right-[-6%] h-[24rem] w-[24rem] rounded-full bg-app-accent/12 blur-[120px]"
-		></div>
-		<div
-			class="relative flex flex-col items-center gap-4 rounded-[1.8rem] border border-app-border bg-app-surface/88 px-8 py-7 shadow-kainbu-xl"
-		>
-			<BrandMark size={58} alt="" />
-			<LoaderCircle size={28} class="animate-spin text-app-primary" />
-			<div class="text-center">
-				<p class="text-[10px] font-bold uppercase tracking-[0.32em] text-app-primary">Kainbu</p>
-				<p class="mt-2 text-sm text-app-subtext">
-					Restoring your workspace, invites, and shared boards.
-				</p>
-			</div>
+		<div class="absolute inset-0 bg-kainbu-grid opacity-20"></div>
+		<div class="relative flex items-center gap-3 text-app-subtext">
+			<LoaderCircle size={18} class="animate-spin text-app-primary" />
+			<span class="text-sm">Restoring workspace…</span>
 		</div>
 	</div>
 {:else if !user}
@@ -3612,7 +3777,7 @@
 							{#if isMobile}
 								<button
 									type="button"
-									class="inline-flex h-10 w-10 items-center justify-center rounded-[0.95rem] border border-app-border bg-app-element text-app-text transition hover:border-app-primary/35 hover:text-app-primary"
+									class="inline-flex h-10 w-10 items-center justify-center rounded-md border border-app-border bg-app-element text-app-text transition hover:border-app-primary/35 hover:text-app-primary"
 									on:click={() => (showProjectSheet = true)}
 									aria-label="Open workspace menu"
 									title="Open workspace menu"
@@ -3698,13 +3863,36 @@
 								</div>
 							{/if}
 
+							{#if showBoardSearchControls}
+								<button
+									type="button"
+									class={`inline-flex h-8 w-8 items-center justify-center rounded-md border transition ${
+										boardSearchActive
+											? 'border-app-primary/35 bg-app-primary/10 text-app-primary'
+											: 'border-app-border bg-app-element/80 text-app-subtext hover:bg-app-bg/80 hover:text-app-text'
+									}`}
+									title={boardSearchActive ? 'Close card search' : 'Search cards (Ctrl+F)'}
+									aria-label={boardSearchActive ? 'Close card search' : 'Search cards'}
+									aria-pressed={boardSearchActive}
+									on:click={() => {
+										if (boardSearchActive) {
+											closeBoardSearch();
+											return;
+										}
+										boardSearchActive = true;
+									}}
+								>
+									<Search size={16} />
+								</button>
+							{/if}
+
 							{#if showBoardHistoryControls}
 								<div
-									class="inline-flex items-center rounded-[1rem] border border-app-border bg-app-element/80 p-1"
+									class="inline-flex items-center rounded-lg border border-app-border bg-app-element/80 p-1"
 								>
 									<button
 										type="button"
-										class={`inline-flex h-8 w-8 items-center justify-center rounded-[0.8rem] transition ${
+										class={`inline-flex h-8 w-8 items-center justify-center rounded-md transition ${
 											canUndoBoardHistory && proposalPreviewTarget !== 'kanban'
 												? 'text-app-subtext hover:bg-app-bg/80 hover:text-app-text'
 												: 'cursor-not-allowed text-app-subtext/40'
@@ -3722,7 +3910,7 @@
 									</button>
 									<button
 										type="button"
-										class={`inline-flex h-8 w-8 items-center justify-center rounded-[0.8rem] transition ${
+										class={`inline-flex h-8 w-8 items-center justify-center rounded-md transition ${
 											canRedoBoardHistory && proposalPreviewTarget !== 'kanban'
 												? 'text-app-subtext hover:bg-app-bg/80 hover:text-app-text'
 												: 'cursor-not-allowed text-app-subtext/40'
@@ -3746,7 +3934,7 @@
 							{#if isMobile}
 								<button
 									type="button"
-									class="inline-flex h-10 w-10 items-center justify-center rounded-[0.95rem] border border-app-border bg-app-element text-app-text"
+									class="inline-flex h-10 w-10 items-center justify-center rounded-md border border-app-border bg-app-element text-app-text"
 									on:click={handleSignOut}
 								>
 									<LogOut size={16} />
@@ -3758,7 +3946,7 @@
 					{#if workspaceError || syncErrorMessage || isRestoring}
 						<div class="space-y-2 px-3 pt-2 lg:px-4">
 							{#if workspaceError}
-								<div class="rounded-[1.2rem] border border-rose-500/25 bg-rose-500/10 px-4 py-3">
+								<div class="rounded-lg border border-rose-500/25 bg-rose-500/10 px-4 py-3">
 									<div class="flex flex-wrap items-center justify-between gap-3">
 										<div>
 											<p class="text-sm font-semibold text-rose-100">
@@ -3768,7 +3956,7 @@
 										</div>
 										<button
 											type="button"
-											class="rounded-[0.95rem] border border-rose-300/25 bg-rose-500/10 px-3 py-2 text-sm font-semibold text-rose-100"
+											class="rounded-md border border-rose-300/25 bg-rose-500/10 px-3 py-2 text-sm font-semibold text-rose-100"
 											on:click={handleRetryInitialization}
 										>
 											Retry
@@ -3779,7 +3967,7 @@
 
 							{#if syncErrorMessage}
 								<div
-									class="rounded-[1.2rem] border border-amber-500/25 bg-amber-500/10 px-4 py-3 text-sm text-amber-100"
+									class="rounded-lg border border-amber-500/25 bg-amber-500/10 px-4 py-3 text-sm text-amber-100"
 								>
 									{syncErrorMessage}
 								</div>
@@ -3787,7 +3975,7 @@
 
 							{#if isRestoring}
 								<div
-									class="rounded-[1.2rem] border border-app-primary/25 bg-app-primary/10 px-4 py-3 text-sm text-app-text"
+									class="rounded-lg border border-app-primary/25 bg-app-primary/10 px-4 py-3 text-sm text-app-text"
 								>
 									Restoring boards from backup. Shared board data is being recreated now.
 								</div>
@@ -3797,18 +3985,9 @@
 
 					{#if workspaceHydrating && projects.length === 0}
 						<div class="flex min-h-0 flex-1 items-center justify-center p-6">
-							<div
-								class="flex max-w-md flex-col items-center gap-4 rounded-[1.8rem] border border-app-border bg-app-surface/88 px-8 py-7 text-center shadow-kainbu-xl"
-							>
-								<BrandMark size={58} alt="" />
-								<LoaderCircle size={26} class="animate-spin text-app-primary" />
-								<div>
-									<p class="font-display text-2xl font-bold text-app-text">Loading your boards</p>
-									<p class="mt-2 text-sm leading-relaxed text-app-subtext">
-										Pulling shared projects, private chat history, invites, and due dates into
-										place.
-									</p>
-								</div>
+							<div class="flex items-center gap-3 text-app-subtext">
+								<LoaderCircle size={18} class="animate-spin text-app-primary" />
+								<span class="text-sm">Loading boards…</span>
 							</div>
 						</div>
 					{:else}
@@ -3831,27 +4010,43 @@
 											onLeaveProject={handleLeaveProject}
 											onRenameProject={handleRenameProject}
 											onDeleteProject={handleDeleteProject}
+											onToggleProjectPin={handleToggleProjectPin}
 											onClearTimedTaskDue={handleClearTimedTaskDue}
 										/>
 									{:else if mobileTab === 'kanban' && currentProject}
-										<KanbanBoard
-											projectId={currentProject.id}
-											data={kanbanData}
-											comparisonData={kanbanComparisonData}
-											{highlightedTaskIds}
-											activeTaskId={activeTaskContext?.taskId}
-											isLocked={proposalPreviewTarget === 'kanban'}
-											defaultShowCheckbox={settings.defaultShowCheckbox}
-											active={mobileTab === 'kanban'}
-											members={currentProject.members}
-											onChange={handleKanbanChange}
-											onSendToChat={handleSendTaskToChat}
-											onActiveTaskChange={handleActiveTaskChange}
-											onTaskReferenceNavigate={handleTaskReferenceNavigate}
-											onAddAttachments={handleAddAttachments}
-										/>
+										{#key currentProjectId}
+											<div
+												class="absolute inset-0"
+												in:fade={projectSwitchFadeIn}
+												out:fade={projectSwitchFadeOut}
+											>
+												<KanbanBoard
+													projectId={currentProject.id}
+													data={kanbanData}
+													comparisonData={kanbanComparisonData}
+													{highlightedTaskIds}
+													activeTaskId={activeTaskContext?.taskId}
+													isLocked={proposalPreviewTarget === 'kanban'}
+													defaultShowCheckbox={settings.defaultShowCheckbox}
+													active={mobileTab === 'kanban'}
+													members={currentProject.members}
+													bind:boardSearchActive
+													bind:boardSearchQuery
+													onChange={handleKanbanChange}
+													onSendToChat={handleSendTaskToChat}
+													onActiveTaskChange={handleActiveTaskChange}
+													onTaskReferenceNavigate={handleTaskReferenceNavigate}
+													onAddAttachments={handleAddAttachments}
+												/>
+											</div>
+										{/key}
 									{:else if mobileTab === 'scratchpad' && currentProject}
-										<div class="absolute inset-0 flex flex-col">
+										{#key currentProjectId}
+											<div
+												class="absolute inset-0 flex flex-col"
+												in:fade={projectSwitchFadeIn}
+												out:fade={projectSwitchFadeOut}
+											>
 												<PagePane
 													title={currentPage?.name || 'Page'}
 													content={scratchpadContent}
@@ -3862,16 +4057,25 @@
 													onReferenceNavigate={handleScratchpadReferenceNavigate}
 													onChange={handleScratchpadChange}
 												/>
-										</div>
+											</div>
+										{/key}
 									{:else if mobileTab === 'chat' && currentProject}
-										<ChatPane
+										{#key currentProjectId}
+											<div
+												class="absolute inset-0"
+												in:fade={projectSwitchFadeIn}
+												out:fade={projectSwitchFadeOut}
+											>
+												<ChatPane
 											history={currentProject.chatHistory}
-											draft={composerDraft}
+											bind:draft={composerDraft}
 											{queuedAttachments}
 											{queuedTaskCards}
 											isProcessing={isAiProcessing}
 											processingEvents={aiProgressEvents}
 											pendingProposals={activePendingProposals}
+											{proposalApplyErrors}
+											{applyingProposalId}
 											activeProposalTarget={proposalPreviewTarget}
 											sessions={currentProject.aiSessions}
 											activeSessionId={currentProject.activeAiSessionId}
@@ -3896,7 +4100,9 @@
 											onAcceptProposal={handleAcceptProposal}
 											onRejectProposal={handleRejectProposal}
 											onAnswerQuestion={handleAnswerQuestion}
-										/>
+												/>
+											</div>
+										{/key}
 									{:else if mobileTab === 'settings'}
 										<SettingsView
 											section={settingsSection}
@@ -3925,7 +4131,7 @@
 									{:else}
 										<div class="flex h-full items-center justify-center p-6">
 											<div
-												class="max-w-sm rounded-[1.6rem] border border-dashed border-app-border bg-app-bg/70 p-6 text-center"
+												class="max-w-sm rounded-xl border border-dashed border-app-border bg-app-bg/70 p-6 text-center"
 											>
 												<BrandMark size={56} className="mx-auto" alt="" />
 												<p class="mt-4 font-display text-2xl font-bold text-app-text">
@@ -3938,14 +4144,14 @@
 												<div class="mt-4 flex justify-center gap-2">
 													<button
 														type="button"
-														class="rounded-[0.95rem] bg-app-primary px-4 py-2 text-sm font-semibold text-white"
+														class="rounded-md bg-app-primary px-4 py-2 text-sm font-semibold text-white"
 														on:click={() => setWorkspaceTab('dashboard')}
 													>
 														Go to dashboard
 													</button>
 													<button
 														type="button"
-														class="rounded-[0.95rem] border border-app-border bg-app-element px-4 py-2 text-sm font-semibold text-app-text"
+														class="rounded-md border border-app-border bg-app-element px-4 py-2 text-sm font-semibold text-app-text"
 														on:click={handleCreateProject}
 													>
 														New project
@@ -3973,27 +4179,43 @@
 											onLeaveProject={handleLeaveProject}
 											onRenameProject={handleRenameProject}
 											onDeleteProject={handleDeleteProject}
+											onToggleProjectPin={handleToggleProjectPin}
 											onClearTimedTaskDue={handleClearTimedTaskDue}
 										/>
 									{:else if desktopWorkspaceTab === 'kanban' && currentProject}
-										<KanbanBoard
-											projectId={currentProject.id}
-											data={kanbanData}
-											comparisonData={kanbanComparisonData}
-											{highlightedTaskIds}
-											activeTaskId={activeTaskContext?.taskId}
-											isLocked={proposalPreviewTarget === 'kanban'}
-											defaultShowCheckbox={settings.defaultShowCheckbox}
-											active={desktopWorkspaceTab === 'kanban'}
-											members={currentProject.members}
-											onChange={handleKanbanChange}
-											onSendToChat={handleSendTaskToChat}
-											onActiveTaskChange={handleActiveTaskChange}
-											onTaskReferenceNavigate={handleTaskReferenceNavigate}
-											onAddAttachments={handleAddAttachments}
-										/>
+										{#key currentProjectId}
+											<div
+												class="absolute inset-0"
+												in:fade={projectSwitchFadeIn}
+												out:fade={projectSwitchFadeOut}
+											>
+												<KanbanBoard
+													projectId={currentProject.id}
+													data={kanbanData}
+													comparisonData={kanbanComparisonData}
+													{highlightedTaskIds}
+													activeTaskId={activeTaskContext?.taskId}
+													isLocked={proposalPreviewTarget === 'kanban'}
+													defaultShowCheckbox={settings.defaultShowCheckbox}
+													active={desktopWorkspaceTab === 'kanban'}
+													members={currentProject.members}
+													bind:boardSearchActive
+													bind:boardSearchQuery
+													onChange={handleKanbanChange}
+													onSendToChat={handleSendTaskToChat}
+													onActiveTaskChange={handleActiveTaskChange}
+													onTaskReferenceNavigate={handleTaskReferenceNavigate}
+													onAddAttachments={handleAddAttachments}
+												/>
+											</div>
+										{/key}
 									{:else if desktopWorkspaceTab === 'scratchpad' && currentProject}
-										<div class="absolute inset-0 flex flex-col">
+										{#key currentProjectId}
+											<div
+												class="absolute inset-0 flex flex-col"
+												in:fade={projectSwitchFadeIn}
+												out:fade={projectSwitchFadeOut}
+											>
 												<PagePane
 													title={currentPage?.name || 'Page'}
 													content={scratchpadContent}
@@ -4004,7 +4226,8 @@
 													onReferenceNavigate={handleScratchpadReferenceNavigate}
 													onChange={handleScratchpadChange}
 												/>
-										</div>
+											</div>
+										{/key}
 									{:else if desktopWorkspaceTab === 'settings'}
 										<SettingsView
 											section={settingsSection}
@@ -4033,7 +4256,7 @@
 									{:else}
 										<div class="flex h-full items-center justify-center p-6">
 											<div
-												class="max-w-md rounded-[1.6rem] border border-dashed border-app-border bg-app-bg/70 p-6 text-center"
+												class="max-w-md rounded-xl border border-dashed border-app-border bg-app-bg/70 p-6 text-center"
 											>
 												<BrandMark size={56} className="mx-auto" alt="" />
 												<p class="mt-4 font-display text-2xl font-bold text-app-text">
@@ -4046,14 +4269,14 @@
 												<div class="mt-4 flex justify-center gap-2">
 													<button
 														type="button"
-														class="rounded-[0.95rem] bg-app-primary px-4 py-2 text-sm font-semibold text-white"
+														class="rounded-md bg-app-primary px-4 py-2 text-sm font-semibold text-white"
 														on:click={() => setWorkspaceTab('dashboard')}
 													>
 														Go to dashboard
 													</button>
 													<button
 														type="button"
-														class="rounded-[0.95rem] border border-app-border bg-app-element px-4 py-2 text-sm font-semibold text-app-text"
+														class="rounded-md border border-app-border bg-app-element px-4 py-2 text-sm font-semibold text-app-text"
 														on:click={handleCreateProject}
 													>
 														New project
@@ -4068,60 +4291,42 @@
 					{/if}
 
 					{#if isMobile}
+						{@const mobileTabs = [
+							{ id: 'dashboard', label: 'Home', Icon: LayoutDashboard },
+							{ id: 'kanban', label: 'Kanban', Icon: Sparkles },
+							{ id: 'scratchpad', label: 'Pages', Icon: NotebookPen },
+							{ id: 'chat', label: 'Chat', Icon: MessageSquare },
+							{ id: 'settings', label: 'Settings', Icon: Settings2 }
+						]}
+						{@const activeMobileIndex = Math.max(
+							0,
+							mobileTabs.findIndex((t) => t.id === mobileTab)
+						)}
 						<nav
-							class="border-t border-app-border bg-app-surface/92 px-2 pt-2 pb-[calc(0.5rem+var(--safe-bottom))] backdrop-blur-xl"
+							class="mx-3 mb-[calc(0.5rem+var(--safe-bottom))] mt-2 rounded-2xl border border-app-border/80 bg-app-surface/75 px-1.5 py-1.5 shadow-[0_8px_30px_-12px_rgba(0,0,0,0.65)] backdrop-blur-xl"
 						>
-							<div class="grid grid-cols-5 gap-1">
-								<button
-									type="button"
-									class={`inline-flex flex-col items-center justify-center gap-1 rounded-[1rem] px-1 py-2 text-[10px] font-semibold transition ${
-										mobileTab === 'dashboard' ? 'bg-app-primary text-white' : 'text-app-subtext'
-									}`}
-									on:click={() => setWorkspaceTab('dashboard')}
+							<div class="relative grid grid-cols-5">
+								<div
+									class="pointer-events-none absolute inset-y-0 left-0 w-1/5 px-1 transition-transform duration-300 ease-[cubic-bezier(.4,0,.2,1)]"
+									style={`transform: translateX(${activeMobileIndex * 100}%);`}
 								>
-									<LayoutDashboard size={16} />
-									Home
-								</button>
-								<button
-									type="button"
-									class={`inline-flex flex-col items-center justify-center gap-1 rounded-[1rem] px-1 py-2 text-[10px] font-semibold transition ${
-										mobileTab === 'kanban' ? 'bg-app-primary text-white' : 'text-app-subtext'
-									}`}
-									on:click={() => setWorkspaceTab('kanban')}
-								>
-									<Sparkles size={16} />
-									Kanban
-								</button>
-								<button
-									type="button"
-									class={`inline-flex flex-col items-center justify-center gap-1 rounded-[1rem] px-1 py-2 text-[10px] font-semibold transition ${
-										mobileTab === 'scratchpad' ? 'bg-app-primary text-white' : 'text-app-subtext'
-									}`}
-									on:click={() => setWorkspaceTab('scratchpad')}
-								>
-									<NotebookPen size={16} />
-									Pages
-								</button>
-								<button
-									type="button"
-									class={`inline-flex flex-col items-center justify-center gap-1 rounded-[1rem] px-1 py-2 text-[10px] font-semibold transition ${
-										mobileTab === 'chat' ? 'bg-app-primary text-white' : 'text-app-subtext'
-									}`}
-									on:click={() => setWorkspaceTab('chat')}
-								>
-									<MessageSquare size={16} />
-									Chat
-								</button>
-								<button
-									type="button"
-									class={`inline-flex flex-col items-center justify-center gap-1 rounded-[1rem] px-1 py-2 text-[10px] font-semibold transition ${
-										mobileTab === 'settings' ? 'bg-app-primary text-white' : 'text-app-subtext'
-									}`}
-									on:click={() => setWorkspaceTab('settings')}
-								>
-									<Settings2 size={16} />
-									Settings
-								</button>
+									<div
+										class="h-full w-full rounded-xl border border-app-primary/40 bg-app-primary/15"
+									></div>
+								</div>
+								{#each mobileTabs as tab (tab.id)}
+									{@const isActive = tab.id === mobileTab}
+									<button
+										type="button"
+										class={`relative z-10 inline-flex flex-col items-center justify-center gap-1 rounded-xl px-1 py-1.5 text-[10px] font-semibold transition-colors ${
+											isActive ? 'text-app-primary' : 'text-app-subtext hover:text-app-text'
+										}`}
+										on:click={() => setWorkspaceTab(tab.id as WorkspaceTab)}
+									>
+										<svelte:component this={tab.Icon} size={18} />
+										{tab.label}
+									</button>
+								{/each}
 							</div>
 						</nav>
 					{/if}
@@ -4131,12 +4336,18 @@
 					{#if desktopChatCollapsed}
 						<button
 							type="button"
-							class="absolute bottom-4 right-4 z-20 grid h-14 w-14 place-items-center rounded-full bg-app-primary text-white shadow-[0_18px_40px_-18px_rgba(0,0,0,0.85)] transition hover:scale-[1.03] hover:bg-app-primary-hover"
+							class="chat-orb group absolute bottom-5 right-5 z-20 grid h-16 w-16 place-items-center overflow-hidden rounded-full text-white transition-transform duration-200 hover:scale-[1.06]"
 							on:click={() => (desktopChatCollapsed = false)}
 							aria-label="Open chat sidebar"
 							title="Open chat sidebar"
 						>
-							<MessageSquare size={20} />
+							<span class="chat-orb__blob chat-orb__blob--a" aria-hidden="true"></span>
+							<span class="chat-orb__blob chat-orb__blob--b" aria-hidden="true"></span>
+							<span class="chat-orb__blob chat-orb__blob--c" aria-hidden="true"></span>
+							<Icon
+								icon="gravity-ui:circles-concentric"
+								class="chat-orb__icon relative z-10 h-7 w-7"
+							/>
 						</button>
 					{:else}
 						<div
@@ -4147,14 +4358,22 @@
 								class="absolute left-0 top-0 z-60 h-full w-2 cursor-col-resize transition hover:bg-app-primary/20"
 								on:pointerdown={handleDesktopChatResizeStart}
 							></div>
-							<ChatPane
+							{#key currentProjectId}
+								<div
+									class="absolute inset-0"
+									in:fade={projectSwitchFadeIn}
+									out:fade={projectSwitchFadeOut}
+								>
+									<ChatPane
 								history={currentProject.chatHistory}
-								draft={composerDraft}
+								bind:draft={composerDraft}
 								{queuedAttachments}
 								{queuedTaskCards}
 								isProcessing={isAiProcessing}
 								processingEvents={aiProgressEvents}
 								pendingProposals={activePendingProposals}
+								{proposalApplyErrors}
+								{applyingProposalId}
 								activeProposalTarget={proposalPreviewTarget}
 								sessions={currentProject.aiSessions}
 								activeSessionId={currentProject.activeAiSessionId}
@@ -4180,7 +4399,9 @@
 								onRejectProposal={handleRejectProposal}
 								onAnswerQuestion={handleAnswerQuestion}
 								onCollapseSidebar={() => (desktopChatCollapsed = true)}
-							/>
+									/>
+								</div>
+							{/key}
 						</div>
 					{/if}
 				{/if}

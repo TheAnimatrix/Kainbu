@@ -253,6 +253,30 @@ export const handleWorkspaceTouchProjectRequest = async (
 	return { ok: true };
 };
 
+export const handleWorkspacePinProjectRequest = async (
+	body: WorkspaceProjectRequest & { pinned?: boolean },
+	authorization: string | undefined
+) => {
+	const userId = await getAuthenticatedUserId(authorization);
+	const admin = createAdminSupabaseClient();
+	const projectId = requireString(body.projectId, 'projectId');
+	const pinned = body.pinned === true;
+
+	await ensureMembership(admin, projectId, userId);
+
+	const { error } = await admin
+		.from('project_memberships')
+		.update({
+			pinned_at: pinned ? new Date().toISOString() : null
+		})
+		.eq('project_id', projectId)
+		.eq('user_id', userId);
+
+	if (error) throw error;
+
+	return { ok: true, pinned };
+};
+
 export const handleWorkspaceScratchpadRequest = async (
 	body: WorkspaceScratchpadRequest,
 	authorization: string | undefined
