@@ -7,6 +7,8 @@ node_modules
 .wrangler
 /.svelte-kit
 /build
+/api/index.js
+/api/index.js.map
 /.tmp
 /keys
 /app-release.apk

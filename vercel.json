@@ -3,7 +3,6 @@
 	"outputDirectory": "build",
 	"functions": {
 		"api/index.js": {
-			"includeFiles": "server/**/*",
 			"maxDuration": 60
 		}
 	},
