@@ -28,7 +28,10 @@
 		"lint": "eslint . && prettier --check .",
 		"format": "prettier --write .",
 		"setup": "node setup.js",
-		"test:deploy": "vitest run tests/deploy.test.ts"
+		"test:deploy": "vitest run tests/deploy.test.ts",
+		"cli:build": "npm run build --workspace=kainbu",
+		"cli:link": "npm run build --workspace=kainbu && npm link --workspace=kainbu",
+		"test:cli": "vitest run tests/cliContext.test.ts tests/cliBoardList.test.ts tests/cliDeviceAuth.test.ts"
 	},
 	"devDependencies": {
 		"@capacitor/assets": "^3.0.5",
@@ -66,6 +69,7 @@
 		"@capacitor/core": "^7.4.4",
 		"@codetrix-studio/capacitor-google-auth": "^3.4.0-rc.4",
 		"@hono/node-server": "^1.19.11",
+		"@iconify/svelte": "^5.2.1",
 		"@supabase/supabase-js": "^2.86.0",
 		"@sveltejs/adapter-static": "^3.0.10",
 		"@tiptap/core": "^3.22.2",

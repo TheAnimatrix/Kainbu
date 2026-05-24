@@ -2,7 +2,15 @@ import { cors } from 'hono/cors';
 import { Hono, type Context } from 'hono';
 import type { AiWorkspaceRequest, AiWorkspaceStreamEvent } from '../src/lib/kainbu/types.js';
 import type { BackgroundTheme } from '../src/lib/kainbu/types.js';
+import { DEFAULT_AI_MODEL_CONFIGS } from '../src/lib/kainbu/models.js';
+import { getEnv } from './env.js';
 import { getWorkspaceAiModels, handleWorkspaceAiRequest } from './workspace-ai.js';
+import {
+	handleCliDeviceApprove,
+	handleCliDeviceExchange,
+	handleCliDevicePoll,
+	handleCliDeviceStart
+} from './cli-auth.js';
 import {
 	handleWorkspaceCancelInviteRequest,
 	handleWorkspaceCreateInviteRequest,
@@ -12,6 +20,7 @@ import {
 	handleWorkspaceRespondInviteRequest,
 	handleWorkspaceScratchpadRequest,
 	handleWorkspaceTouchProjectRequest,
+	handleWorkspacePinProjectRequest,
 	toWorkspaceApiError
 } from './workspace.js';
 
@@ -28,13 +37,33 @@ const apiRootPayload = {
 		'/api/health',
 		'/api/models',
 		'/api/workspace-ai',
+		'/api/workspace-ai/session-title',
+		'/api/workspace-ai/task-title',
 		'/api/workspace-ai/stream',
 		'/api/workspace/projects/touch',
+		'/api/workspace/projects/pin',
 		'/api/workspace/projects/background',
 		'/api/workspace/projects/scratchpad',
 		'/api/workspace/...'
 	]
 };
+const methodNotAllowedPayload = { error: 'Method Not Allowed' };
+const UTILITY_AI_MODEL = DEFAULT_AI_MODEL_CONFIGS[0]?.model || 'google/gemini-3-flash-preview:nitro';
+const SESSION_TITLE_MAX_TOKENS = 20;
+const SESSION_TITLE_SYSTEM_PROMPT =
+	'Generate a short title (3-6 words) for this conversation. Return only the title, no quotes or punctuation.';
+
+const TASK_TITLE_MAX_TOKENS = 48;
+const TASK_TITLE_MAX_LENGTH = 120;
+const TASK_TITLE_SYSTEM_PROMPT =
+	'Rewrite this Kanban task title so it is clearer, specific, and actionable. Return only the rewritten title with no quotes, markdown list syntax, or extra commentary.';
+
+const normalizeUtilityModelText = (value: string) =>
+	value
+		.trim()
+		.replace(/^["'`]+|["'`]+$/g, '')
+		.replace(/^[-*+]\s+\[[ xX]\]\s+/i, '')
+		.trim();
 
 app.use(
 	'*',
@@ -56,6 +85,83 @@ const handleWorkspaceMutationError = (c: Context, error: unknown) => {
 	return c.json({ error: message }, status as 400 | 401 | 403 | 404 | 409 | 500);
 };
 
+const methodNotAllowed = (c: Context) => c.json(methodNotAllowedPayload, 405);
+
+const generateSessionTitle = async (userMessage: string, assistantReply: string) => {
+	const apiKey = getEnv('OPENROUTER_API_KEY', '');
+	if (!apiKey) throw new Error('Missing OPENROUTER_API_KEY');
+
+	const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+		method: 'POST',
+		headers: {
+			'Content-Type': 'application/json',
+			Authorization: `Bearer ${apiKey}`,
+			'HTTP-Referer': 'https://kainbu.app',
+			'X-Title': 'Kainbu'
+		},
+		body: JSON.stringify({
+			model: UTILITY_AI_MODEL,
+			max_tokens: SESSION_TITLE_MAX_TOKENS,
+			messages: [
+				{ role: 'system', content: SESSION_TITLE_SYSTEM_PROMPT },
+				{
+					role: 'user',
+					content: `User: ${userMessage}\n\nAssistant: ${assistantReply}`
+				}
+			]
+		})
+	});
+
+	if (!response.ok) {
+		throw new Error(`OpenRouter error: ${await response.text()}`);
+	}
+
+	const data = (await response.json()) as {
+		choices?: Array<{ message?: { content?: string } }>;
+	};
+	return normalizeUtilityModelText(data.choices?.[0]?.message?.content || '');
+};
+
+const generateTaskTitle = async (
+	title: string,
+	description: string,
+	columnTitle: string
+) => {
+	const apiKey = getEnv('OPENROUTER_API_KEY', '');
+	if (!apiKey) throw new Error('Missing OPENROUTER_API_KEY');
+
+	const contextLines = [`Current title: ${title}`];
+	if (columnTitle) contextLines.push(`Column: ${columnTitle}`);
+	if (description) contextLines.push(`Description:\n${description}`);
+
+	const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+		method: 'POST',
+		headers: {
+			'Content-Type': 'application/json',
+			Authorization: `Bearer ${apiKey}`,
+			'HTTP-Referer': 'https://kainbu.app',
+			'X-Title': 'Kainbu'
+		},
+		body: JSON.stringify({
+			model: UTILITY_AI_MODEL,
+			max_tokens: TASK_TITLE_MAX_TOKENS,
+			messages: [
+				{ role: 'system', content: TASK_TITLE_SYSTEM_PROMPT },
+				{ role: 'user', content: contextLines.join('\n\n') }
+			]
+		})
+	});
+
+	if (!response.ok) {
+		throw new Error(`OpenRouter error: ${await response.text()}`);
+	}
+
+	const data = (await response.json()) as {
+		choices?: Array<{ message?: { content?: string } }>;
+	};
+	return normalizeUtilityModelText(data.choices?.[0]?.message?.content || '');
+};
+
 app.post('/api/workspace-ai', async (c) => {
 	try {
 		const body = (await c.req.json()) as AiWorkspaceRequest;
@@ -72,6 +178,10 @@ app.post('/api/workspace-ai', async (c) => {
 		return c.json({ error: message }, status as 400 | 401 | 403 | 404 | 409 | 500);
 	}
 });
+app.get('/api/workspace-ai', methodNotAllowed);
+app.get('/api/workspace-ai/stream', methodNotAllowed);
+app.get('/api/workspace-ai/session-title', methodNotAllowed);
+app.get('/api/workspace-ai/task-title', methodNotAllowed);
 
 app.post('/api/workspace-ai/stream', async (c) => {
 	const body = (await c.req.json()) as AiWorkspaceRequest;
@@ -122,10 +232,88 @@ app.post('/api/workspace-ai/stream', async (c) => {
 	});
 });
 
+app.post('/api/workspace-ai/session-title', async (c) => {
+	if (!c.req.header('Authorization')) {
+		return c.json({ error: 'Unauthorized' }, 401);
+	}
+
+	try {
+		const body = (await c.req.json()) as {
+			userMessage?: string;
+			assistantReply?: string;
+		};
+		const userMessage = typeof body.userMessage === 'string' ? body.userMessage.trim() : '';
+		const assistantReply =
+			typeof body.assistantReply === 'string' ? body.assistantReply.trim() : '';
+
+		if (!userMessage) {
+			return c.json({ error: 'userMessage is required' }, 400);
+		}
+
+		const title = await generateSessionTitle(userMessage, assistantReply);
+		if (!title || title.length > 60) {
+			return c.json({ title: '' });
+		}
+
+		return c.json({ title });
+	} catch (error) {
+		console.error('Session title generation failed:', error);
+		return c.json({ title: '' });
+	}
+});
+
+app.post('/api/workspace-ai/task-title', async (c) => {
+	if (!c.req.header('Authorization')) {
+		return c.json({ error: 'Unauthorized' }, 401);
+	}
+
+	try {
+		const body = (await c.req.json()) as {
+			title?: string;
+			description?: string;
+			columnTitle?: string;
+		};
+		const title = typeof body.title === 'string' ? body.title.trim() : '';
+		const description =
+			typeof body.description === 'string' ? body.description.trim().slice(0, 500) : '';
+		const columnTitle = typeof body.columnTitle === 'string' ? body.columnTitle.trim() : '';
+
+		if (!title) {
+			return c.json({ error: 'title is required' }, 400);
+		}
+
+		const rewritten = await generateTaskTitle(title, description, columnTitle);
+		if (!rewritten) {
+			return c.json({ error: 'AI did not return a rewritten title.' }, 502);
+		}
+		if (rewritten.length > TASK_TITLE_MAX_LENGTH) {
+			return c.json({ error: 'Rewritten title was too long.' }, 502);
+		}
+
+		return c.json({ title: rewritten });
+	} catch (error) {
+		console.error('Task title rewrite failed:', error);
+		const message = error instanceof Error ? error.message : 'Task title rewrite failed';
+		return c.json({ error: message, title: '' }, 502);
+	}
+});
+
 app.post('/api/workspace/projects/touch', async (c) => {
 	try {
 		const payload = await handleWorkspaceTouchProjectRequest(
 			(await c.req.json()) as { projectId: string },
+			c.req.header('Authorization')
+		);
+		return c.json(payload);
+	} catch (error) {
+		return handleWorkspaceMutationError(c, error);
+	}
+});
+
+app.post('/api/workspace/projects/pin', async (c) => {
+	try {
+		const payload = await handleWorkspacePinProjectRequest(
+			(await c.req.json()) as { projectId: string; pinned?: boolean },
 			c.req.header('Authorization')
 		);
 		return c.json(payload);
@@ -229,6 +417,17 @@ app.post('/api/workspace/members/leave', async (c) => {
 			c.req.header('Authorization')
 		);
 		return c.json(payload);
+	} catch (error) {
+		return handleWorkspaceMutationError(c, error);
+	}
+});
+
+app.post('/api/cli/device/start', handleCliDeviceStart);
+app.post('/api/cli/device/poll', handleCliDevicePoll);
+app.post('/api/cli/device/exchange', handleCliDeviceExchange);
+app.post('/api/cli/device/approve', async (c) => {
+	try {
+		return await handleCliDeviceApprove(c);
 	} catch (error) {
 		return handleWorkspaceMutationError(c, error);
 	}
