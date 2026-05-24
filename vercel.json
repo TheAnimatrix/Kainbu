@@ -3,20 +3,6 @@
 	"outputDirectory": "build",
 	"functions": {
 		"api/index.js": {
-			"maxDuration": 60
-		},
-		"api/health.js": {
-			"maxDuration": 60
-		},
-		"api/workspace/**/*.js": {
-			"includeFiles": "server/**/*",
-			"maxDuration": 60
-		},
-		"api/workspace-ai/**/*.js": {
-			"includeFiles": "server/**/*",
-			"maxDuration": 60
-		},
-		"api/workspace-ai.js": {
 			"includeFiles": "server/**/*",
 			"maxDuration": 60
 		}
@@ -24,7 +10,11 @@
 	"rewrites": [
 		{
 			"source": "/health",
-			"destination": "/api/health"
+			"destination": "/api/index.js"
+		},
+		{
+			"source": "/api/:path*",
+			"destination": "/api/index.js"
 		}
 	]
 }

@@ -6,6 +6,8 @@
  *
  * For authenticated tests, set KAINBU_TEST_TOKEN and KAINBU_TEST_PROJECT_ID:
  *   KAINBU_TEST_TOKEN=<supabase_jwt> KAINBU_TEST_PROJECT_ID=<uuid> npx vitest run tests/deploy.test.ts
+ *
+ * Or sign in locally: kainbu login --token "$KAINBU_TEST_TOKEN"
  */
 import { describe, it, expect } from 'vitest';
 

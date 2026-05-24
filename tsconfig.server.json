@@ -5,5 +5,5 @@
 		"types": ["node"],
 		"rootDir": "."
 	},
-	"include": ["server/**/*.ts", "src/lib/kainbu/types.ts"]
+	"include": ["server/**/*.ts", "src/lib/kainbu/types.ts", "src/lib/kainbu/boardRefs.ts", "src/lib/kainbu/boardList.ts", "src/lib/kainbu/constants.ts"]
 }
