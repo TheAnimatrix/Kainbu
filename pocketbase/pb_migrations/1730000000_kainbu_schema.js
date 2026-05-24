@@ -17,6 +17,11 @@ migrate(
 		);
 		users.fields.add(new JSONField({ name: 'background_theme', required: false }));
 
+		users.listRule = '@request.auth.id != ""';
+		users.viewRule = '@request.auth.id != ""';
+		users.updateRule = '@request.auth.id = id';
+		users.deleteRule = '@request.auth.id = id';
+
 		app.save(users);
 
 		const projectMemberList =

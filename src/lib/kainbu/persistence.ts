@@ -1060,13 +1060,24 @@ export const createProject = async (
 		last_opened_at: new Date(normalizedSeed.viewerLastOpenedAt).toISOString()
 	});
 
-	await pb.collection('project_memberships').create({
-		project: projectRecord.id,
-		user: userId,
-		role: 'owner',
-		joined_at: new Date().toISOString(),
-		last_opened_at: new Date().toISOString()
-	});
+	try {
+		await pb.collection('project_memberships').create({
+			project: projectRecord.id,
+			user: userId,
+			role: 'owner',
+			joined_at: new Date().toISOString(),
+			last_opened_at: new Date().toISOString()
+		});
+	} catch (error) {
+		const message = error instanceof Error ? error.message : String(error);
+		const alreadyExists =
+			message.includes('UNIQUE') ||
+			message.includes('unique') ||
+			message.includes('validation_not_unique');
+		if (!alreadyExists) {
+			throw error;
+		}
+	}
 
 	for (const board of normalizedSeed.boards) {
 		await pb.collection('project_boards').create({
