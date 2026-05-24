@@ -8,7 +8,7 @@
 		Copy,
 		Download,
 		Expand,
-		FileText,
+		Link2,
 		LoaderCircle,
 		Lock,
 		MessageSquare,
@@ -18,6 +18,7 @@
 		Square,
 		Tag as TagIcon,
 		Trash2,
+		Unlink,
 		Upload,
 		X
 	} from 'lucide-svelte';
@@ -42,6 +43,12 @@
 		type TaskReferenceOption
 	} from '$lib/kainbu/taskMarkdown';
 	import { clearTaskDueAt, getTaskDueAt, setTaskDueAt } from '$lib/kainbu/timing';
+	import {
+		getExplicitLinkedTasks,
+		normalizeLinkedTaskIds,
+		parseTaskReferenceIds,
+		removeTaskReferenceFromMarkdown
+	} from '$lib/kainbu/taskLinks';
 	import { getModalToneStyle, getTagToneClasses } from '$lib/kainbu/tags';
 	import type {
 		ChatAttachment,
@@ -68,6 +75,7 @@
 	export let onTaskReferenceNavigate:
 		| ((payload: { taskId: string; columnId: string }) => void)
 		| undefined = undefined;
+	export let onUnlinkLinkedTask: ((linkedTaskId: string) => void) | undefined = undefined;
 	export let onAddAttachments: ((attachments: ChatAttachment[]) => void) | undefined = undefined;
 	export let desktopLayoutMode: DesktopLayoutMode = 'modal';
 	export let onDesktopLayoutModeChange: (mode: DesktopLayoutMode) => void = () => {};
@@ -120,23 +128,7 @@
 	let descriptionActionMessage = '';
 	let descriptionActionTimer: ReturnType<typeof setTimeout> | null = null;
 	let latestDetailsKey = '';
-
-	const autoGrowTitle = (node: HTMLTextAreaElement) => {
-		const resize = () => {
-			node.style.height = '0px';
-			node.style.height = `${node.scrollHeight}px`;
-		};
-
-		queueMicrotask(resize);
-		node.addEventListener('input', resize);
-
-		return {
-			update: resize,
-			destroy() {
-				node.removeEventListener('input', resize);
-			}
-		};
-	};
+	let activeTab: 'properties' | 'files' | 'comments' | null = null;
 
 	const normalizeDraftTask = (candidate: Task): Task => ({
 		...candidate,
@@ -157,7 +149,8 @@
 			completedAt: candidate.completedAt ?? null,
 			countdownAt: candidate.countdownAt ?? null,
 			alarmAt: candidate.alarmAt ?? null,
-			assignedTo: candidate.assignedTo || ''
+			assignedTo: candidate.assignedTo || '',
+			linkedTaskIds: normalizeLinkedTaskIds(candidate.linkedTaskIds).sort()
 		});
 
 	const refreshSaveBadge = (state: SaveState, message?: string) => {
@@ -399,6 +392,17 @@
 		);
 	};
 
+	const toggleTitleCheckbox = (index: number, checked: boolean) => {
+		if (!draft.title) return;
+		mutateDraft(
+			(current) => ({
+				...current,
+				title: toggleMarkdownCheckbox(current.title || '', index, checked)
+			}),
+			'immediate'
+		);
+	};
+
 	const toggleDescriptionCheckbox = (index: number, checked: boolean) => {
 		if (!draft.description) return;
 		mutateDraft(
@@ -522,9 +526,10 @@
 	};
 
 	const handleDeleteAsset = async (asset: TaskAsset) => {
+		const nextTitle = stripAssetEmbeds(draft.title || '', asset.id);
 		const nextDescription = stripAssetEmbeds(draft.description || '', asset.id);
-		if (nextDescription !== (draft.description || '')) {
-			draft = { ...draft, description: nextDescription };
+		if (nextTitle !== (draft.title || '') || nextDescription !== (draft.description || '')) {
+			draft = { ...draft, title: nextTitle, description: nextDescription };
 			await flushDraft(true);
 		}
 
@@ -560,11 +565,13 @@
 			return;
 		}
 
+		const nextTitle = stripAssetEmbeds(draft.title || '', assetId);
 		const nextDescription = stripAssetEmbeds(draft.description || '', assetId);
-		if (nextDescription === (draft.description || '')) return;
+		if (nextTitle === (draft.title || '') && nextDescription === (draft.description || '')) return;
 		mutateDraft(
 			(current) => ({
 				...current,
+				title: nextTitle,
 				description: nextDescription
 			}),
 			'immediate'
@@ -642,6 +649,32 @@
 		});
 	};
 
+	const handleReferenceRemove = (reference: TaskReferenceOption) => {
+		if (reference.kind !== 'task') return;
+		mutateDraft(
+			(current) => ({
+				...current,
+				title: removeTaskReferenceFromMarkdown(current.title, reference.id),
+				description: removeTaskReferenceFromMarkdown(current.description, reference.id)
+			}),
+			'immediate'
+		);
+	};
+
+	const handleReferencePromote = (reference: TaskReferenceOption) => {
+		if (reference.kind !== 'task' || reference.id === draft.id) return;
+		mutateDraft(
+			(current) => ({
+				...current,
+				linkedTaskIds: normalizeLinkedTaskIds([
+					...(current.linkedTaskIds || []),
+					reference.id
+				])
+			}),
+			'immediate'
+		);
+	};
+
 	syncDraftFromTask(task);
 
 	$: isMobile = viewportWidth > 0 && viewportWidth < 1024;
@@ -677,17 +710,21 @@
 				? 'h-full max-h-none max-w-[48rem] rounded-none border-l border-app-border'
 				: resolvedDesktopLayoutMode === 'fullscreen'
 					? 'h-full max-h-none max-w-none rounded-none border-0'
-					: 'max-h-full max-w-[70rem] rounded-lg border border-app-border';
+					: 'max-h-full max-w-[70rem] rounded-xl border border-app-border';
 	$: chromePaddingClass = isMobile
-		? 'px-4 py-3'
+		? 'px-3 py-2'
 		: usePanePresentation
-			? 'px-10 pt-5 pb-2'
-			: 'px-10 py-10';
+			? 'px-5 py-2'
+			: 'px-5 py-2';
 	$: bodyPaddingClass = isMobile
-		? 'p-3'
-		: usePanePresentation
-			? 'px-10 py-10'
-			: 'p-10';
+		? 'px-4 py-4'
+		: 'px-5 py-4';
+	$: explicitLinkedTasks = getExplicitLinkedTasks(columns, draft.id);
+	$: implicitReferenceIds = parseTaskReferenceIds(draft.description).filter(
+		(taskId) =>
+			taskId !== draft.id &&
+			!normalizeLinkedTaskIds(draft.linkedTaskIds).includes(taskId)
+	);
 	$: referenceOptions = [
 		...columns.flatMap((column) =>
 			column.tasks
@@ -806,375 +843,585 @@
 		style={getModalToneStyle(draft.color)}
 	>
 		<div
-			class={`flex items-start justify-between gap-3 border-b border-app-border bg-app-surface ${chromePaddingClass}`}
+			class={`flex items-center justify-between gap-3 border-b border-app-border bg-app-surface ${chromePaddingClass}`}
 		>
-			<div class="min-w-0 flex-1">
-				<textarea
-					bind:value={draft.title}
-					use:autoGrowTitle
-					rows="2"
-					class={`max-h-56 w-full resize-none overflow-y-auto bg-transparent font-display font-bold leading-tight tracking-tight text-app-text outline-none placeholder:text-app-subtext/40 ${
-						isMobile ? 'text-[20px]' : 'text-[24px]'
+			<div class="flex min-w-0 flex-1 items-center gap-3 text-xs">
+				<span class="truncate text-app-subtext">
+					in <span class="font-medium text-app-text">{columnTitle}</span>
+				</span>
+				<span
+					class={`inline-flex shrink-0 items-center gap-1.5 text-[11px] ${
+						saveState === 'saved'
+							? 'text-app-subtext'
+							: saveState === 'saving'
+								? 'text-app-primary'
+								: saveState === 'dirty'
+									? 'text-app-subtext'
+									: 'text-rose-300'
 					}`}
-					placeholder="Task title"
-					on:input={() => {
-						refreshSaveBadge('dirty');
-						scheduleAutosave();
-					}}
-					on:blur={() => void flushDraft(true)}
-				></textarea>
-				<div
-					class={`mt-2 flex flex-wrap items-center gap-3 uppercase tracking-[0.25em] text-app-subtext ${
-						isMobile ? 'text-[10px]' : 'text-xs'
-					}`}
+					title={saveMessage}
 				>
-					<span>in {columnTitle}</span>
 					<span
-						class={`rounded border px-2 py-1 text-[9px] tracking-[0.18em] ${
+						class={`inline-block h-1.5 w-1.5 rounded-full ${
 							saveState === 'saved'
-								? 'border-emerald-500/35 text-emerald-200'
+								? 'bg-emerald-400/80'
 								: saveState === 'saving'
-									? 'border-app-primary/35 text-app-primary'
+									? 'bg-app-primary animate-pulse'
 									: saveState === 'dirty'
-										? 'border-app-border text-app-subtext'
-										: 'border-rose-500/35 text-rose-300'
+										? 'bg-app-subtext/55'
+										: 'bg-rose-400/80'
 						}`}
-					>
-						{saveMessage}
+					></span>
+					<span class="hidden sm:inline">
+						{saveState === 'saved'
+							? 'Saved'
+							: saveState === 'saving'
+								? 'Saving…'
+								: saveState === 'dirty'
+									? 'Unsaved'
+									: 'Error'}
 					</span>
-				</div>
+				</span>
 			</div>
-			<div class="flex items-center gap-2 pl-2">
+			<div class="flex items-center gap-1">
 				{#if !isMobile}
-					<div class="relative">
-						<button
-							type="button"
-							aria-label="Change editor layout"
-							title="Change layout"
-							class="inline-flex h-10 items-center gap-1 rounded-full border border-app-border bg-app-element px-3 text-app-subtext transition hover:text-app-text"
-							on:mousedown|stopPropagation
-							on:click={() => (layoutPickerOpen = !layoutPickerOpen)}
-						>
-							{#if desktopLayoutMode === 'modal'}
-								<RectangleHorizontal size={15} />
-							{:else if desktopLayoutMode === 'dock'}
-								<PanelRightOpen size={15} />
-							{:else}
-								<Expand size={15} />
-							{/if}
-							<ChevronDown size={12} class={`transition ${layoutPickerOpen ? 'rotate-180' : ''}`} />
-						</button>
-						{#if layoutPickerOpen}
-							<div
-								role="listbox"
-								tabindex="-1"
-								aria-label="Editor layout options"
-								class="absolute right-0 top-full z-20 mt-1.5 rounded border border-app-border bg-app-surface"
-								on:mousedown|stopPropagation
-							>
-								{#each LAYOUT_OPTIONS as option (option.mode)}
-									<button
-										type="button"
-										role="option"
-										aria-selected={desktopLayoutMode === option.mode}
-										class={`flex w-full items-center gap-2.5 whitespace-nowrap px-3 py-2 text-xs font-semibold transition ${
-											desktopLayoutMode === option.mode
-												? 'bg-app-primary text-white'
-												: 'text-app-subtext hover:bg-app-bg/75 hover:text-app-text'
-										}`}
-										on:click={() => {
-											onDesktopLayoutModeChange(option.mode);
-											layoutPickerOpen = false;
-										}}
-									>
-										{#if option.mode === 'modal'}
-											<RectangleHorizontal size={14} />
-										{:else if option.mode === 'dock'}
-											<PanelRightOpen size={14} />
-										{:else}
-											<Expand size={14} />
-										{/if}
-										{option.label}
-									</button>
-								{/each}
-							</div>
-						{/if}
-					</div>
-				{/if}
-				<button
-					type="button"
-					class={`inline-flex items-center justify-center text-app-subtext transition hover:text-app-text ${
-						isMobile ? 'h-9 w-9' : 'h-10 w-10'
-					}`}
-					on:click={() => void requestClose()}
-				>
-					<X size={18} />
-				</button>
-			</div>
-		</div>
-
-		<div class={`min-h-0 flex-1 overflow-y-auto ${bodyPaddingClass}`}>
-			<div class={`flex flex-col gap-3 ${isMobile ? 'pb-3' : 'pb-4'}`}>
-				<div class="flex items-center gap-2">
-					<span class="flex items-center gap-1.5 text-xs font-semibold text-app-subtext">
-						<Lock size={13} />
-						Status
-					</span>
-					<button
-						type="button"
-						class={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-semibold transition ${
-							draft.checked
-								? 'border-app-accent/40 bg-app-accent/10 text-app-accent'
-								: 'border-app-border bg-app-element text-app-text hover:border-app-primary/40 hover:text-app-primary'
-						}`}
-						on:click={toggleComplete}
-					>
-						{#if draft.checked}
-							<CheckSquare size={13} />
-							Completed
-						{:else}
-							<Square size={13} />
-							Mark Complete
-						{/if}
-					</button>
-				</div>
-
-				<div class="flex items-center gap-2">
-					<span class="flex items-center gap-1.5 text-xs font-semibold text-app-subtext">
-						<Clock3 size={13} />
-						Due
-					</span>
-					<input
-						type="datetime-local"
-						class="rounded-full border border-app-border bg-app-element px-3 py-1 text-xs text-app-text outline-none transition focus:border-app-primary/40"
-						value={toLocalInputValue(draftDueAt ?? undefined)}
-						on:input={(event) => {
-							const nextDueAt = fromLocalInputValue(
-								(event.currentTarget as HTMLInputElement).value
-							);
-							mutateDraft(
-								(current) =>
-									nextDueAt === undefined
-										? clearTaskDueAt(current)
-										: setTaskDueAt(current, nextDueAt),
-								'immediate'
-							);
-						}}
-					/>
-					{#if draftDueAt !== null}
-						<button
-							type="button"
-							class="text-xs font-semibold text-app-subtext transition hover:text-app-primary"
-							on:click={() => mutateDraft((current) => clearTaskDueAt(current), 'immediate')}
-						>
-							Clear
-						</button>
-					{/if}
-				</div>
-
-				<div class="relative flex items-center gap-2">
-					<span class="flex items-center gap-1.5 text-xs font-semibold text-app-subtext">
-						<TagIcon size={13} />
-						Tone
-					</span>
-					<button
-						type="button"
-						class="inline-flex items-center gap-1.5 rounded-full border border-app-border bg-app-element px-3 py-1 text-xs font-semibold text-app-text transition hover:border-app-primary/40"
-						on:mousedown|stopPropagation
-						on:click={() => (tonePickerOpen = !tonePickerOpen)}
-					>
-						<span class={`inline-block h-4 w-4 rounded-sm border ${currentTone.swatchClass}`}></span>
-						{currentTone.label}
-						<ChevronDown size={12} class={`transition ${tonePickerOpen ? 'rotate-180' : ''}`} />
-					</button>
-					{#if tonePickerOpen}
-						<div
-							role="presentation"
-							class="absolute left-0 top-full z-20 mt-1.5 rounded border border-app-border bg-app-surface p-2"
-							on:mousedown|stopPropagation
-						>
-							<div class="flex flex-wrap gap-1.5">
-								{#each SURFACE_TONE_OPTIONS as tone}
-									<button
-										type="button"
-										aria-label={`Set card tone to ${tone.label}`}
-										title={tone.label}
-										class={`h-7 w-7 rounded-sm border p-0 transition ${tone.swatchClass} ${
-											(draft.color || '') === tone.value
-												? 'scale-110 border-white/80 ring-2 ring-app-primary/45'
-												: 'hover:scale-110 hover:border-app-primary/35'
-										}`}
-										on:click={() => {
-											setTaskColor(tone.value);
-											tonePickerOpen = false;
-										}}
-									></button>
-								{/each}
-							</div>
-						</div>
-					{/if}
-				</div>
-			</div>
-
-			<div class="border-t border-app-border py-3">
-				<div class="flex flex-wrap items-start gap-2">
-					<span class="flex items-center gap-1.5 py-1 text-xs font-semibold text-app-subtext">
-						<TagIcon size={13} />
-						Tags
-					</span>
-					{#if draft.tags.length}
-						{#each draft.tags as tag (tag.id)}
-							<span
-								class={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-semibold ${getTagToneClasses(tag.color)}`}
-							>
-								{tag.label}
-								<button
-									type="button"
-									class="opacity-70 transition hover:opacity-100"
-									on:click={() => deleteTag(tag.id)}
-								>
-									<X size={11} />
-								</button>
-							</span>
-						{/each}
-					{/if}
-				</div>
-				<div class="mt-2 flex items-center gap-2">
-					<input
-						bind:value={tagSearch}
-						class="min-w-0 max-w-56 flex-1 rounded-full border border-app-border bg-app-element px-3 py-1 text-xs text-app-text outline-none transition focus:border-app-primary/40"
-						placeholder="New tag..."
-						on:keydown={(event) => {
-							if (event.key === 'Enter') addTag(tagSearch || 'New Tag', selectedTagColor);
-						}}
-					/>
-					<div class="relative">
-						<button
-							type="button"
-							class="inline-flex items-center gap-1 rounded-full border border-app-border bg-app-element px-2 py-1 text-xs text-app-text transition hover:border-app-primary/40"
-							on:mousedown|stopPropagation
-							on:click={() => (tagColorPickerOpen = !tagColorPickerOpen)}
-						>
-							<span class={`inline-block h-4 w-4 rounded-sm border ${currentTagColorSwatch.swatchClass}`}
-							></span>
-							<ChevronDown
-								size={11}
-								class={`transition ${tagColorPickerOpen ? 'rotate-180' : ''}`}
-							/>
-						</button>
-						{#if tagColorPickerOpen}
-							<div
-								role="presentation"
-								class="absolute right-0 top-full z-20 mt-1.5 w-[14.5rem] max-w-[min(14.5rem,calc(100vw-3rem))] rounded border border-app-border bg-app-surface p-3"
-								on:mousedown|stopPropagation
-							>
-								<p class="mb-2 text-[10px] font-bold uppercase tracking-[0.18em] text-app-subtext">
-									Tag color
-								</p>
-								<div class="grid grid-cols-4 gap-2">
-									{#each TAG_COLORS as color}
-										<button
-											type="button"
-											aria-label={`Select ${color.value.replace('tone:', '')} color`}
-											title={color.value.replace('tone:', '')}
-											class={`h-8 w-8 border p-0 transition ${color.swatchClass} ${
-												selectedTagColor === color.value
-													? 'border-white/80 ring-2 ring-app-primary/45 ring-offset-2 ring-offset-app-surface'
-													: 'hover:-translate-y-0.5 hover:border-app-primary/35'
-											}`}
-											on:click={() => {
-												selectedTagColor = color.value;
-												tagColorPickerOpen = false;
-											}}
-										></button>
-									{/each}
-								</div>
-							</div>
-						{/if}
-					</div>
-					<button
-						type="button"
-						class="rounded-full bg-app-primary px-2 py-1 text-xs font-semibold text-white transition hover:bg-app-primary-hover"
-						on:click={() => addTag(tagSearch || 'New Tag', selectedTagColor)}
-					>
-						<TagIcon size={12} />
-					</button>
-				</div>
-				{#if recentTags.length}
-					<div class="mt-2 flex flex-wrap items-center gap-1.5">
-						<span class="text-[10px] font-bold uppercase tracking-[0.2em] text-app-subtext">
-							Recent
-						</span>
-						{#each recentTags as tag (tag.id)}
+					<div class="mr-1 inline-flex items-center rounded-md border border-app-border bg-app-element/40 p-0.5">
+						{#each LAYOUT_OPTIONS as option (option.mode)}
 							<button
 								type="button"
-								class={`rounded-full px-2 py-0.5 text-[11px] font-semibold transition hover:opacity-100 ${getTagToneClasses(tag.color)}`}
-								on:click={() => addTag(tag.label, tag.color)}
+								aria-label={option.label}
+								title={option.label}
+								class={`inline-flex h-6 w-6 items-center justify-center rounded transition ${
+									desktopLayoutMode === option.mode
+										? 'bg-app-surface text-app-text shadow-sm'
+										: 'text-app-subtext hover:text-app-text'
+								}`}
+								on:click={() => onDesktopLayoutModeChange(option.mode)}
 							>
-								{tag.label}
+								{#if option.mode === 'modal'}
+									<RectangleHorizontal size={13} />
+								{:else if option.mode === 'dock'}
+									<PanelRightOpen size={13} />
+								{:else}
+									<Expand size={13} />
+								{/if}
 							</button>
 						{/each}
 					</div>
 				{/if}
+				<button
+					type="button"
+					aria-label="Close"
+					title="Close"
+					class="inline-flex h-7 w-7 items-center justify-center rounded-md text-app-subtext transition hover:bg-app-element/40 hover:text-app-text"
+					on:click={() => void requestClose()}
+				>
+					<X size={16} />
+				</button>
+			</div>
+		</div>
+
+		<div class="flex min-h-0 flex-1 flex-col">
+			<!-- Scrollable document area -->
+			<div class={`flex-1 overflow-y-auto ${bodyPaddingClass}`}>
+				<div class="mx-auto flex w-full max-w-3xl flex-col gap-3">
+					<div class="task-modal__doc group/doc relative">
+						<div class="pointer-events-none absolute right-0 top-1 z-10 flex items-center gap-2 opacity-0 transition group-hover/doc:opacity-100 group-focus-within/doc:opacity-100">
+							{#if descriptionActionMessage}
+								<span class="pointer-events-auto text-[11px] text-app-subtext">{descriptionActionMessage}</span>
+							{/if}
+							<button
+								type="button"
+								class="pointer-events-auto inline-flex items-center gap-1.5 rounded-md border border-app-border bg-app-surface/85 px-2 py-1 text-[11px] font-semibold text-app-subtext backdrop-blur transition hover:border-app-primary/35 hover:text-app-primary"
+								title="Copy markdown"
+								on:click={() => void handleCopyDescriptionMarkdown()}
+							>
+								<Copy size={11} />
+								Copy
+							</button>
+						</div>
+
+						<div class="flex items-start gap-2.5">
+							<button
+								type="button"
+								aria-label={draft.checked ? 'Mark incomplete' : 'Mark complete'}
+								title={draft.checked ? 'Mark incomplete' : 'Mark complete'}
+								class={`mt-[0.35rem] inline-flex h-[18px] w-[18px] shrink-0 items-center justify-center rounded-[0.25rem] border-[1.5px] transition ${
+									draft.checked
+										? 'border-app-primary bg-app-primary text-white'
+										: 'border-app-subtext hover:border-app-primary hover:bg-app-element/40'
+								}`}
+								on:click={toggleComplete}
+							>
+								{#if draft.checked}
+									<Check size={11} strokeWidth={3} />
+								{/if}
+							</button>
+							<div class="task-modal__title-editor min-w-0 flex-1">
+								<MarkdownBlockEditor
+									value={draft.title || ''}
+									{assetUrls}
+									{referenceOptions}
+									onReferenceNavigate={handleReferenceNavigate}
+									onReferenceRemove={handleReferenceRemove}
+									onReferencePromote={handleReferencePromote}
+									onEmbedDelete={handleEmbeddedImageDelete}
+									onEmbedAddToChat={handleEmbeddedImageAddToChat}
+									onChange={(nextValue, options) =>
+										mutateDraft(
+											(current) => ({
+												...current,
+												title: nextValue
+											}),
+											options?.immediate ? 'immediate' : 'debounced'
+										)}
+									onImageUpload={handleEmbedUpload}
+									onCheckboxToggle={toggleTitleCheckbox}
+								/>
+							</div>
+						</div>
+
+						<div class="task-modal__description-editor">
+							<MarkdownBlockEditor
+								value={draft.description || ''}
+								{assetUrls}
+								{referenceOptions}
+								onReferenceNavigate={handleReferenceNavigate}
+								onReferenceRemove={handleReferenceRemove}
+								onReferencePromote={handleReferencePromote}
+								onEmbedDelete={handleEmbeddedImageDelete}
+								onEmbedAddToChat={handleEmbeddedImageAddToChat}
+								onChange={(nextValue, options) =>
+									mutateDraft(
+										(current) => ({
+											...current,
+											description: nextValue
+										}),
+										options?.immediate ? 'immediate' : 'debounced'
+									)}
+								onImageUpload={handleEmbedUpload}
+								onCheckboxToggle={toggleDescriptionCheckbox}
+								placeholder={'Add notes, paste images, link tasks…'}
+							/>
+						</div>
+					</div>
+				</div>
 			</div>
 
-			<div class="border-t border-app-border pt-3">
-				<div class="mb-2 flex items-center justify-between gap-3">
-					<div class="flex items-center gap-2 text-xs font-semibold text-app-subtext">
-						<FileText size={13} />
-						Description
-					</div>
-					<div class="flex items-center gap-2">
-						{#if descriptionActionMessage}
-							<span class="text-[11px] text-app-subtext">{descriptionActionMessage}</span>
+			<!-- Tab panel (fixed above tab strip) -->
+			{#if activeTab}
+				<div class="shrink-0 max-h-[42vh] overflow-y-auto border-t border-app-border bg-app-bg/30">
+					<div class={`mx-auto w-full max-w-3xl ${isMobile ? 'px-4 py-4' : 'px-5 py-4'}`}>
+						{#if activeTab === 'properties'}
+							<div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
+								<div class="flex flex-col gap-1.5">
+									<span class="text-[10px] font-bold uppercase tracking-[0.2em] text-app-subtext">Status</span>
+									<button
+										type="button"
+										class={`inline-flex w-fit items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-semibold transition ${
+											draft.checked
+												? 'border-app-accent/40 bg-app-accent/10 text-app-accent'
+												: 'border-app-border bg-app-element/40 text-app-text hover:border-app-primary/40'
+										}`}
+										on:click={toggleComplete}
+									>
+										{#if draft.checked}
+											<CheckSquare size={13} />
+											Completed
+										{:else}
+											<Square size={13} />
+											Open
+										{/if}
+									</button>
+								</div>
+
+								<div class="flex flex-col gap-1.5">
+									<span class="text-[10px] font-bold uppercase tracking-[0.2em] text-app-subtext">Due</span>
+									<label class="inline-flex w-fit items-center gap-1.5 rounded-full border border-app-border bg-app-element/40 px-3 py-1 text-xs text-app-text transition focus-within:border-app-primary/40">
+										<Clock3 size={13} class="text-app-subtext" />
+										<input
+											type="datetime-local"
+											class="bg-transparent text-xs text-app-text outline-none [color-scheme:dark]"
+											value={toLocalInputValue(draftDueAt ?? undefined)}
+											on:input={(event) => {
+												const nextDueAt = fromLocalInputValue(
+													(event.currentTarget as HTMLInputElement).value
+												);
+												mutateDraft(
+													(current) =>
+														nextDueAt === undefined
+															? clearTaskDueAt(current)
+															: setTaskDueAt(current, nextDueAt),
+													'immediate'
+												);
+											}}
+										/>
+										{#if draftDueAt !== null}
+											<button
+												type="button"
+												class="ml-0.5 text-app-subtext transition hover:text-rose-300"
+												aria-label="Clear due date"
+												on:click|preventDefault={() =>
+													mutateDraft((current) => clearTaskDueAt(current), 'immediate')}
+											>
+												<X size={11} />
+											</button>
+										{/if}
+									</label>
+								</div>
+
+								<div class="relative flex flex-col gap-1.5">
+									<span class="text-[10px] font-bold uppercase tracking-[0.2em] text-app-subtext">Tone</span>
+									<button
+										type="button"
+										class="inline-flex w-fit items-center gap-1.5 rounded-full border border-app-border bg-app-element/40 px-3 py-1 text-xs font-semibold text-app-text transition hover:border-app-primary/40"
+										on:mousedown|stopPropagation
+										on:click={() => (tonePickerOpen = !tonePickerOpen)}
+									>
+										<span class={`inline-block h-3.5 w-3.5 rounded-sm border ${currentTone.swatchClass}`}></span>
+										{currentTone.label}
+										<ChevronDown size={12} class={`transition ${tonePickerOpen ? 'rotate-180' : ''}`} />
+									</button>
+									{#if tonePickerOpen}
+										<div
+											role="presentation"
+											class="absolute left-0 bottom-full z-20 mb-1.5 rounded-md border border-app-border bg-app-surface p-2 shadow-kainbu-md"
+											on:mousedown|stopPropagation
+										>
+											<div class="flex flex-wrap gap-1.5">
+												{#each SURFACE_TONE_OPTIONS as tone}
+													<button
+														type="button"
+														aria-label={`Set card tone to ${tone.label}`}
+														title={tone.label}
+														class={`h-7 w-7 rounded-sm border p-0 transition ${tone.swatchClass} ${
+															(draft.color || '') === tone.value
+																? 'scale-110 border-white/80 ring-2 ring-app-primary/45'
+																: 'hover:scale-110 hover:border-app-primary/35'
+														}`}
+														on:click={() => {
+															setTaskColor(tone.value);
+															tonePickerOpen = false;
+														}}
+													></button>
+												{/each}
+											</div>
+										</div>
+									{/if}
+								</div>
+
+								<div class="flex flex-col gap-1.5 sm:col-span-2">
+									<span class="text-[10px] font-bold uppercase tracking-[0.2em] text-app-subtext">Tags</span>
+									<div class="flex flex-wrap items-center gap-1.5">
+										{#each draft.tags as tag (tag.id)}
+											<span class={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-semibold ${getTagToneClasses(tag.color)}`}>
+												{tag.label}
+												<button type="button" class="opacity-70 transition hover:opacity-100" on:click={() => deleteTag(tag.id)}>
+													<X size={11} />
+												</button>
+											</span>
+										{/each}
+										<div class="inline-flex items-center gap-1 rounded-full border border-app-border bg-app-element/40 pl-3 pr-1 py-0.5 transition focus-within:border-app-primary/40">
+											<TagIcon size={12} class="text-app-subtext" />
+											<input
+												bind:value={tagSearch}
+												class="w-28 bg-transparent py-0.5 text-xs text-app-text outline-none placeholder:text-app-subtext/60"
+												placeholder="Add tag"
+												on:keydown={(event) => {
+													if (event.key === 'Enter') addTag(tagSearch || 'New Tag', selectedTagColor);
+												}}
+											/>
+											<div class="relative">
+												<button
+													type="button"
+													class="inline-flex items-center rounded-full p-1 text-app-subtext transition hover:text-app-text"
+													aria-label="Pick tag color"
+													on:mousedown|stopPropagation
+													on:click={() => (tagColorPickerOpen = !tagColorPickerOpen)}
+												>
+													<span class={`inline-block h-3.5 w-3.5 rounded-sm border ${currentTagColorSwatch.swatchClass}`}></span>
+												</button>
+												{#if tagColorPickerOpen}
+													<div
+														role="presentation"
+														class="absolute right-0 bottom-full z-20 mb-1.5 w-[14.5rem] max-w-[min(14.5rem,calc(100vw-3rem))] rounded-md border border-app-border bg-app-surface p-3 shadow-kainbu-md"
+														on:mousedown|stopPropagation
+													>
+														<p class="mb-2 text-[10px] font-bold uppercase tracking-[0.18em] text-app-subtext">Tag color</p>
+														<div class="grid grid-cols-4 gap-2">
+															{#each TAG_COLORS as color}
+																<button
+																	type="button"
+																	aria-label={`Select ${color.value.replace('tone:', '')} color`}
+																	title={color.value.replace('tone:', '')}
+																	class={`h-8 w-8 border p-0 transition ${color.swatchClass} ${
+																		selectedTagColor === color.value
+																			? 'border-white/80 ring-2 ring-app-primary/45 ring-offset-2 ring-offset-app-surface'
+																			: 'hover:-translate-y-0.5 hover:border-app-primary/35'
+																	}`}
+																	on:click={() => {
+																		selectedTagColor = color.value;
+																		tagColorPickerOpen = false;
+																	}}
+																></button>
+															{/each}
+														</div>
+													</div>
+												{/if}
+											</div>
+											<button
+												type="button"
+												class="ml-0.5 rounded-full bg-app-primary p-1 text-white transition hover:bg-app-primary-hover"
+												aria-label="Add tag"
+												on:click={() => addTag(tagSearch || 'New Tag', selectedTagColor)}
+											>
+												<Check size={11} />
+											</button>
+										</div>
+									</div>
+									{#if recentTags.length}
+										<div class="flex flex-wrap items-center gap-1.5">
+											{#each recentTags as tag (tag.id)}
+												<button
+													type="button"
+													class={`rounded-full px-2 py-0.5 text-[11px] font-semibold transition hover:opacity-100 ${getTagToneClasses(tag.color)}`}
+													on:click={() => addTag(tag.label, tag.color)}
+												>
+													{tag.label}
+												</button>
+											{/each}
+										</div>
+									{/if}
+								</div>
+
+								{#if explicitLinkedTasks.length || implicitReferenceIds.length}
+									<div class="flex flex-col gap-1.5 sm:col-span-2">
+										<span class="text-[10px] font-bold uppercase tracking-[0.2em] text-app-subtext">Linked tasks</span>
+										<div class="space-y-1.5">
+											{#each explicitLinkedTasks as linkedPlacement (linkedPlacement.task.id)}
+												<div class="flex items-center justify-between gap-2 rounded-lg border border-app-border bg-app-bg/40 px-3 py-2">
+													<button
+														type="button"
+														class="min-w-0 flex-1 text-left"
+														on:click={() =>
+															void handleReferenceNavigate({
+																kind: 'task',
+																id: linkedPlacement.task.id,
+																label: linkedPlacement.task.title,
+																searchText: linkedPlacement.task.title,
+																columnId: linkedPlacement.columnId,
+																columnTitle: linkedPlacement.columnTitle
+															})}
+													>
+														<p class="truncate text-sm font-medium text-app-text">{linkedPlacement.task.title}</p>
+														<p class="text-[11px] text-app-subtext">{linkedPlacement.columnTitle}</p>
+													</button>
+													{#if onUnlinkLinkedTask}
+														<button
+															type="button"
+															class="inline-flex items-center gap-1 rounded-md border border-app-border px-2 py-1 text-[11px] font-semibold text-app-subtext transition hover:border-rose-400/40 hover:text-rose-300"
+															on:click={() => {
+																onUnlinkLinkedTask?.(linkedPlacement.task.id);
+																mutateDraft(
+																	(current) => ({
+																		...current,
+																		linkedTaskIds: normalizeLinkedTaskIds(current.linkedTaskIds).filter(
+																			(entry) => entry !== linkedPlacement.task.id
+																		)
+																	}),
+																	'immediate'
+																);
+															}}
+														>
+															<Unlink size={12} />
+															Unlink
+														</button>
+													{/if}
+												</div>
+											{/each}
+											{#if implicitReferenceIds.length}
+												<p class="px-1 text-[11px] text-app-subtext">
+													Also referenced in description: {implicitReferenceIds.length} task{implicitReferenceIds.length === 1 ? '' : 's'}
+												</p>
+											{/if}
+										</div>
+									</div>
+								{/if}
+							</div>
 						{/if}
-						<button
-							type="button"
-							class="inline-flex items-center gap-1.5 rounded-full border border-app-border bg-app-element px-3 py-1.5 text-[11px] font-semibold text-app-text transition hover:border-app-primary/35 hover:text-app-primary"
-							on:click={() => void handleCopyDescriptionMarkdown()}
-						>
-							<Copy size={12} />
-							Copy Markdown
-						</button>
-					</div>
-				</div>
-				<div class="task-modal__description-editor">
-					<MarkdownBlockEditor
-						value={draft.description || ''}
-						{assetUrls}
-						{referenceOptions}
-						onReferenceNavigate={handleReferenceNavigate}
-						onEmbedDelete={handleEmbeddedImageDelete}
-						onEmbedAddToChat={handleEmbeddedImageAddToChat}
-						onChange={(nextValue, options) =>
-							mutateDraft(
-								(current) => ({
-									...current,
-									description: nextValue
-								}),
-								options?.immediate ? 'immediate' : 'debounced'
-							)}
-						onImageUpload={handleEmbedUpload}
-						onCheckboxToggle={toggleDescriptionCheckbox}
-						placeholder={'## Notes\n- Structure the task\n- Add context\n- Paste images'}
-					/>
-				</div>
-			</div>
 
-			<div class="border-t border-app-border pt-4">
-				<div class="mb-3 flex items-center justify-between gap-3">
-					<div class="flex items-center gap-2 text-xs font-semibold text-app-subtext">
-						<Paperclip size={13} />
-						Attachments
+						{#if activeTab === 'files'}
+							<div>
+								{#if detailsLoading && !taskAssets.length && !pendingUploads.length}
+									<p class="text-sm text-app-subtext">Loading attachments…</p>
+								{:else}
+									<div class="flex gap-3 overflow-x-auto pb-2">
+										{#each pendingUploads as pendingUpload (`pending-${pendingUpload.tempId}`)}
+											<div class="w-[14rem] shrink-0 rounded-lg border border-app-border bg-app-bg/40 p-2.5">
+												{#if isImageMimeType(pendingUpload.mimeType) && assetUrls[`pending:${pendingUpload.tempId}`]}
+													<img src={assetUrls[`pending:${pendingUpload.tempId}`]} alt={pendingUpload.name} class="mb-2 h-24 w-full rounded border border-app-border object-cover" />
+												{/if}
+												<div class="flex items-start justify-between gap-2">
+													<div class="min-w-0">
+														<p class="truncate text-sm font-semibold text-app-text">{pendingUpload.name}</p>
+														<p class="mt-0.5 text-[10px] uppercase tracking-[0.18em] text-app-subtext">{pendingUpload.kind}</p>
+													</div>
+													<LoaderCircle size={14} class="animate-spin text-app-primary" />
+												</div>
+											</div>
+										{/each}
+										{#each taskAssets as asset (asset.id)}
+											<div class="w-[14rem] shrink-0 rounded-lg border border-app-border bg-app-bg/40 p-2.5">
+												{#if isImageMimeType(asset.mimeType) && assetUrls[asset.id]}
+													<img src={assetUrls[asset.id]} alt={asset.name} class="mb-2 h-24 w-full rounded border border-app-border object-cover" />
+												{/if}
+												<div class="flex items-start justify-between gap-2">
+													<div class="min-w-0">
+														<p class="truncate text-sm font-semibold text-app-text">{asset.name}</p>
+														<p class="mt-0.5 text-[10px] uppercase tracking-[0.18em] text-app-subtext">{asset.mimeType || asset.kind}</p>
+														<p class="mt-1.5 text-xs text-app-subtext">Shared by {getMemberLabel(asset.uploadedByUserId)}</p>
+													</div>
+													<div class="flex shrink-0 items-center gap-1">
+														<button type="button" class="rounded border border-app-border p-1.5 text-app-subtext transition hover:border-app-primary/35 hover:text-app-primary" on:click={() => void handleDownloadAsset(asset)}>
+															<Download size={12} />
+														</button>
+														<button type="button" class="rounded border border-app-border p-1.5 text-app-subtext transition hover:border-rose-500/35 hover:text-rose-300" on:click={() => void handleDeleteAsset(asset)}>
+															<Trash2 size={12} />
+														</button>
+													</div>
+												</div>
+											</div>
+										{/each}
+										{#if !taskAssets.length && !pendingUploads.length}
+											<div class="rounded-lg border border-dashed border-app-border px-4 py-4 text-sm text-app-subtext">
+												No files attached yet.
+											</div>
+										{/if}
+									</div>
+								{/if}
+							</div>
+						{/if}
+
+						{#if activeTab === 'comments'}
+							<div>
+								<div class="divide-y divide-app-border">
+									{#if taskComments.length}
+										{#each taskComments as comment (comment.id)}
+											<div class="py-2.5">
+												<div class="flex items-center justify-between gap-3 text-[10px] uppercase tracking-[0.18em] text-app-subtext">
+													<span>{getMemberLabel(comment.authorUserId)}</span>
+													<span>{new Date(comment.createdAt).toLocaleString()}</span>
+												</div>
+												<p class="mt-1 text-sm leading-relaxed text-app-text">{comment.body}</p>
+											</div>
+										{/each}
+									{:else if detailsLoading}
+										<p class="py-2 text-sm text-app-subtext">Loading comments…</p>
+									{:else}
+										<p class="py-2 text-sm text-app-subtext">No comments yet.</p>
+									{/if}
+								</div>
+
+								<div class="mt-3 rounded-lg border border-app-border bg-app-bg/30 px-3 py-2">
+									<textarea
+										bind:value={commentDraft}
+										rows="2"
+										class="w-full resize-y bg-transparent text-sm leading-relaxed text-app-text outline-none placeholder:text-app-subtext/45"
+										placeholder="Add a comment for collaborators…"
+									></textarea>
+									<div class="mt-2 flex items-center justify-between gap-3">
+										<div class="text-xs text-rose-300">
+											{commentErrorMessage || detailsErrorMessage}
+										</div>
+										<button
+											type="button"
+											class="inline-flex items-center gap-1.5 rounded-md bg-app-primary px-2.5 py-1 text-xs font-semibold text-white transition hover:bg-app-primary-hover disabled:cursor-not-allowed disabled:opacity-50"
+											disabled={commentSubmitting || !commentDraft.trim().length}
+											on:click={() => void handleAddComment()}
+										>
+											{#if commentSubmitting}
+												<LoaderCircle size={12} class="animate-spin" />
+											{:else}
+												<Check size={12} />
+											{/if}
+											Comment
+										</button>
+									</div>
+								</div>
+							</div>
+						{/if}
 					</div>
-					<div class="flex items-center gap-2">
+				</div>
+			{/if}
+
+			<!-- Tab strip (fixed at bottom) -->
+			<div class="shrink-0 border-t border-app-border bg-app-surface">
+				<div class={`mx-auto flex w-full max-w-3xl items-center gap-1 ${isMobile ? 'px-4' : 'px-5'}`}>
+					<button
+						type="button"
+						aria-pressed={activeTab === 'properties'}
+						title="Properties"
+						class={`inline-flex flex-1 items-center justify-center gap-1.5 border-t-2 px-3 py-2 text-[11px] font-bold uppercase tracking-[0.18em] transition ${
+							activeTab === 'properties'
+								? 'border-app-primary text-app-text'
+								: 'border-transparent text-app-subtext hover:text-app-text'
+						}`}
+						on:click={() => (activeTab = activeTab === 'properties' ? null : 'properties')}
+					>
+						<Lock size={13} />
+						<span class="hidden sm:inline">Properties</span>
+						{#if explicitLinkedTasks.length + implicitReferenceIds.length > 0}
+							<span class="rounded-full bg-app-element px-1.5 py-0.5 text-[10px] tracking-normal text-app-subtext">
+								{explicitLinkedTasks.length + implicitReferenceIds.length}
+							</span>
+						{/if}
+					</button>
+					<button
+						type="button"
+						aria-pressed={activeTab === 'files'}
+						title="Files"
+						class={`inline-flex flex-1 items-center justify-center gap-1.5 border-t-2 px-3 py-2 text-[11px] font-bold uppercase tracking-[0.18em] transition ${
+							activeTab === 'files'
+								? 'border-app-primary text-app-text'
+								: 'border-transparent text-app-subtext hover:text-app-text'
+						}`}
+						on:click={() => (activeTab = activeTab === 'files' ? null : 'files')}
+					>
+						<Paperclip size={13} />
+						<span class="hidden sm:inline">Files</span>
+						{#if taskAssets.length + pendingUploads.length > 0}
+							<span class="rounded-full bg-app-element px-1.5 py-0.5 text-[10px] tracking-normal text-app-subtext">
+								{taskAssets.length + pendingUploads.length}
+							</span>
+						{/if}
+					</button>
+					<button
+						type="button"
+						aria-pressed={activeTab === 'comments'}
+						title="Comments"
+						class={`inline-flex flex-1 items-center justify-center gap-1.5 border-t-2 px-3 py-2 text-[11px] font-bold uppercase tracking-[0.18em] transition ${
+							activeTab === 'comments'
+								? 'border-app-primary text-app-text'
+								: 'border-transparent text-app-subtext hover:text-app-text'
+						}`}
+						on:click={() => (activeTab = activeTab === 'comments' ? null : 'comments')}
+					>
+						<MessageSquare size={13} />
+						<span class="hidden sm:inline">Comments</span>
+						{#if taskComments.length > 0}
+							<span class="rounded-full bg-app-element px-1.5 py-0.5 text-[10px] tracking-normal text-app-subtext">
+								{taskComments.length}
+							</span>
+						{/if}
+					</button>
+					{#if activeTab === 'files'}
 						<button
 							type="button"
-							class="inline-flex items-center gap-2 rounded-full border border-app-border bg-app-element px-3 py-2 text-xs font-semibold text-app-text transition hover:border-app-primary/35 hover:text-app-primary"
+							class="ml-1 inline-flex items-center gap-1.5 rounded-md border border-app-border bg-app-element/40 px-2 py-1 text-[11px] font-semibold text-app-subtext transition hover:border-app-primary/35 hover:text-app-primary"
 							on:click={() => attachmentInput?.click()}
 						>
-							<Upload size={13} />
-							Add files
+							<Upload size={11} />
+							Add
 						</button>
 						<input
 							bind:this={attachmentInput}
@@ -1187,137 +1434,7 @@
 								void handleAttachmentFiles(files);
 							}}
 						/>
-					</div>
-				</div>
-
-				{#if detailsLoading && !taskAssets.length && !pendingUploads.length}
-					<p class="text-sm text-app-subtext">Loading attachments…</p>
-				{:else}
-					<div class="flex gap-3 overflow-x-auto pb-2">
-						{#each pendingUploads as pendingUpload (`pending-${pendingUpload.tempId}`)}
-							<div class="w-[15rem] shrink-0 rounded-md border border-app-border bg-app-bg/55 p-3">
-								{#if isImageMimeType(pendingUpload.mimeType) && assetUrls[`pending:${pendingUpload.tempId}`]}
-									<img
-										src={assetUrls[`pending:${pendingUpload.tempId}`]}
-										alt={pendingUpload.name}
-										class="mb-3 h-28 w-full rounded border border-app-border object-cover"
-									/>
-								{/if}
-								<div class="flex items-start justify-between gap-2">
-									<div class="min-w-0">
-										<p class="truncate text-sm font-semibold text-app-text">{pendingUpload.name}</p>
-										<p class="mt-1 text-[11px] uppercase tracking-[0.18em] text-app-subtext">
-											{pendingUpload.kind}
-										</p>
-									</div>
-									<LoaderCircle size={15} class="animate-spin text-app-primary" />
-								</div>
-							</div>
-						{/each}
-
-						{#each taskAssets as asset (asset.id)}
-							<div class="w-[15rem] shrink-0 rounded-md border border-app-border bg-app-bg/55 p-3">
-								{#if isImageMimeType(asset.mimeType) && assetUrls[asset.id]}
-									<img
-										src={assetUrls[asset.id]}
-										alt={asset.name}
-										class="mb-3 h-28 w-full rounded border border-app-border object-cover"
-									/>
-								{/if}
-								<div class="flex items-start justify-between gap-3">
-									<div class="min-w-0">
-										<p class="truncate text-sm font-semibold text-app-text">{asset.name}</p>
-										<p class="mt-1 text-[11px] uppercase tracking-[0.18em] text-app-subtext">
-											{asset.mimeType || asset.kind}
-										</p>
-										<p class="mt-2 text-xs text-app-subtext">
-											Shared by {getMemberLabel(asset.uploadedByUserId)}
-										</p>
-									</div>
-									<div class="flex shrink-0 items-center gap-1">
-										<button
-											type="button"
-											class="rounded border border-app-border p-2 text-app-subtext transition hover:border-app-primary/35 hover:text-app-primary"
-											on:click={() => void handleDownloadAsset(asset)}
-										>
-											<Download size={13} />
-										</button>
-										<button
-											type="button"
-											class="rounded border border-app-border p-2 text-app-subtext transition hover:border-rose-500/35 hover:text-rose-300"
-											on:click={() => void handleDeleteAsset(asset)}
-										>
-											<Trash2 size={13} />
-										</button>
-									</div>
-								</div>
-							</div>
-						{/each}
-
-						{#if !taskAssets.length && !pendingUploads.length}
-							<div
-								class="rounded-md border border-dashed border-app-border px-4 py-5 text-sm text-app-subtext"
-							>
-								No files attached yet.
-							</div>
-						{/if}
-					</div>
-				{/if}
-			</div>
-
-			<div class="border-t border-app-border pt-4">
-				<div class="mb-3 flex items-center gap-2 text-xs font-semibold text-app-subtext">
-					<MessageSquare size={13} />
-					Comments
-				</div>
-
-				<div class="rounded-md border border-app-border bg-app-bg/45">
-					<div class="space-y-0 divide-y divide-app-border">
-						{#if taskComments.length}
-							{#each taskComments as comment (comment.id)}
-								<div class="px-3 py-3">
-									<div
-										class="flex items-center justify-between gap-3 text-[11px] uppercase tracking-[0.18em] text-app-subtext"
-									>
-										<span>{getMemberLabel(comment.authorUserId)}</span>
-										<span>{new Date(comment.createdAt).toLocaleString()}</span>
-									</div>
-									<p class="mt-2 text-sm leading-relaxed text-app-text">{comment.body}</p>
-								</div>
-							{/each}
-						{:else if detailsLoading}
-							<p class="px-3 py-4 text-sm text-app-subtext">Loading comments…</p>
-						{:else}
-							<p class="px-3 py-4 text-sm text-app-subtext">No comments yet.</p>
-						{/if}
-					</div>
-
-					<div class="border-t border-app-border px-3 py-3">
-						<textarea
-							bind:value={commentDraft}
-							rows="3"
-							class="w-full resize-y bg-transparent text-sm leading-relaxed text-app-text outline-none placeholder:text-app-subtext/45"
-							placeholder="Add a comment for collaborators…"
-						></textarea>
-						<div class="mt-3 flex items-center justify-between gap-3">
-							<div class="text-sm text-rose-300">
-								{commentErrorMessage || detailsErrorMessage}
-							</div>
-							<button
-								type="button"
-								class="inline-flex items-center gap-2 rounded bg-app-primary px-3 py-2 text-sm font-semibold text-white transition hover:bg-app-primary-hover disabled:cursor-not-allowed disabled:opacity-50"
-								disabled={commentSubmitting || !commentDraft.trim().length}
-								on:click={() => void handleAddComment()}
-							>
-								{#if commentSubmitting}
-									<LoaderCircle size={14} class="animate-spin" />
-								{:else}
-									<Check size={14} />
-								{/if}
-								Comment
-							</button>
-						</div>
-					</div>
+					{/if}
 				</div>
 			</div>
 		</div>
@@ -1325,8 +1442,34 @@
 </div>
 
 <style>
+	.task-modal__doc {
+		display: flex;
+		flex-direction: column;
+	}
+
+	:global(.task-modal__title-editor .markdown-editor__surface),
+	:global(.task-modal__title-editor .markdown-editor__prosemirror) {
+		min-height: auto;
+	}
+
+	:global(.task-modal__title-editor .markdown-editor__surface) {
+		padding-bottom: 0.25rem;
+	}
+
+	:global(.task-modal__title-editor .markdown-editor__prosemirror) {
+		font-family: var(--font-display), ui-serif, Georgia, serif;
+		font-size: 1.375rem;
+		font-weight: 700;
+		line-height: 1.25;
+		letter-spacing: -0.02em;
+	}
+
+	:global(.task-modal__description-editor .markdown-editor__surface) {
+		padding-top: 0.25rem;
+	}
+
 	:global(.task-modal__description-editor .markdown-editor__surface),
 	:global(.task-modal__description-editor .markdown-editor__prosemirror) {
-		min-height: 8rem;
+		min-height: 7rem;
 	}
 </style>
