@@ -11,11 +11,9 @@ FROM node:22-bookworm-slim
 WORKDIR /app
 ENV NODE_ENV=production
 COPY package.json package-lock.json .npmrc ./
-COPY packages/kainbu-core/package.json packages/kainbu-core/
-COPY packages/kainbu-cli/package.json packages/kainbu-cli/
-RUN npm ci --omit=dev
+# API does not use npm workspaces; skip CLI prepare/build and install root prod deps only.
+RUN npm ci --omit=dev --workspaces=false --ignore-scripts
 COPY --from=build /app/server ./server
 COPY --from=build /app/src/lib/kainbu ./src/lib/kainbu
-COPY --from=build /app/packages/kainbu-core ./packages/kainbu-core
 EXPOSE 8788
 CMD ["npx", "tsx", "server/index.ts"]
