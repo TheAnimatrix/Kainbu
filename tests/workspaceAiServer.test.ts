@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
 	WorkspaceAiRequestError,
+	applyThinkingLevel,
 	getWorkspaceAiModels,
 	resolveWorkspaceAiModel,
 	validateWorkspaceAiRequest
@@ -29,6 +30,38 @@ describe('workspace AI model catalog', () => {
 		expect(() => resolveWorkspaceAiModel('missing-model')).toThrowError(
 			'Unknown modelId "missing-model".'
 		);
+	});
+});
+
+describe('workspace AI thinking config', () => {
+	const grokModel = DEFAULT_AI_MODEL_CONFIGS.find((entry) => entry.id === 'grok 0.1 build');
+	const geminiModel = DEFAULT_AI_MODEL_CONFIGS[0];
+
+	it('preserves model-specific reasoning fields when applying a level', () => {
+		expect(applyThinkingLevel(grokModel!, 'high')).toEqual({
+			...grokModel,
+			thinking: {
+				type: 'enabled',
+				budget_tokens: 8192,
+				temperature: 0.7,
+				level: 'high'
+			}
+		});
+	});
+
+	it('adds reasoning config for models without defaults', () => {
+		expect(applyThinkingLevel(geminiModel, 'low')).toEqual({
+			...geminiModel,
+			thinking: {
+				type: 'enabled',
+				budget_tokens: 2048,
+				level: 'low'
+			}
+		});
+	});
+
+	it('clears reasoning when thinking is disabled', () => {
+		expect(applyThinkingLevel(grokModel!, 'none').thinking).toBeNull();
 	});
 });
 

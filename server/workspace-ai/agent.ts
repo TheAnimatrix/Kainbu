@@ -1,35 +1,44 @@
-import fs from "fs/promises";
-import path from "path";
 import type { AiProgressEvent, AiWorkspaceRequest, AiWorkspaceResponse, WorkspaceAction } from "./types.js";
-type OpenRouterMessage = any;
 import { randomUUID } from "crypto";
-import { buildSystemPrompt } from "./prompt.js";
-import { VirtualFSTools, OpenRouterTools, webSearch } from "./tools.js";
 import {
-    canMutateWorkspacePath,
+    buildQueuedTaskCardsContext,
+    buildStaticSystemPrompt,
+    buildVariableSystemContext,
+    resolveMaxModelTurns,
+} from "./prompt.js";
+import { OpenRouterTools } from "./tools.js";
+import {
     cleanupMaterializedWorkspace,
     collectWorkspaceProposals,
     materializeWorkspace,
-    recordWorkspaceMutation,
-    resolveWorkspaceFilePath,
-    validateWorkspaceFile,
 } from "./sync.js";
-import { WORKSPACE_AI_MAX_TOKENS } from "./constants.js";
+import {
+    WORKSPACE_AI_BOARD_INDEX_MAX_LINES,
+    WORKSPACE_AI_MAX_TOOL_CALLS,
+    WORKSPACE_AI_TURN_NOTE_MAX_CHARS,
+} from "./constants.js";
 import { applyThinkingLevel, resolveWorkspaceAiModel, validateWorkspaceAiRequest } from "./models.js";
-import { getEnv } from "../env.js";
+import {
+    buildBoardRefIndex,
+    sanitizeUserFacingReply,
+} from "./kanban-ops.js";
+import {
+    fetchCompletionJson,
+    fetchCompletionStream,
+    type OpenRouterMessage,
+} from "./openrouter-stream.js";
+import {
+    createToolRunCounters,
+    executeWorkspaceTool,
+    humanizeToolCall,
+    summarizeToolResult,
+} from "./tool-handlers.js";
+
+const INTERNAL_TURN_NOTE_PREFIX = "[Internal turn note — do not repeat to user]";
 
 const truncate = (value: string | undefined, maxLength = 300) => {
     if (!value) return "";
     return value.length > maxLength ? `${value.slice(0, maxLength)}...` : value;
-};
-
-const stripTempDir = (text: string, tempDir: string) => {
-    const normalizedTempDir = tempDir.replaceAll("\\", "/");
-    return text
-        .replaceAll(`${tempDir}${path.sep}`, "")
-        .replaceAll(tempDir, "")
-        .replaceAll(`${normalizedTempDir}/`, "")
-        .replaceAll(normalizedTempDir, "");
 };
 
 const parseToolArguments = (rawArguments: unknown) => {
@@ -44,49 +53,82 @@ const parseToolArguments = (rawArguments: unknown) => {
     return {};
 };
 
-const messageContent = (value: unknown) => (typeof value === "string" ? value : "");
-
-const fetchCompletion = async (
-    messages: OpenRouterMessage[],
-    useTools: boolean,
-    modelConfig: ReturnType<typeof resolveWorkspaceAiModel>
-) => {
-    const apiKey = getEnv("OPENROUTER_API_KEY", "");
-    if (!apiKey) throw new Error("Missing OPENROUTER_API_KEY");
-
-    const body: Record<string, unknown> = {
-        model: modelConfig.model,
-        max_tokens: WORKSPACE_AI_MAX_TOKENS,
-        messages,
-    };
-    if (modelConfig.thinking) {
-        body.reasoning = modelConfig.thinking;
+const messageContent = (value: unknown) => {
+    if (typeof value === "string") {
+        return value;
     }
 
-    if (useTools) {
-        body.tools = OpenRouterTools;
-        body.tool_choice = "auto";
+    if (Array.isArray(value)) {
+        return value
+            .map((part) => {
+                if (!part || typeof part !== "object") return "";
+                const entry = part as Record<string, unknown>;
+                if (entry.type === "text" && typeof entry.text === "string") {
+                    return entry.text;
+                }
+                return "";
+            })
+            .join("");
     }
 
-    const res = await fetch("https://openrouter.ai/api/v1/chat/completions", {
-        method: "POST",
-        headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${apiKey}`,
-            "HTTP-Referer": "https://kainbu.test",
-            "X-Title": "Kainbu"
-        },
-        body: JSON.stringify(body)
+    return "";
+};
+
+const getCompletionChoice = (response: unknown) => {
+    if (!response || typeof response !== "object") {
+        throw new Error("OpenRouter returned an empty or invalid response.");
+    }
+
+    const payload = response as Record<string, unknown>;
+    const choices = payload.choices;
+    if (!Array.isArray(choices) || choices.length === 0) {
+        const errorMessage =
+            typeof payload.error === "object" &&
+            payload.error &&
+            "message" in payload.error &&
+            typeof payload.error.message === "string"
+                ? payload.error.message
+                : undefined;
+        throw new Error(
+            errorMessage
+                ? `OpenRouter error: ${errorMessage}`
+                : "OpenRouter returned no completion choices."
+        );
+    }
+
+    const choice = choices[0];
+    if (!choice || typeof choice !== "object") {
+        throw new Error("OpenRouter returned an invalid completion choice.");
+    }
+
+    return choice as Record<string, unknown>;
+};
+
+const getCompletionMessage = (choice: Record<string, unknown>) => {
+    const message = choice.message;
+    if (!message || typeof message !== "object") {
+        const finishReason =
+            typeof choice.finish_reason === "string" ? choice.finish_reason : "unknown";
+        throw new Error(`OpenRouter returned no assistant message (finish_reason=${finishReason}).`);
+    }
+
+    return message as Record<string, unknown>;
+};
+
+const appendInternalTurnNote = (messages: OpenRouterMessage[], turn: number, note: string) => {
+    const trimmed = note.trim().slice(0, WORKSPACE_AI_TURN_NOTE_MAX_CHARS);
+    if (!trimmed) return;
+
+    messages.push({
+        role: "user",
+        content: `${INTERNAL_TURN_NOTE_PREFIX}\nTurn ${turn}: ${trimmed}`,
     });
-
-    if (!res.ok) throw new Error("OpenRouter error: " + await res.text());
-    return res.json();
 };
 
 export const handleWorkspaceAiRequest = async (
     req: AiWorkspaceRequest,
     auth: string | undefined,
-    progressReporter?: (p: any) => void
+    progressReporter?: (p: AiProgressEvent) => void
 ): Promise<AiWorkspaceResponse> => {
     validateWorkspaceAiRequest(req);
     const requestId = randomUUID();
@@ -98,15 +140,23 @@ export const handleWorkspaceAiRequest = async (
             console.log(`[WorkspaceAI][${requestId}] ${message}`);
         }
     };
+
+    const thinkingId = randomUUID();
+    const draftId = randomUUID();
+    let lastThinkingEmit = 0;
+    let lastDraftEmit = 0;
+    let accumulatedReasoning = "";
+
     const emitProgress = (
         kind: AiProgressEvent["kind"],
         message: string,
-        detail?: string
+        detail?: string,
+        id?: string
     ) => {
         if (!progressReporter) return;
 
         progressReporter({
-            id: randomUUID(),
+            id: id || randomUUID(),
             kind,
             message,
             ...(detail ? { detail } : {}),
@@ -114,187 +164,211 @@ export const handleWorkspaceAiRequest = async (
         } satisfies AiProgressEvent);
     };
 
+    const emitThinking = (text: string, force = false) => {
+        const now = Date.now();
+        if (!force && now - lastThinkingEmit < 50) return;
+        lastThinkingEmit = now;
+        emitProgress("thinking", text || "Thinking…", undefined, thinkingId);
+    };
+
+    const emitDraft = (text: string, force = false) => {
+        const now = Date.now();
+        if (!force && now - lastDraftEmit < 50) return;
+        lastDraftEmit = now;
+        emitProgress("assistant_draft", text, undefined, draftId);
+    };
+
     const baseModelConfig = resolveWorkspaceAiModel(req.modelId);
     const modelConfig = applyThinkingLevel(baseModelConfig, req.thinkingLevel);
+    const kanbanFullAllowed = req.scope?.workspaceSummary?.kanbanFullAllowed ?? true;
+    const maxTurns = resolveMaxModelTurns(kanbanFullAllowed);
+
     log("Prompt received", {
         projectId: req.projectId,
         modelId: req.modelId,
-        scope: req.scope,
+        kanbanFullAllowed,
         historyCount: req.history.length,
-        historySnippet: req.history.map((m) => ({ role: m.role, text: truncate(m.text, 200) }))
     });
 
-    emitProgress("status", "Preparing the current board and page for review.");
+    emitProgress("status", "Preparing workspace…");
     const workspace = await materializeWorkspace(req.projectId, auth, req.scope);
+    workspace.boardRefs = buildBoardRefIndex(
+        workspace.board.kanbanData,
+        workspace.board.name,
+        WORKSPACE_AI_BOARD_INDEX_MAX_LINES
+    );
+
+    const staticSystemPrompt = buildStaticSystemPrompt(maxTurns);
+    const variableSystemContext = buildVariableSystemContext(req.scope, {
+        boardIndexText: kanbanFullAllowed ? workspace.boardRefs.indexText : undefined,
+        kanbanFullAllowed,
+        kanban: workspace.board.kanbanData,
+    });
+
+    const queuedCardsContext = buildQueuedTaskCardsContext(req.scope);
+    const lastUserIndex = [...req.history].map((m, i) => ({ m, i })).reverse().find((entry) => entry.m.role === "user")?.i;
+    const historyMessages: OpenRouterMessage[] = req.history.map((m, index) => {
+        if (m.role !== "user" || !queuedCardsContext || index !== lastUserIndex) {
+            return { role: m.role, content: m.text };
+        }
+        return { role: m.role, content: `${m.text}\n\n${queuedCardsContext}`.trim() };
+    });
 
     let messages: OpenRouterMessage[] = [
-        { role: "system", content: buildSystemPrompt(req.scope) },
-        ...req.history.map(m => ({ role: m.role, content: m.text } as OpenRouterMessage))
+        { role: "system", content: staticSystemPrompt },
+        ...(variableSystemContext ? [{ role: "system", content: variableSystemContext }] : []),
+        ...historyMessages,
     ];
 
     let reply = "";
     let turns = 0;
-    let toolCallCount = 0;
-    const maxTurns = 5;
+    const counters = createToolRunCounters();
+    let lastCacheUsage = 0;
 
     try {
         while (turns < maxTurns) {
             turns++;
-            emitProgress("status", "AI is reviewing the current board and page.");
-            log("AI requesting", {
-                turn: turns,
-                useTools: true,
-                model: modelConfig.model,
-                messagesSent: messages.length
+            emitProgress("status", "Working…");
+            log("AI requesting", { turn: turns, model: modelConfig.model });
+
+            const { response, usage } = await fetchCompletionJson(messages, true, modelConfig, {
+                promptCache: true,
             });
+            if (usage.cachedTokens) lastCacheUsage = usage.cachedTokens;
+            log("OpenRouter usage", { turn: turns, ...usage });
 
-            const response = await fetchCompletion(messages, true, modelConfig);
-            const choice = response.choices[0];
-            const message = choice.message;
+            const choice = getCompletionChoice(response);
+            const message = getCompletionMessage(choice);
 
-            log("AI response received", {
-                turn: turns,
-                role: message.role,
-                contentSnippet: truncate(messageContent(message.content), 300),
-                toolCalls: Array.isArray(message.tool_calls) ? message.tool_calls.length : 0,
-                finishReason: choice.finish_reason,
-                responseUsage: response.usage ? {
-                    prompt_tokens: response.usage.prompt_tokens,
-                    completion_tokens: response.usage.completion_tokens,
-                    total_tokens: response.usage.total_tokens
-                } : undefined
-            });
+            const toolCalls = Array.isArray(message.tool_calls) ? message.tool_calls : [];
+            log("AI response received", { turn: turns, toolCalls: toolCalls.length });
 
-            messages.push(message);
+            if (toolCalls.length > 0) {
+                messages.push(message);
+                const toolNames: string[] = [];
 
-            if (message.tool_calls && message.tool_calls.length > 0) {
-                for (const call of message.tool_calls) {
-                    toolCallCount += 1;
-                    const name = call.function.name;
+                for (const call of toolCalls) {
+                    const name =
+                        call.function && typeof call.function === "object"
+                            ? String((call.function as Record<string, unknown>).name || "")
+                            : "";
+                    toolNames.push(name);
                     let args: Record<string, unknown>;
 
                     try {
-                        args = parseToolArguments(call.function.arguments);
+                        args = parseToolArguments(
+                            call.function && typeof call.function === "object"
+                                ? (call.function as Record<string, unknown>).arguments
+                                : {}
+                        );
                     } catch (error) {
-                        const result = `Error: Invalid tool arguments. ${error instanceof Error ? error.message : ""}`.trim();
+                        const result = `{"ok":false,"error":"Invalid tool arguments. ${error instanceof Error ? error.message : ""}"}`;
                         messages.push({
                             role: "tool",
                             tool_call_id: call.id,
-                            content: result
+                            content: result,
                         });
                         continue;
                     }
 
-                    log("Tool call requested", {
-                        turn: turns,
-                        tool: name,
-                        args
-                    });
-                    emitProgress("tool_call", `Using ${name}.`, truncate(JSON.stringify(args), 180));
+                    const label = humanizeToolCall(name, args, workspace);
+                    emitProgress("tool_call", label, truncate(JSON.stringify(args), 180));
 
                     let result = "";
-
                     try {
-                        if (name === "read") {
-                            const filepath = resolveWorkspaceFilePath(workspace, String(args.filepath || ""));
-                            result = await VirtualFSTools.read(
-                                filepath,
-                                typeof args.startLine === "number" ? args.startLine : undefined,
-                                typeof args.endLine === "number" ? args.endLine : undefined
-                            );
-                        } else if (name === "bash") {
-                            result = await VirtualFSTools.bash(workspace.tempDir, String(args.command || ""));
-                        } else if (name === "edit") {
-                            const filepath = resolveWorkspaceFilePath(workspace, String(args.filepath || ""));
-                            if (!canMutateWorkspacePath(workspace, filepath)) {
-                                result = "Error: Only the current board and current page can be edited in this request.";
-                            } else {
-                                const previousContent = await fs.readFile(filepath, "utf8");
-                                result = await VirtualFSTools.edit(
-                                    filepath,
-                                    String(args.searchString || ""),
-                                    String(args.replaceString || "")
-                                );
-
-                                if (result === "File edited successfully.") {
-                                    try {
-                                        await validateWorkspaceFile(workspace, filepath);
-                                        recordWorkspaceMutation(workspace, filepath);
-                                    } catch (error) {
-                                        await fs.writeFile(filepath, previousContent, "utf8");
-                                        result = `Error: ${error instanceof Error ? error.message : "Invalid file content."}`;
-                                    }
-                                }
-                            }
-                        } else if (name === "write") {
-                            const filepath = resolveWorkspaceFilePath(workspace, String(args.filepath || ""));
-                            if (!canMutateWorkspacePath(workspace, filepath)) {
-                                result = "Error: Only the current board and current page can be written in this request.";
-                            } else {
-                                const previousContent = await fs.readFile(filepath, "utf8");
-                                result = await VirtualFSTools.write(filepath, String(args.content || ""));
-
-                                if (result === "File written successfully.") {
-                                    try {
-                                        await validateWorkspaceFile(workspace, filepath);
-                                        recordWorkspaceMutation(workspace, filepath);
-                                    } catch (error) {
-                                        await fs.writeFile(filepath, previousContent, "utf8");
-                                        result = `Error: ${error instanceof Error ? error.message : "Invalid file content."}`;
-                                    }
-                                }
-                            }
-                        } else if (name === "search") {
-                            result = await VirtualFSTools.search(workspace.tempDir, String(args.query || ""));
-                        } else if (name === "web_search") {
-                            result = await webSearch(String(args.query || ""));
-                        } else {
-                            result = `Unknown tool: ${name}`;
-                        }
+                        result = await executeWorkspaceTool(
+                            name,
+                            args,
+                            workspace,
+                            req.scope,
+                            counters
+                        );
                     } catch (error) {
-                        result = `Error: ${error instanceof Error ? error.message : "Tool execution failed."}`;
+                        result = JSON.stringify({
+                            ok: false,
+                            error: error instanceof Error ? error.message : "Tool execution failed.",
+                        });
                     }
 
-                    result = stripTempDir(result, workspace.tempDir);
-                    log("Tool call response", {
-                        turn: turns,
-                        tool: name,
-                        resultSnippet: truncate(result, 500)
-                    });
-                    emitProgress("tool_result", `${name} finished.`, truncate(result, 180));
+                    emitProgress(
+                        "tool_result",
+                        summarizeToolResult(name, result),
+                        truncate(result, 180)
+                    );
 
                     messages.push({
                         role: "tool",
                         tool_call_id: call.id,
-                        content: result
+                        content: result,
                     });
                 }
-            } else {
-                reply = messageContent(message.content);
-                break;
+
+                const reasoningNote = accumulatedReasoning
+                    ? ` Reasoning snapshot: ${accumulatedReasoning.slice(0, 200)}`
+                    : "";
+                appendInternalTurnNote(
+                    messages,
+                    turns,
+                    `Completed tools: ${toolNames.join(", ") || "none"}.${reasoningNote}`
+                );
+                accumulatedReasoning = "";
+                continue;
             }
+
+            emitProgress("status", "Writing reply…");
+            accumulatedReasoning = "";
+            try {
+                const streamed = await fetchCompletionStream(
+                    messages,
+                    modelConfig,
+                    {
+                        onContentDelta: (_delta, accumulated) => emitDraft(accumulated),
+                        onReasoningDelta: (_delta, accumulated) => {
+                            accumulatedReasoning = accumulated;
+                            emitThinking(accumulated);
+                        },
+                    },
+                    { promptCache: true }
+                );
+                reply = streamed.content.trim();
+                emitDraft(reply, true);
+                if (streamed.reasoning) {
+                    accumulatedReasoning = streamed.reasoning;
+                    emitThinking(streamed.reasoning, true);
+                }
+                messages.push({ role: "assistant", content: reply });
+            } catch (streamError) {
+                log("Stream failed, using non-streamed content", { streamError });
+                reply = messageContent(message.content).trim();
+                if (reply) emitDraft(reply, true);
+            }
+            break;
         }
 
         if (!reply) {
-            log("No direct text reply from AI, requesting summary response", { turns });
-            messages.push({
-                role: "system",
-                content: "Summarize what you changed or reviewed for the user. If changes were staged, tell the user to review and apply them in the UI. Do not mention file names, file paths, or extensions."
-            });
-            const summaryResponse = await fetchCompletion(messages, false, modelConfig);
-            const summaryMessage = summaryResponse.choices?.[0]?.message;
-            log("Summary response received", {
-                contentSnippet: truncate(messageContent(summaryMessage?.content), 300),
-                responseUsage: summaryResponse.usage ? {
-                    prompt_tokens: summaryResponse.usage.prompt_tokens,
-                    completion_tokens: summaryResponse.usage.completion_tokens,
-                    total_tokens: summaryResponse.usage.total_tokens
-                } : undefined
-            });
-            reply = messageContent(summaryMessage?.content) || "I reviewed the workspace.";
+            log("No direct text reply, requesting summary", { turns });
+            appendInternalTurnNote(
+                messages,
+                turns,
+                "Summarize what you changed or reviewed. Tell the user to review staged changes in the UI if any."
+            );
+            emitProgress("status", "Summarizing…");
+            const streamed = await fetchCompletionStream(
+                messages,
+                modelConfig,
+                {
+                    onContentDelta: (_delta, accumulated) => emitDraft(accumulated),
+                    onReasoningDelta: (_delta, accumulated) => emitThinking(accumulated),
+                },
+                { promptCache: true }
+            );
+            reply = streamed.content.trim() || "I reviewed the workspace.";
+            emitDraft(reply, true);
         }
 
-        const proposals = await collectWorkspaceProposals(workspace);
+        reply = sanitizeUserFacingReply(reply);
+
+        const proposals = await collectWorkspaceProposals(workspace, req.scope);
         const toolActions = [...new Set(proposals.map((proposal) => proposal.target as WorkspaceAction))];
 
         if (proposals.length > 0) {
@@ -303,24 +377,18 @@ export const handleWorkspaceAiRequest = async (
                     ? "Review the staged change below, then apply it to save it to the project."
                     : "Review the staged changes below, then apply them to save them to the project.";
             reply = reply.trim() ? `${reply.trim()}\n\n${applyLine}` : applyLine;
-            emitProgress("status", "Changes are staged and ready to review.");
+            emitProgress("status", "Changes are ready to review.");
         } else if (workspace.board.editCallCount > 0 || workspace.page.editCallCount > 0) {
             const noStageLine = "No board or page changes were staged to apply.";
             reply = reply.trim() ? `${reply.trim()}\n\n${noStageLine}` : noStageLine;
             emitProgress("status", "No project changes were staged.");
         }
 
-        reply = stripTempDir(reply, workspace.tempDir);
         log("Final reply", {
             replySnippet: truncate(reply, 300),
             turns,
-            modelId: modelConfig.id,
-            proposals: proposals.map((proposal) => ({
-                id: proposal.id,
-                target: proposal.target,
-                scope: proposal.scope,
-                editCallCount: proposal.editCallCount,
-            }))
+            proposals: proposals.length,
+            cachedTokens: lastCacheUsage,
         });
 
         return {
@@ -333,12 +401,13 @@ export const handleWorkspaceAiRequest = async (
             usage: {
                 modelTurnsUsed: turns,
                 modelTurnsMax: maxTurns,
-                toolCallsUsed: toolCallCount,
-                toolCallsMax: 0,
+                toolCallsUsed: counters.toolCalls,
+                toolCallsMax: WORKSPACE_AI_MAX_TOOL_CALLS,
                 kanbanReadsUsed: 0,
                 kanbanReadsMax: 0,
                 scratchpadReadsUsed: 0,
-                scratchpadReadsMax: 0
+                scratchpadReadsMax: 0,
+                ...(counters.toolCalls >= WORKSPACE_AI_MAX_TOOL_CALLS ? { capReached: true } : {}),
             },
             highlightedTaskIds: proposals
                 .filter((proposal) => proposal.target === "kanban")
@@ -350,3 +419,5 @@ export const handleWorkspaceAiRequest = async (
         await cleanupMaterializedWorkspace(workspace);
     }
 };
+
+void OpenRouterTools;

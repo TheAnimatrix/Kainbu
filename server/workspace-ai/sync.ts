@@ -21,6 +21,7 @@ import type {
     Task,
 } from "./types.js";
 import { createAdminSupabaseClient, getAuthenticatedUserId } from "../supabase.js";
+import type { BoardRefMap } from "./kanban-ops.js";
 
 const CURRENT_BOARD_FILE = "current-board.json";
 const CURRENT_PAGE_FILE = "current-page.md";
@@ -36,6 +37,7 @@ type MaterializedBoard = {
     baseRevision: number;
     baseFingerprint: string;
     editCallCount: number;
+    mutationCount: number;
 };
 
 type MaterializedPage = {
@@ -54,6 +56,7 @@ export type MaterializedWorkspace = {
     projectId: string;
     board: MaterializedBoard;
     page: MaterializedPage;
+    boardRefs: BoardRefMap;
 };
 
 const isFiniteNumber = (value: unknown): value is number =>
@@ -155,7 +158,8 @@ const normalizeKanbanData = (value: unknown): KanbanData => {
     });
 };
 
-const serializeKanbanDocument = (kanbanData: KanbanData) => `${JSON.stringify(kanbanData, null, 2)}\n`;
+export const serializeKanbanDocument = (kanbanData: KanbanData) =>
+    `${JSON.stringify(kanbanData, null, 2)}\n`;
 
 const parseKanbanDocument = (content: string) => {
     let parsed: unknown;
@@ -249,6 +253,13 @@ const mapTaskRow = (row: ProjectTaskRow): Task => ({
     ...(row.countdown_at != null ? { countdownAt: row.countdown_at } : {}),
     ...(row.alarm_at != null ? { alarmAt: row.alarm_at } : {}),
     ...(row.assigned_to ? { assignedTo: row.assigned_to } : {}),
+    ...(Array.isArray(row.linked_task_ids) && row.linked_task_ids.length
+        ? {
+              linkedTaskIds: row.linked_task_ids.filter(
+                  (entry): entry is string => typeof entry === "string" && entry.trim().length > 0
+              ),
+          }
+        : {}),
     createdAt: new Date(row.created_at).getTime(),
     updatedAt: new Date(row.updated_at).getTime(),
 });
@@ -405,6 +416,7 @@ export const materializeWorkspace = async (
             baseRevision: loaded.boardBaseRevision,
             baseFingerprint: getKanbanFingerprint(loaded.board.kanbanData),
             editCallCount: 0,
+            mutationCount: 0,
         },
         page: {
             id: loaded.page.id,
@@ -417,6 +429,14 @@ export const materializeWorkspace = async (
                 buildScratchpadPreviewState(loaded.page.id, loaded.page.name, loaded.page.content)
             ),
             editCallCount: 0,
+        },
+        boardRefs: {
+            boardName: loaded.board.name,
+            indexText: "",
+            columnRefToId: new Map(),
+            taskRefToId: new Map(),
+            columnIdToRef: new Map(),
+            taskIdToRef: new Map(),
         },
     };
 };
@@ -671,7 +691,39 @@ export const deriveKanbanOps = (
     return ops;
 };
 
-const buildProposalSafety = (ops: Array<KanbanPatchOperation | ScratchpadPatchOperation>): AiProposalSafety => {
+const isOutOfScope = (
+    scope: AiScopeHint | undefined,
+    ops: Array<KanbanPatchOperation | ScratchpadPatchOperation>
+) => {
+    const bound = scope?.boundTarget;
+    if (!bound?.locked || !bound.id) return false;
+
+    if (bound.kind === "task") {
+        for (const op of ops) {
+            if (op.type === "update_task" && op.taskId !== bound.id) return true;
+            if (op.type === "delete_task" && op.taskId !== bound.id) return true;
+            if (op.type === "move_task" && op.taskId !== bound.id) return true;
+        }
+        return false;
+    }
+
+    if (bound.kind === "column") {
+        for (const op of ops) {
+            if (op.type === "add_task" && op.columnId !== bound.id) return true;
+            if (op.type === "update_column" && op.columnId !== bound.id) return true;
+            if (op.type === "delete_column" && op.columnId !== bound.id) return true;
+            if (op.type === "move_task" && op.targetColumnId !== bound.id) return true;
+            if (op.type === "reorder_tasks" && op.columnId !== bound.id) return true;
+        }
+    }
+
+    return false;
+};
+
+const buildProposalSafety = (
+    ops: Array<KanbanPatchOperation | ScratchpadPatchOperation>,
+    scope?: AiScopeHint
+): AiProposalSafety => {
     const touchedTaskIds = new Set<string>();
     const touchedColumnIds = new Set<string>();
     const touchedPadIds = new Set<string>();
@@ -728,7 +780,7 @@ const buildProposalSafety = (ops: Array<KanbanPatchOperation | ScratchpadPatchOp
         }
     }
 
-    return {
+    const safety = {
         touchedTaskIds: [...touchedTaskIds],
         touchedColumnIds: [...touchedColumnIds],
         ...(touchedPadIds.size ? { touchedPadIds: [...touchedPadIds] } : {}),
@@ -737,6 +789,9 @@ const buildProposalSafety = (ops: Array<KanbanPatchOperation | ScratchpadPatchOp
         reorderCount,
         outOfScope: false,
     };
+
+    safety.outOfScope = isOutOfScope(scope, ops);
+    return safety;
 };
 
 const resolveKanbanScope = (ops: KanbanPatchOperation[], safety: AiProposalSafety): AiKanbanProposal["scope"] => {
@@ -770,10 +825,11 @@ const summarizeScratchpadProposal = (pageName: string) => `Review the staged pag
 
 const buildKanbanProposal = (
     board: MaterializedBoard,
-    nextKanbanData: KanbanData
+    nextKanbanData: KanbanData,
+    scope?: AiScopeHint
 ): AiKanbanProposal => {
     const ops = deriveKanbanOps(board.kanbanData, nextKanbanData);
-    const proposalSafety = buildProposalSafety(ops);
+    const proposalSafety = buildProposalSafety(ops, scope);
 
     return {
         id: randomUUID(),
@@ -793,7 +849,8 @@ const buildKanbanProposal = (
 
 const buildScratchpadProposal = (
     page: MaterializedPage,
-    nextContent: string
+    nextContent: string,
+    scope?: AiScopeHint
 ): AiScratchpadProposal => {
     const ops: ScratchpadPatchOperation[] = [
         {
@@ -802,7 +859,7 @@ const buildScratchpadProposal = (
             content: nextContent,
         }
     ];
-    const proposalSafety = buildProposalSafety(ops);
+    const proposalSafety = buildProposalSafety(ops, scope);
 
     return {
         id: randomUUID(),
@@ -822,14 +879,15 @@ const buildScratchpadProposal = (
 };
 
 export const collectWorkspaceProposals = async (
-    workspace: MaterializedWorkspace
+    workspace: MaterializedWorkspace,
+    scope?: AiScopeHint
 ): Promise<AiProposal[]> => {
     const proposals: AiProposal[] = [];
 
     const boardContent = await fs.readFile(workspace.board.filePath, "utf8");
     const nextKanbanData = parseKanbanDocument(boardContent);
     if (getKanbanFingerprint(nextKanbanData) !== workspace.board.baseFingerprint) {
-        proposals.push(buildKanbanProposal(workspace.board, nextKanbanData));
+        proposals.push(buildKanbanProposal(workspace.board, nextKanbanData, scope));
     }
 
     const pageContent = await fs.readFile(workspace.page.filePath, "utf8");
@@ -839,7 +897,7 @@ export const collectWorkspaceProposals = async (
         pageContent
     );
     if (getScratchpadFingerprint(nextScratchpadState) !== workspace.page.baseFingerprint) {
-        proposals.push(buildScratchpadProposal(workspace.page, pageContent));
+        proposals.push(buildScratchpadProposal(workspace.page, pageContent, scope));
     }
 
     return proposals;

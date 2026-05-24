@@ -1,5 +1,10 @@
-import { DEFAULT_AI_MODEL_CONFIGS } from '../../src/lib/kainbu/models.js';
+import {
+	applyThinkingLevel,
+	DEFAULT_AI_MODEL_CONFIGS
+} from '../../src/lib/kainbu/models.js';
 import type { AiModelConfig } from './types.js';
+
+export { applyThinkingLevel };
 
 export class WorkspaceAiRequestError extends Error {
 	status: number;
@@ -31,28 +36,6 @@ export const resolveWorkspaceAiModel = (modelId: unknown) => {
 	}
 
 	return cloneModelConfig(config);
-};
-
-const THINKING_BUDGET: Record<string, number> = {
-	low: 2048,
-	medium: 4096,
-	high: 8192
-};
-
-export const applyThinkingLevel = (
-	modelConfig: AiModelConfig,
-	thinkingLevel: unknown
-): AiModelConfig => {
-	if (typeof thinkingLevel !== 'string') return modelConfig;
-	if (thinkingLevel === 'none') {
-		return { ...modelConfig, thinking: null };
-	}
-	const budget = THINKING_BUDGET[thinkingLevel];
-	if (!budget) return modelConfig;
-	return {
-		...modelConfig,
-		thinking: { type: 'enabled', budget_tokens: budget }
-	};
 };
 
 export const validateWorkspaceAiRequest = (request: unknown) => {

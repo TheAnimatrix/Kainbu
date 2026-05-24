@@ -2,7 +2,10 @@
 	import { afterUpdate, tick } from 'svelte';
 	import {
 		Check,
+		CheckCircle2,
+		ChevronDown,
 		ChevronLeft,
+		Circle,
 		ExternalLink,
 		Info,
 		LoaderCircle,
@@ -33,6 +36,7 @@
 		ProposalTarget
 	} from '$lib/kainbu/types';
 	import RichText from '$lib/components/RichText.svelte';
+	import AiActivityTrace from '$lib/components/AiActivityTrace.svelte';
 
 	export let history: ChatMessage[] = [];
 	export let draft = '';
@@ -41,6 +45,8 @@
 	export let isProcessing = false;
 	export let processingEvents: AiProgressEvent[] = [];
 	export let pendingProposals: PendingProposal[] = [];
+	export let proposalApplyErrors: Record<string, string> = {};
+	export let applyingProposalId: string | null = null;
 	export let activeProposalTarget: ProposalTarget | null = null;
 	export let sessions: ProjectAiSession[] = [];
 	export let activeSessionId = '';
@@ -107,6 +113,133 @@
 		? filteredSessions
 		: showAllSessions ? sortedSessions : sortedSessions.slice(0, VISIBLE_SESSION_COUNT);
 	$: remainingSessionCount = Math.max(0, sessions.length - VISIBLE_SESSION_COUNT);
+
+	let sessionSwitcherOpen = false;
+	let switcherSearchQuery = '';
+	let hoveredSwitcherSessionId = '';
+	let sessionSwitcherTrigger: HTMLButtonElement | null = null;
+	let switcherSearchInput: HTMLInputElement | null = null;
+	let switcherPosition: { top: number; left: number; width: number } | null = null;
+
+	$: switcherFilteredSessions = switcherSearchQuery.trim()
+		? sortedSessions.filter((session) =>
+				session.title.toLowerCase().includes(switcherSearchQuery.trim().toLowerCase())
+			)
+		: sortedSessions;
+
+	type SessionTimeGroup = {
+		label: string;
+		sessions: ProjectAiSession[];
+	};
+
+	const sessionActivityTimestamp = (session: ProjectAiSession) =>
+		session.lastMessageAt || session.updatedAt;
+
+	const startOfLocalDay = (timestamp: number) => {
+		const date = new Date(timestamp);
+		date.setHours(0, 0, 0, 0);
+		return date.getTime();
+	};
+
+	const groupSessionsByDate = (sessionList: ProjectAiSession[]): SessionTimeGroup[] => {
+		const todayStart = startOfLocalDay(Date.now());
+		const yesterdayStart = todayStart - 86_400_000;
+		const weekStart = todayStart - 6 * 86_400_000;
+		const buckets = {
+			Today: [] as ProjectAiSession[],
+			Yesterday: [] as ProjectAiSession[],
+			'Previous 7 days': [] as ProjectAiSession[],
+			Older: [] as ProjectAiSession[]
+		};
+
+		for (const session of sessionList) {
+			const timestamp = sessionActivityTimestamp(session);
+			if (timestamp >= todayStart) buckets.Today.push(session);
+			else if (timestamp >= yesterdayStart) buckets.Yesterday.push(session);
+			else if (timestamp >= weekStart) buckets['Previous 7 days'].push(session);
+			else buckets.Older.push(session);
+		}
+
+		return [
+			{ label: 'Today', sessions: buckets.Today },
+			{ label: 'Yesterday', sessions: buckets.Yesterday },
+			{ label: 'Previous 7 days', sessions: buckets['Previous 7 days'] },
+			{ label: 'Older', sessions: buckets.Older }
+		].filter((group) => group.sessions.length > 0);
+	};
+
+	$: switcherGroupedSessions = groupSessionsByDate(switcherFilteredSessions);
+
+	const portal = (node: HTMLElement) => {
+		if (typeof document === 'undefined') return {};
+		document.body.appendChild(node);
+		return {
+			destroy() {
+				node.remove();
+			}
+		};
+	};
+
+	const updateSwitcherPosition = () => {
+		if (!sessionSwitcherTrigger) return;
+		const rect = sessionSwitcherTrigger.getBoundingClientRect();
+		const width = Math.max(rect.width, isMobileChrome ? 260 : 288);
+		const maxLeft = Math.max(8, window.innerWidth - width - 8);
+		const panelHeight = 384;
+		const belowTop = rect.bottom + 6;
+		const fitsBelow = belowTop + panelHeight <= window.innerHeight - 8;
+		switcherPosition = {
+			top: fitsBelow ? belowTop : Math.max(8, rect.top - panelHeight - 6),
+			left: Math.min(rect.left, maxLeft),
+			width
+		};
+	};
+
+	const openSessionSwitcher = async () => {
+		sessionSwitcherOpen = true;
+		switcherSearchQuery = '';
+		hoveredSwitcherSessionId = '';
+		await tick();
+		updateSwitcherPosition();
+		switcherSearchInput?.focus();
+	};
+
+	const closeSessionSwitcher = () => {
+		sessionSwitcherOpen = false;
+		switcherPosition = null;
+		switcherSearchQuery = '';
+		hoveredSwitcherSessionId = '';
+	};
+
+	const toggleSessionSwitcher = () => {
+		if (sessionSwitcherOpen) closeSessionSwitcher();
+		else void openSessionSwitcher();
+	};
+
+	const selectSwitcherSession = (sessionId: string) => {
+		onSessionChange(sessionId);
+		closeSessionSwitcher();
+	};
+
+	const requestSessionRenameById = (session: ProjectAiSession) => {
+		if (typeof window === 'undefined') return;
+		const nextTitle = window.prompt('Rename this chat', session.title);
+		if (nextTitle == null) return;
+		const trimmed = nextTitle.trim();
+		if (!trimmed || trimmed === session.title) return;
+		onRenameSession(session.id, trimmed);
+	};
+
+	const requestSessionDeleteById = (session: ProjectAiSession) => {
+		if (typeof window === 'undefined') return;
+		if (!window.confirm(`Delete "${session.title}"?`)) return;
+		onDeleteSession(session.id);
+		closeSessionSwitcher();
+	};
+
+	$: if (!active && sessionSwitcherOpen) {
+		closeSessionSwitcher();
+	}
 
 	const relativeTime = (timestamp: number) => {
 		if (!timestamp) return '';
@@ -211,12 +344,12 @@
 		if (fileInput) fileInput.value = '';
 	};
 
-	const canSendMessage = () =>
+	$: canSend =
 		(draft.trim().length > 0 || queuedAttachments.length > 0 || queuedTaskCards.length > 0) &&
 		!isProcessing;
 
 	const submitComposer = () => {
-		if (!canSendMessage()) return;
+		if (!canSend) return;
 		if (showingSessionsList) {
 			onCreateSession();
 			showingSessionsList = false;
@@ -442,7 +575,7 @@
 		value.length > maxLength ? `${value.slice(0, maxLength - 1).trimEnd()}…` : value;
 	const proposalStatusText = (proposal: PendingProposal) => {
 		if (proposal.stale) {
-			return 'Workspace changed since this was generated. Review the diff and apply it if it still looks right.';
+			return 'Workspace changed since this was generated. Review the diff — you can still apply if it looks right.';
 		}
 
 		if (proposal.proposalSafety.outOfScope) {
@@ -557,10 +690,19 @@
 
 <svelte:window
 	on:keydown={(event) => {
-		if (event.key === 'Escape' && previewAttachment) {
+		if (event.key !== 'Escape') return;
+		if (sessionSwitcherOpen) {
+			event.preventDefault();
+			closeSessionSwitcher();
+			return;
+		}
+		if (previewAttachment) {
 			event.preventDefault();
 			closeAttachmentPreview();
 		}
+	}}
+	on:resize={() => {
+		if (sessionSwitcherOpen) updateSwitcherPosition();
 	}}
 />
 
@@ -571,7 +713,7 @@
 			? isMobileChrome
 				? 'bg-app-bg'
 				: 'bg-app-surface'
-			: 'rounded-[1.25rem] border border-app-border bg-app-surface'
+			: 'rounded-xl border border-app-border bg-app-surface'
 	} ${isSidebar ? 'pb-1' : ''}`}
 >
 	{#if showingSessionsList && isSidebar}
@@ -699,17 +841,27 @@
 					<ChevronLeft size={16} />
 				</button>
 			{/if}
-			<select
-				class={`min-w-0 flex-1 truncate rounded-md border border-app-border bg-app-bg text-app-text outline-none transition hover:border-app-primary/50 ${
-					isMobileChrome ? 'max-w-[10rem] px-2 py-1 text-[12px]' : 'max-w-[14rem] px-2.5 py-1.5 text-sm'
-				}`}
-				value={activeSessionId}
-				on:change={(event) => onSessionChange((event.currentTarget as HTMLSelectElement).value)}
-			>
-				{#each sessions as session}
-					<option value={session.id}>{session.title}</option>
-				{/each}
-			</select>
+			<div class="relative min-w-0 flex-1">
+				<button
+					bind:this={sessionSwitcherTrigger}
+					type="button"
+					class={`inline-flex min-w-0 max-w-full items-center gap-1.5 rounded-lg border border-transparent px-2 py-1.5 text-left text-app-text transition hover:border-app-border hover:bg-app-element/60 ${
+						sessionSwitcherOpen ? 'border-app-border bg-app-element/60' : ''
+					} ${isMobileChrome ? 'max-w-[11rem] text-[12px]' : 'max-w-[15rem] text-sm'}`}
+					aria-haspopup="listbox"
+					aria-expanded={sessionSwitcherOpen}
+					aria-label="Switch chat"
+					on:click={toggleSessionSwitcher}
+				>
+					<span class="min-w-0 flex-1 truncate font-medium">
+						{activeSession?.title || 'New chat'}
+					</span>
+					<ChevronDown
+						size={14}
+						class={`shrink-0 text-app-subtext transition ${sessionSwitcherOpen ? 'rotate-180' : ''}`}
+					/>
+				</button>
+			</div>
 
 		<div class={`ml-auto flex items-center ${isMobileChrome ? 'gap-1' : 'gap-1.5'}`}>
 			<button
@@ -816,15 +968,9 @@
 						<div class="mb-1.5 px-1 text-[11px] text-app-subtext/70">
 							{compactProgress}
 						</div>
-					{:else if message.toolActions?.length}
-						<div class="mb-2 flex flex-wrap gap-1.5">
-							{#each message.toolActions as action}
-								<span
-									class="rounded-full border border-app-border bg-app-element/70 px-2.5 py-1 text-[10px] font-bold uppercase tracking-[0.22em] text-app-primary"
-								>
-									{action}
-								</span>
-							{/each}
+					{:else if (message.progressEvents?.length || 0) > 0}
+						<div class="mb-2">
+							<AiActivityTrace events={message.progressEvents || []} />
 						</div>
 					{/if}
 
@@ -939,7 +1085,9 @@
 							{#if message.role === 'assistant'}
 								<RichText
 									value={message.text}
-									className={isMobileChrome ? 'kainbu-prose text-[13px]' : 'kainbu-prose'}
+									className={isMobileChrome
+										? 'kainbu-prose kainbu-chat-prose text-[13px]'
+										: 'kainbu-prose kainbu-chat-prose'}
 								/>
 							{:else}
 								<p
@@ -1047,18 +1195,8 @@
 			{/each}
 
 			{#if isProcessing}
-				{@const liveProgress = latestProgressText(processingEvents)}
-				<div class="flex items-start">
-					<div
-						class="relative inline-flex max-w-[min(100%,28rem)] overflow-hidden rounded-md px-2 py-1 text-xs text-app-subtext/80"
-					>
-						<div
-							class="animate-shimmer pointer-events-none absolute inset-0 rounded-md opacity-70"
-						></div>
-						<div class="relative min-w-0 truncate">
-							{liveProgress}
-						</div>
-					</div>
+				<div class="flex items-start px-0.5">
+					<AiActivityTrace events={processingEvents} isLive compact />
 				</div>
 			{/if}
 
@@ -1094,6 +1232,9 @@
 							</span>
 						{/if}
 					</div>
+					{#if proposalApplyErrors[pendingProposal.id]}
+						<p class="mt-2 text-sm text-rose-300">{proposalApplyErrors[pendingProposal.id]}</p>
+					{/if}
 					<div class="mt-3 flex flex-wrap gap-2.5">
 						{#if onReviewProposal}
 							<button
@@ -1107,11 +1248,12 @@
 						{/if}
 						<button
 							type="button"
-							class="inline-flex flex-1 items-center justify-center gap-2 rounded-lg bg-app-primary px-4 py-2 text-sm font-semibold text-white"
+							disabled={applyingProposalId === pendingProposal.id}
+							class="inline-flex flex-1 items-center justify-center gap-2 rounded-lg bg-app-primary px-4 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-60"
 							on:click={() => onAcceptProposal(pendingProposal.id)}
 						>
 							<Check size={16} />
-							Apply
+							{applyingProposalId === pendingProposal.id ? 'Applying…' : 'Apply'}
 						</button>
 						<button
 							type="button"
@@ -1256,16 +1398,15 @@
 					}`}
 					placeholder={isProcessing
 						? 'Keep typing while the current reply finishes…'
-						: ' or problem to research'}
-					enterkeyhint={isMobileChrome ? 'enter' : 'send'}
+						: 'Describe a task or problem to research'}
+					enterkeyhint="send"
 					bind:value={draft}
 					on:input={() => onDraftChange(draft)}
 					on:change={() => onDraftChange(draft)}
 					on:keydown={(event) => {
-						if (event.key === 'Enter' && !event.shiftKey && !isMobileChrome) {
-							event.preventDefault();
-							submitComposer();
-						}
+						if (event.key !== 'Enter' || event.shiftKey || event.isComposing) return;
+						event.preventDefault();
+						submitComposer();
 					}}
 					on:paste={handleComposerPaste}
 				></textarea>
@@ -1316,13 +1457,14 @@
 					<div class={`flex shrink-0 items-center gap-1.5 ${isMobileChrome ? 'pb-0.5' : 'pb-1'}`}>
 						<button
 							type="submit"
-							aria-disabled={!canSendMessage()}
+							disabled={!canSend}
 							class={`inline-flex items-center justify-center rounded-md p-1.5 text-app-subtext transition ${
-								canSendMessage()
+								canSend
 									? 'hover:text-app-text hover:bg-app-element'
 									: 'cursor-not-allowed opacity-50'
 							}`}
 							title="Send message"
+							aria-label="Send message"
 						>
 							{#if isProcessing}
 								<LoaderCircle size={16} class="animate-spin" />
@@ -1336,6 +1478,108 @@
 		</form>
 	</div>
 </section>
+
+{#if sessionSwitcherOpen && switcherPosition}
+	<div use:portal class="pointer-events-none fixed inset-0 z-[160]">
+		<button
+			type="button"
+			class="pointer-events-auto absolute inset-0 cursor-default bg-transparent"
+			aria-label="Close chat switcher"
+			on:click={closeSessionSwitcher}
+		></button>
+		<div
+			role="listbox"
+			aria-label="Chat sessions"
+			class="pointer-events-auto fixed overflow-hidden rounded-xl border border-app-border bg-app-surface shadow-kainbu-xl"
+			style={`top:${switcherPosition.top}px; left:${switcherPosition.left}px; width:${switcherPosition.width}px;`}
+			on:mousedown|stopPropagation
+		>
+				<div class="border-b border-app-border px-3 py-2.5">
+					<label class="flex items-center gap-2 rounded-lg bg-app-bg/80 px-2.5 py-2">
+						<Search size={14} class="shrink-0 text-app-subtext" />
+						<input
+							bind:this={switcherSearchInput}
+							bind:value={switcherSearchQuery}
+							type="search"
+							placeholder="Search chats…"
+							class="min-w-0 flex-1 bg-transparent text-sm text-app-text outline-none placeholder:text-app-subtext/60"
+						/>
+					</label>
+				</div>
+
+				<div class="max-h-[min(24rem,calc(100vh-8rem))] overflow-y-auto p-1.5">
+					{#if !switcherFilteredSessions.length}
+						<p class="px-3 py-4 text-sm text-app-subtext">No chats match.</p>
+					{:else}
+						{#each switcherGroupedSessions as group (group.label)}
+							<div class="px-2 pb-1 pt-2">
+								<p class="px-2 pb-1.5 text-[11px] font-medium text-app-subtext">{group.label}</p>
+								<div class="space-y-0.5">
+									{#each group.sessions as session (session.id)}
+										<div
+											class={`group flex items-center gap-1 rounded-lg transition ${
+												session.id === activeSessionId
+													? 'bg-app-element'
+													: 'hover:bg-app-element/70'
+											}`}
+											role="presentation"
+											on:mouseenter={() => (hoveredSwitcherSessionId = session.id)}
+											on:mouseleave={() => {
+												if (hoveredSwitcherSessionId === session.id) {
+													hoveredSwitcherSessionId = '';
+												}
+											}}
+										>
+											<button
+												type="button"
+												role="option"
+												aria-selected={session.id === activeSessionId}
+												class="flex min-w-0 flex-1 items-center gap-2.5 px-2.5 py-2 text-left text-app-text"
+												on:click={() => selectSwitcherSession(session.id)}
+											>
+												<span class="shrink-0 text-app-subtext">
+													{#if session.id === activeSessionId && isProcessing}
+														<LoaderCircle size={15} class="animate-spin" />
+													{:else if session.id === activeSessionId}
+														<CheckCircle2 size={15} class="text-app-text" />
+													{:else}
+														<Circle size={15} />
+													{/if}
+												</span>
+												<span class="min-w-0 flex-1 truncate text-[13px]">{session.title}</span>
+											</button>
+											{#if hoveredSwitcherSessionId === session.id}
+												<span class="flex shrink-0 items-center gap-0.5 pr-1.5">
+													<button
+														type="button"
+														class="rounded-md p-1 text-app-subtext transition hover:bg-app-bg hover:text-app-text"
+														title="Rename chat"
+														aria-label="Rename chat"
+														on:click={() => requestSessionRenameById(session)}
+													>
+														<Pencil size={13} />
+													</button>
+													<button
+														type="button"
+														class="rounded-md p-1 text-app-subtext transition hover:bg-app-bg hover:text-rose-300"
+														title="Delete chat"
+														aria-label="Delete chat"
+														on:click={() => requestSessionDeleteById(session)}
+													>
+														<Trash2 size={13} />
+													</button>
+												</span>
+											{/if}
+										</div>
+									{/each}
+								</div>
+							</div>
+						{/each}
+					{/if}
+				</div>
+			</div>
+		</div>
+	{/if}
 
 {#if previewAttachment}
 	<div class="fixed inset-0 z-[90] flex bg-black/82 backdrop-blur-xl">
@@ -1357,7 +1601,7 @@
 			}`}
 		>
 			<div
-				class="mb-3 flex items-center justify-between gap-3 rounded-[1.25rem] border border-white/10 bg-app-surface/92 px-4 py-3 shadow-kainbu-xl backdrop-blur-xl"
+				class="mb-3 flex items-center justify-between gap-3 rounded-xl border border-white/10 bg-app-surface/92 px-4 py-3 shadow-kainbu-xl backdrop-blur-xl"
 			>
 				<div class="min-w-0">
 					<p class="text-[10px] font-bold uppercase tracking-[0.28em] text-app-subtext">
@@ -1396,7 +1640,7 @@
 				role="button"
 				tabindex="0"
 				aria-label={`Zoom image preview for ${previewAttachment.name}`}
-				class="relative flex min-h-0 flex-1 items-center justify-center overflow-hidden rounded-[1.6rem] border border-white/10 bg-app-bg/85 p-3 shadow-kainbu-xl"
+				class="relative flex min-h-0 flex-1 items-center justify-center overflow-hidden rounded-xl border border-white/10 bg-app-bg/85 p-3 shadow-kainbu-xl"
 				style="touch-action: none;"
 				on:pointerdown={handlePreviewPointerDown}
 				on:pointermove={handlePreviewPointerMove}
@@ -1416,7 +1660,7 @@
 					src={previewAttachment.content}
 					alt={previewAttachment.name}
 					draggable="false"
-					class={`max-h-full max-w-full rounded-[1.15rem] object-contain shadow-[0_24px_60px_-28px_rgba(0,0,0,0.78)] transition-transform duration-150 ease-out ${
+					class={`max-h-full max-w-full rounded-lg object-contain shadow-[0_24px_60px_-28px_rgba(0,0,0,0.78)] transition-transform duration-150 ease-out ${
 						previewScale > PREVIEW_MIN_SCALE
 							? previewIsDragging
 								? 'cursor-grabbing'

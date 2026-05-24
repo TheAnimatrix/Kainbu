@@ -144,6 +144,29 @@ export const invokeWorkspaceAi = async (
 	}
 };
 
+export type RewriteTaskTitleRequest = {
+	title: string;
+	description?: string;
+	columnTitle?: string;
+};
+
+export const rewriteTaskTitle = async (
+	request: RewriteTaskTitleRequest
+): Promise<string> => {
+	const data = await invokeWorkspaceApi<{ title?: string; error?: string }>(
+		'/api/workspace-ai/task-title',
+		{ body: request }
+	);
+	const title = (data.title || '').trim();
+	if (!title) {
+		throw new Error(data.error?.trim() || 'AI did not return a rewritten title.');
+	}
+	if (title.length > 120) {
+		throw new Error('Rewritten title was too long.');
+	}
+	return title;
+};
+
 export const generateSessionTitle = async (
 	userMessage: string,
 	assistantReply: string
