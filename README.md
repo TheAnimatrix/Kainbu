@@ -17,7 +17,17 @@ cp .env.example .env
 docker compose up --build
 ```
 
-3. Open the app at [http://localhost:3000](http://localhost:3000). PocketBase admin UI: [http://localhost:8090/_/](http://localhost:8090/_/).
+3. Open the app at [http://localhost:3000](http://localhost:3000). PocketBase admin: [http://localhost:8090/_/](http://localhost:8090/_/) (or [http://localhost:3000/pb/_/](http://localhost:3000/pb/_/) via nginx).
+
+**PocketBase URLs in Docker**
+
+| Consumer | URL | Why |
+|----------|-----|-----|
+| Browser (app) | same origin `/pb` | nginx proxies to the `pocketbase` container; no public PB hostname required |
+| `api` service | `http://pocketbase:8090` | Docker network DNS between containers |
+| Optional override | `VITE_POCKETBASE_URL` | Separate PocketBase host (e.g. `https://pb.example.com`) |
+
+Set `KAINBU_PUBLIC_URL` to your public app URL (for CLI device login). Leave `VITE_POCKETBASE_URL` unset on Dokploy unless PocketBase is on another domain.
 
 Services:
 
@@ -54,8 +64,8 @@ kainbu login
 
 | Variable | Purpose |
 |----------|---------|
-| `VITE_POCKETBASE_URL` | Browser PocketBase URL |
-| `POCKETBASE_URL` | Server/CLI PocketBase URL |
+| `VITE_POCKETBASE_URL` | Optional browser PocketBase URL (Docker default: same-origin `/pb`) |
+| `POCKETBASE_URL` | Server PocketBase URL (`http://pocketbase:8090` in compose) |
 | `POCKETBASE_ADMIN_EMAIL` / `POCKETBASE_ADMIN_PASSWORD` | API admin access to PocketBase |
 | `OPENROUTER_API_KEY` | Workspace AI routes |
 | `KAINBU_PUBLIC_URL` | CLI device-login links |
