@@ -131,3 +131,4 @@ Even after running the script, you must manually:
 - **Tailwind CSS**: Styles are located in `src/app.css`.
 - **Port**: The development server runs on port `3000` to ensure compatibility with the Android configuration.
 - **Workspace API**: Team-board invite and membership mutations run through the Hono API and require `SUPABASE_SERVICE_ROLE_KEY` on the server.
+- **CLI**: Standalone `kainbu` command — build with `npm run cli:build`, link with `npm run cli:link`. See [docs/CLI.md](docs/CLI.md).
