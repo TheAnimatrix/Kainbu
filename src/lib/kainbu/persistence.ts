@@ -11,6 +11,8 @@ import { createId } from '$lib/kainbu/id';
 import { normalizeProjectStructure } from '$lib/kainbu/projectStructure';
 import { normalizeScratchpadData, serializeScratchpadData } from '$lib/kainbu/scratchpad';
 import { normalizeUserSettings } from '$lib/kainbu/settings';
+import { pbNoAutoCancel } from '$lib/kainbu/pbRequest';
+import { normalizeDueTimestamp } from '$lib/kainbu/timing';
 import { getPb } from '$lib/kainbu/pocketbaseContext';
 import {
 	deleteByProjectAndClientIds,
@@ -453,8 +455,8 @@ const mapTaskRow = (row: ProjectTaskRow): Task => ({
 	hasCheckbox: row.has_checkbox,
 	checked: row.checked,
 	completedAt: row.completed_at ?? undefined,
-	countdownAt: row.countdown_at ?? undefined,
-	alarmAt: row.alarm_at ?? undefined,
+	countdownAt: normalizeDueTimestamp(row.countdown_at),
+	alarmAt: normalizeDueTimestamp(row.alarm_at),
 	assignedTo: row.assigned_to ?? undefined,
 	linkedTaskIds: normalizeLinkedTaskIds(row.linked_task_ids),
 	createdAt: new Date(row.created_at).getTime(),
@@ -575,8 +577,8 @@ const mapTaskUpsertRow = (
 	has_checkbox: Boolean(task.hasCheckbox),
 	checked: Boolean(task.checked),
 	completed_at: task.completedAt ?? null,
-	countdown_at: task.countdownAt ?? null,
-	alarm_at: task.alarmAt ?? null,
+	countdown_at: normalizeDueTimestamp(task.countdownAt) ?? null,
+	alarm_at: normalizeDueTimestamp(task.alarmAt) ?? null,
 	assigned_to:
 		typeof task.assignedTo === 'string' && UUID_PATTERN.test(task.assignedTo.trim())
 			? task.assignedTo.trim()
@@ -750,13 +752,19 @@ const applyBoardMutations = async (
 const findProjectName = (projectRows: ProjectRow[], projectId: string) =>
 	projectRows.find((project) => project.id === projectId)?.name;
 
-export const fetchWorkspace = async (userId: string) => {
+const workspaceFetchByUser = new Map<
+	string,
+	Promise<Awaited<ReturnType<typeof loadWorkspaceFromRemote>>>
+>();
+
+const loadWorkspaceFromRemote = async (userId: string) => {
 	const pb = getPb();
 
 	const ownMembershipRecords = await pb.collection('project_memberships').getFullList({
 		filter: `user = "${pbEscapeFilter(userId)}"`,
 		sort: '-last_opened_at',
-		expand: 'project'
+		expand: 'project',
+		...pbNoAutoCancel
 	});
 
 	const projectClientByPbId = new Map<string, string>();
@@ -777,7 +785,8 @@ export const fetchWorkspace = async (userId: string) => {
 
 	if (missingProjectPbIds.length) {
 		const projectRecords = await pb.collection('projects').getFullList({
-			filter: missingProjectPbIds.map((id) => `id = "${pbEscapeFilter(id)}"`).join(' || ')
+			filter: missingProjectPbIds.map((id) => `id = "${pbEscapeFilter(id)}"`).join(' || '),
+			...pbNoAutoCancel
 		});
 		for (const record of projectRecords) {
 			projectClientByPbId.set(String(record.id), String(record.client_id || record.id));
@@ -807,7 +816,8 @@ export const fetchWorkspace = async (userId: string) => {
 			? pb.collection('projects').getFullList({
 					filter: accessibleProjectIds
 						.map((id) => `client_id = "${pbEscapeFilter(id)}"`)
-						.join(' || ')
+						.join(' || '),
+					...pbNoAutoCancel
 				})
 			: Promise.resolve([]),
 		accessibleProjectIds.length
@@ -830,7 +840,8 @@ export const fetchWorkspace = async (userId: string) => {
 					filter: `user = "${pbEscapeFilter(userId)}" && (${accessibleProjectIds
 						.map((id) => `project.client_id = "${pbEscapeFilter(id)}"`)
 						.join(' || ')})`,
-					expand: 'project'
+					expand: 'project',
+					...pbNoAutoCancel
 				})
 			: Promise.resolve([]),
 		accessibleProjectIds.length
@@ -839,12 +850,14 @@ export const fetchWorkspace = async (userId: string) => {
 						.map((id) => `project.client_id = "${pbEscapeFilter(id)}"`)
 						.join(' || ')})`,
 					sort: '-last_message_at',
-					expand: 'project'
+					expand: 'project',
+					...pbNoAutoCancel
 				})
 			: Promise.resolve([]),
 		pb.collection('project_invites').getFullList({
 			filter: `invitee = "${pbEscapeFilter(userId)}" && status = "pending"`,
-			expand: 'project'
+			expand: 'project',
+			...pbNoAutoCancel
 		})
 	]);
 
@@ -905,7 +918,8 @@ export const fetchWorkspace = async (userId: string) => {
 				filter: `status = "pending" && (${ownedProjectIds
 					.map((id) => `project.client_id = "${pbEscapeFilter(id)}"`)
 					.join(' || ')})`,
-				expand: 'project'
+				expand: 'project',
+				...pbNoAutoCancel
 			})
 		: [];
 
@@ -913,7 +927,8 @@ export const fetchWorkspace = async (userId: string) => {
 	const profileRows: Pick<ProfileRow, 'user_id' | 'email' | 'username'>[] = [];
 	if (profileIds.length) {
 		const profiles = await pb.collection('users').getFullList({
-			filter: profileIds.map((id) => `id = "${pbEscapeFilter(id)}"`).join(' || ')
+			filter: profileIds.map((id) => `id = "${pbEscapeFilter(id)}"`).join(' || '),
+			...pbNoAutoCancel
 		});
 		for (const profile of profiles) {
 			const mapped = mapProfileRecord(profile, String(profile.id));
@@ -1087,6 +1102,19 @@ export const fetchWorkspace = async (userId: string) => {
 	};
 };
 
+export const fetchWorkspace = async (userId: string) => {
+	const inflight = workspaceFetchByUser.get(userId);
+	if (inflight) return inflight;
+
+	const promise = loadWorkspaceFromRemote(userId).finally(() => {
+		if (workspaceFetchByUser.get(userId) === promise) {
+			workspaceFetchByUser.delete(userId);
+		}
+	});
+	workspaceFetchByUser.set(userId, promise);
+	return promise;
+};
+
 export const createProject = async (
 	userId: string,
 	name = 'New Project',
@@ -1183,11 +1211,13 @@ export const fetchProjectBoardKanban = async (
 	const [columnRecords, taskRecords] = await Promise.all([
 		pb.collection('project_columns').getFullList({
 			filter: `${projectRelationFilter(projectPbId)} && board.client_id = "${pbEscapeFilter(boardId)}"`,
-			sort: 'position'
+			sort: 'position',
+			...pbNoAutoCancel
 		}),
 		pb.collection('project_tasks').getFullList({
 			filter: `${projectRelationFilter(projectPbId)} && board.client_id = "${pbEscapeFilter(boardId)}"`,
-			sort: 'position'
+			sort: 'position',
+			...pbNoAutoCancel
 		})
 	]);
 
@@ -1381,7 +1411,8 @@ export const saveProjectAiState = async (
 	}
 
 	const existingSessions = await pb.collection('project_ai_sessions').getFullList({
-		filter: `${projectRelationFilter(projectPbId)} && user = "${pbEscapeFilter(userId)}"`
+		filter: `${projectRelationFilter(projectPbId)} && user = "${pbEscapeFilter(userId)}"`,
+		...pbNoAutoCancel
 	});
 	const nextSessionIds = new Set(normalizedSessions.map((session) => session.id));
 	const staleSessions = existingSessions.filter(

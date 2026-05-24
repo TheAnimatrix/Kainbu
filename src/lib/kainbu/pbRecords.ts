@@ -1,3 +1,4 @@
+import { normalizeDueTimestamp } from '$lib/kainbu/timing';
 import type {
 	ProfileRow,
 	ProjectAiSessionRow,
@@ -133,8 +134,8 @@ export const mapTaskRecord = (
 	has_checkbox: Boolean(record.has_checkbox),
 	checked: Boolean(record.checked),
 	completed_at: typeof record.completed_at === 'number' ? record.completed_at : null,
-	countdown_at: typeof record.countdown_at === 'number' ? record.countdown_at : null,
-	alarm_at: typeof record.alarm_at === 'number' ? record.alarm_at : null,
+	countdown_at: normalizeDueTimestamp(record.countdown_at) ?? null,
+	alarm_at: normalizeDueTimestamp(record.alarm_at) ?? null,
 	assigned_to: record.assigned_to ? relationId(record.assigned_to) : null,
 	linked_task_ids: Array.isArray(record.linked_task_ids)
 		? (record.linked_task_ids as string[])

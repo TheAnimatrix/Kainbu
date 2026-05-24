@@ -3,7 +3,12 @@ import type { DashboardTimedTask, Project, Task } from '$lib/kainbu/types';
 const HOUR_MS = 60 * 60 * 1000;
 const DAY_MS = 24 * HOUR_MS;
 
-export const getTaskDueAt = (task: Task) => task.countdownAt ?? task.alarmAt ?? null;
+/** PocketBase number fields default to 0 when unset; treat non-positive values as no due date. */
+export const normalizeDueTimestamp = (value: unknown): number | undefined =>
+	typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : undefined;
+
+export const getTaskDueAt = (task: Task) =>
+	normalizeDueTimestamp(task.countdownAt) ?? normalizeDueTimestamp(task.alarmAt) ?? null;
 
 export const isTaskTimed = (task: Task) => getTaskDueAt(task) !== null;
 

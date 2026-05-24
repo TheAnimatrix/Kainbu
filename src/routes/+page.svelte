@@ -157,6 +157,7 @@
 	} from '$lib/kainbu/types';
 	import { isPocketBaseConfigured, pocketbase } from '$lib/pocketbaseClient';
 	import { formatPocketBaseError } from '$lib/pocketbaseErrors';
+	import { isPocketBaseAbort } from '$lib/kainbu/pbRequest';
 
 	const toAuthUser = (model: { id: string; email?: string } | null): AuthUser | null =>
 		model ? { id: model.id, email: model.email } : null;
@@ -1702,6 +1703,7 @@
 
 			syncUsernameDraftFromProfile(resolveProfileAfterFetch(currentUser, profileResult));
 		} catch (error) {
+			if (isPocketBaseAbort(error)) return;
 			console.error(error);
 			workspaceError = error instanceof Error ? error.message : 'Unable to load your workspace.';
 		} finally {
@@ -1750,6 +1752,7 @@
 				preferredProjectId: currentProjectId
 			});
 		} catch (error) {
+			if (isPocketBaseAbort(error)) return;
 			console.error(error);
 			setSyncError(error instanceof Error ? error.message : 'Unable to refresh workspace changes.');
 		}

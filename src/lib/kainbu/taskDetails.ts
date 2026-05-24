@@ -1,3 +1,4 @@
+import { pbNoAutoCancel } from '$lib/kainbu/pbRequest';
 import { pocketbase } from '$lib/pocketbaseClient';
 import { createId } from '$lib/kainbu/id';
 import { getProjectPbId } from '$lib/kainbu/pbHelpers';
@@ -58,7 +59,8 @@ const mapTaskCommentRecord = (record: Record<string, unknown>, projectId: string
 export const fetchTaskAssets = async (projectId: string, taskId: string) => {
 	const projectPbId = await getProjectPbId(projectId);
 	const records = await pocketbase.collection('project_task_assets').getFullList({
-		filter: `${projectRelationFilter(projectPbId)} && task_client_id = "${pbEscapeFilter(taskId)}"`
+		filter: `${projectRelationFilter(projectPbId)} && task_client_id = "${pbEscapeFilter(taskId)}"`,
+		...pbNoAutoCancel
 	});
 	return records
 		.map((record) => mapTaskAssetRecord(record, projectId))
@@ -68,7 +70,8 @@ export const fetchTaskAssets = async (projectId: string, taskId: string) => {
 export const fetchTaskComments = async (projectId: string, taskId: string) => {
 	const projectPbId = await getProjectPbId(projectId);
 	const records = await pocketbase.collection('project_task_comments').getFullList({
-		filter: `${projectRelationFilter(projectPbId)} && task_client_id = "${pbEscapeFilter(taskId)}"`
+		filter: `${projectRelationFilter(projectPbId)} && task_client_id = "${pbEscapeFilter(taskId)}"`,
+		...pbNoAutoCancel
 	});
 	return records
 		.map((record) => mapTaskCommentRecord(record, projectId))

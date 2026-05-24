@@ -10,6 +10,8 @@ const API = process.argv[4] || `${WEB.replace(/\/$/, '')}`;
 
 const pb = new PocketBase(PB);
 const esc = (v) => v.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+/** Match app fetchWorkspace: parallel list reads must not auto-cancel each other. */
+const noAutoCancel = { requestKey: null };
 
 const email = `e2e-${Date.now()}@kainbu.test`;
 const password = 'testpass123456';
@@ -98,45 +100,65 @@ const nestedFilter = accessibleProjectIds.map((id) => `project.client_id = "${es
 await Promise.all([
 	run('projects list', () =>
 		pb.collection('projects').getFullList({
-			filter: accessibleProjectIds.map((id) => `client_id = "${esc(id)}"`).join(' || ')
+			filter: accessibleProjectIds.map((id) => `client_id = "${esc(id)}"`).join(' || '),
+			...noAutoCancel
 		})
 	),
 	run('memberships by project', () =>
-		pb.collection('project_memberships').getFullList({ filter: nestedFilter })
+		pb.collection('project_memberships').getFullList({ filter: nestedFilter, ...noAutoCancel })
 	),
 	run('boards by project', () =>
-		pb.collection('project_boards').getFullList({ filter: nestedFilter, sort: 'position' })
+		pb.collection('project_boards').getFullList({
+			filter: nestedFilter,
+			sort: 'position',
+			...noAutoCancel
+		})
 	),
 	run('pages by project', () =>
-		pb.collection('project_pages').getFullList({ filter: nestedFilter, sort: 'position' })
+		pb.collection('project_pages').getFullList({
+			filter: nestedFilter,
+			sort: 'position',
+			...noAutoCancel
+		})
 	),
 	run('columns by project', () =>
-		pb.collection('project_columns').getFullList({ filter: nestedFilter, sort: 'position' })
+		pb.collection('project_columns').getFullList({
+			filter: nestedFilter,
+			sort: 'position',
+			...noAutoCancel
+		})
 	),
 	run('tasks by project', () =>
-		pb.collection('project_tasks').getFullList({ filter: nestedFilter, sort: 'position' })
+		pb.collection('project_tasks').getFullList({
+			filter: nestedFilter,
+			sort: 'position',
+			...noAutoCancel
+		})
 	),
 	run('user_state', () =>
 		pb.collection('project_user_state').getFullList({
 			filter: `user = "${esc(userId)}" && (${nestedFilter})`,
-			expand: 'project'
+			expand: 'project',
+			...noAutoCancel
 		})
 	),
 	run('ai_sessions', () =>
 		pb.collection('project_ai_sessions').getFullList({
 			filter: `user = "${esc(userId)}" && (${nestedFilter})`,
 			sort: '-last_message_at',
-			expand: 'project'
+			expand: 'project',
+			...noAutoCancel
 		})
 	),
 	run('invites incoming', () =>
 		pb.collection('project_invites').getFullList({
 			filter: `invitee = "${esc(userId)}" && status = "pending"`,
-			expand: 'project'
+			expand: 'project',
+			...noAutoCancel
 		})
 	),
 	run('users profiles', () =>
-		pb.collection('users').getFullList({ filter: `id = "${esc(userId)}"` })
+		pb.collection('users').getFullList({ filter: `id = "${esc(userId)}"`, ...noAutoCancel })
 	)
 ]);
 

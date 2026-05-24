@@ -1,4 +1,5 @@
 import { getPb } from '$lib/kainbu/pocketbaseContext';
+import { pbNoAutoCancel } from '$lib/kainbu/pbRequest';
 import { pbEscapeFilter, projectClientFilter, projectRelationFilter } from '$lib/kainbu/pbRecords';
 
 export const getProjectPbId = async (projectClientId: string) => {
@@ -30,7 +31,8 @@ export const listByProjectIds = async (
 
 	return pb.collection(collection).getFullList({
 		filter,
-		...(sort ? { sort } : {})
+		...(sort ? { sort } : {}),
+		...pbNoAutoCancel
 	});
 };
 
@@ -45,7 +47,8 @@ export const deleteByProjectAndClientIds = async (
 	const records = await pb.collection(collection).getFullList({
 		filter: `${projectRelationFilter(projectPbId)} && (${clientIds
 			.map((id) => `client_id = "${pbEscapeFilter(id)}"`)
-			.join(' || ')})`
+			.join(' || ')})`,
+		...pbNoAutoCancel
 	});
 	await Promise.all(records.map((record) => pb.collection(collection).delete(record.id)));
 };
