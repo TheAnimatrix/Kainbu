@@ -7,8 +7,9 @@ ENV VITE_API_BASE_URL=$VITE_API_BASE_URL
 COPY package.json package-lock.json .npmrc ./
 COPY packages/kainbu-core/package.json packages/kainbu-core/
 COPY packages/kainbu-cli/package.json packages/kainbu-cli/
-RUN npm ci
+RUN npm ci --ignore-scripts
 COPY . .
+RUN node scripts/patch-svelte-dnd-action.mjs
 RUN npm run build
 
 FROM nginx:1.27-alpine

@@ -3,7 +3,7 @@ WORKDIR /app
 COPY package.json package-lock.json .npmrc ./
 COPY packages/kainbu-core/package.json packages/kainbu-core/
 COPY packages/kainbu-cli/package.json packages/kainbu-cli/
-RUN npm ci
+RUN npm ci --ignore-scripts
 COPY . .
 RUN npm run check:server
 
