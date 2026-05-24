@@ -11,13 +11,15 @@ cp .env.example .env
 # Edit OPENROUTER_API_KEY, POCKETBASE_ADMIN_PASSWORD, etc.
 ```
 
-2. Start the stack:
+2. Start the stack (local host ports via override):
 
 ```bash
-docker compose up --build
+docker compose -f docker-compose.yml -f docker-compose.local.yml up --build
 ```
 
 3. Open the app at [http://localhost:3000](http://localhost:3000). PocketBase admin: [http://localhost:8090/_/](http://localhost:8090/_/) (or [http://localhost:3000/pb/_/](http://localhost:3000/pb/_/) via nginx).
+
+**Dokploy:** see [deploy/DOKPLOY.md](deploy/DOKPLOY.md) — use `docker-compose.yml` only (no host port bindings).
 
 **PocketBase URLs in Docker**
 

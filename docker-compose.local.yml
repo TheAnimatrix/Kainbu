@@ -1,0 +1,15 @@
+# Local dev only — publishes ports on the host.
+# Usage: docker compose -f docker-compose.yml -f docker-compose.local.yml up --build
+
+services:
+  pocketbase:
+    ports:
+      - '8090:8090'
+
+  api:
+    ports:
+      - '8788:8788'
+
+  web:
+    ports:
+      - '3000:80'
