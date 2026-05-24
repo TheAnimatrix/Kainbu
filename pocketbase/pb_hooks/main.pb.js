@@ -1,7 +1,9 @@
 /// <reference path="../pb_data/types.d.ts" />
 
-onRecordAfterCreateRequest((e) => {
-	if (e.collection.name !== 'users') return;
+onRecordCreate((e) => {
+	if (e.collection.name !== 'users') {
+		return e.next();
+	}
 	const record = e.record;
 	if (!record.get('default_show_checkbox')) {
 		record.set('default_show_checkbox', true);
@@ -12,5 +14,5 @@ onRecordAfterCreateRequest((e) => {
 	if (!record.get('preferred_model_preset')) {
 		record.set('preferred_model_preset', 'fast');
 	}
-	e.next();
+	return e.next();
 }, 'users');

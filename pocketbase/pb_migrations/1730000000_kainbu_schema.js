@@ -24,14 +24,14 @@ migrate(
 		const projectMemberViaProject =
 			'@request.auth.id != "" && (@collection.project_memberships.project ?= project && @collection.project_memberships.user ?= @request.auth.id)';
 
+		// Owner-only rules first — project_memberships does not exist yet.
 		const projects = new Collection({
 			name: 'projects',
 			type: 'base',
-			listRule: projectMemberList,
-			viewRule: projectMemberList,
+			listRule: '@request.auth.id != "" && owner.id = @request.auth.id',
+			viewRule: '@request.auth.id != "" && owner.id = @request.auth.id',
 			createRule: '@request.auth.id != ""',
-			updateRule:
-				'@request.auth.id != "" && (owner.id = @request.auth.id || (@collection.project_memberships.project ?= id && @collection.project_memberships.user ?= @request.auth.id))',
+			updateRule: '@request.auth.id != "" && owner.id = @request.auth.id',
 			deleteRule: '@request.auth.id != "" && owner.id = @request.auth.id',
 			fields: [
 				{ name: 'client_id', type: 'text', required: true, max: 64 },
@@ -101,6 +101,12 @@ migrate(
 			]
 		});
 		app.save(projectMemberships);
+
+		projects.listRule = projectMemberList;
+		projects.viewRule = projectMemberList;
+		projects.updateRule =
+			'@request.auth.id != "" && (owner.id = @request.auth.id || (@collection.project_memberships.project ?= id && @collection.project_memberships.user ?= @request.auth.id))';
+		app.save(projects);
 
 		const projectInvites = new Collection({
 			name: 'project_invites',

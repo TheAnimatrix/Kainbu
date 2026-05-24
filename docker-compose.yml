@@ -10,10 +10,11 @@ services:
       - ./pocketbase/pb_hooks:/pb_hooks
       - ./pocketbase/pb_migrations:/pb_migrations
     healthcheck:
-      test: ['CMD', 'wget', '-qO-', 'http://127.0.0.1:8090/api/health']
+      test: ['CMD-SHELL', 'wget -qO- http://127.0.0.1:8090/api/health >/dev/null 2>&1 || exit 1']
       interval: 10s
       timeout: 5s
-      retries: 5
+      retries: 8
+      start_period: 30s
 
   api:
     build:
