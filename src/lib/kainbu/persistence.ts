@@ -838,7 +838,7 @@ export const fetchWorkspace = async (userId: string) => {
 					filter: `user = "${pbEscapeFilter(userId)}" && (${accessibleProjectIds
 						.map((id) => `project.client_id = "${pbEscapeFilter(id)}"`)
 						.join(' || ')})`,
-					sort: '-last_message_at,-created',
+					sort: '-last_message_at',
 					expand: 'project'
 				})
 			: Promise.resolve([]),

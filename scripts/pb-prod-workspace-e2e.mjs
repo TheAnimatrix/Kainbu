@@ -125,7 +125,7 @@ await Promise.all([
 	run('ai_sessions', () =>
 		pb.collection('project_ai_sessions').getFullList({
 			filter: `user = "${esc(userId)}" && (${nestedFilter})`,
-			sort: '-last_message_at,-created',
+			sort: '-last_message_at',
 			expand: 'project'
 		})
 	),

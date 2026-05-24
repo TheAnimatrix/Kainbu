@@ -19,8 +19,10 @@ for (const [label, opts] of [
 	['sort updated', { filter, sort: 'updated' }],
 	['sort -updated', { filter, sort: '-updated' }],
 	['sort last_message_at', { filter, sort: '-last_message_at' }],
+	['sort multi', { filter, sort: '-last_message_at,-created' }],
 	['expand only', { filter, expand: 'project' }],
-	['sort updated + expand', { filter, sort: 'updated', expand: 'project' }]
+	['last_message_at + expand', { filter, sort: '-last_message_at', expand: 'project' }],
+	['multi sort + expand', { filter, sort: '-last_message_at,-created', expand: 'project' }]
 ]) {
 	try {
 		const rows = await pb.collection('project_ai_sessions').getFullList(opts);
