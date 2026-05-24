@@ -29,6 +29,7 @@
 		"format": "prettier --write .",
 		"setup": "node setup.js",
 		"test:deploy": "vitest run tests/deploy.test.ts",
+		"test:local-docker": "vitest run tests/local-docker.test.ts",
 		"cli:build": "npm run build --workspace=kainbu",
 		"cli:link": "npm run build --workspace=kainbu && npm link --workspace=kainbu",
 		"test:cli": "vitest run tests/cliContext.test.ts tests/cliBoardList.test.ts tests/cliDeviceAuth.test.ts"

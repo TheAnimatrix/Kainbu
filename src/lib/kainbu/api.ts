@@ -2,27 +2,12 @@ import { pocketbase } from '$lib/pocketbaseClient';
 import { invokeWorkspaceApi as invokeSharedWorkspaceApi, setWorkspaceApiConfig } from '$lib/kainbu/workspaceApi';
 
 const normalizeBaseUrl = (value: string) => value.trim().replace(/\/+$/, '');
-const isLocalHostname = (hostname: string) =>
-	hostname === 'localhost' ||
-	hostname === '127.0.0.1' ||
-	hostname.endsWith('.local') ||
-	/^\d{1,3}(?:\.\d{1,3}){3}$/.test(hostname);
 
+/** Production builds use same-origin `/api` (nginx or Vite proxy). Dev uses Vite proxy too. */
 const inferDefaultApiBaseUrl = () => {
-	if (import.meta.env.DEV) {
-		return '';
-	}
-
 	if (typeof window === 'undefined') {
 		return 'http://127.0.0.1:8788';
 	}
-
-	if (/^https?:$/.test(window.location.protocol)) {
-		return isLocalHostname(window.location.hostname)
-			? `${window.location.protocol}//${window.location.hostname}:8788`
-			: '';
-	}
-
 	return '';
 };
 

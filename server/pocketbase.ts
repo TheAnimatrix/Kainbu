@@ -28,7 +28,11 @@ export const createAdminPb = async () => {
 		const pb = new PocketBase(getPocketBaseUrl());
 		const email = getRequiredEnv('POCKETBASE_ADMIN_EMAIL');
 		const password = getRequiredEnv('POCKETBASE_ADMIN_PASSWORD');
-		await pb.admins.authWithPassword(email, password);
+		try {
+			await pb.collection('_superusers').authWithPassword(email, password);
+		} catch {
+			await pb.admins.authWithPassword(email, password);
+		}
 		adminClient = pb;
 		return pb;
 	})();
@@ -51,8 +55,17 @@ export const getAuthenticatedUserId = async (authorization: string | undefined) 
 	}
 
 	const pb = createUserPb(token);
+
+	if (!pb.authStore.isValid || !pb.authStore.model?.id) {
+		try {
+			await pb.collection('users').authRefresh();
+		} catch {
+			throw new Error('Unauthorized');
+		}
+	}
+
 	const model = pb.authStore.model;
-	if (!pb.authStore.isValid || !model?.id) {
+	if (!model?.id) {
 		throw new Error('Unauthorized');
 	}
 

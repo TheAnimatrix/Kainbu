@@ -19,6 +19,14 @@ docker compose -f docker-compose.yml -f docker-compose.local.yml up --build
 
 3. Open the app at [http://localhost:3000](http://localhost:3000). PocketBase admin: [http://localhost:8090/_/](http://localhost:8090/_/) (or [http://localhost:3000/pb/_/](http://localhost:3000/pb/_/) via nginx).
 
+4. Verify signup, username, board create, and API auth:
+
+```bash
+npm run test:local-docker
+```
+
+Fresh database (wipes data): `docker compose -f docker-compose.yml -f docker-compose.local.yml down -v` then `up --build` again.
+
 **Dokploy:** see [deploy/DOKPLOY.md](deploy/DOKPLOY.md) — use `docker-compose.yml` only (no host port bindings).
 
 **PocketBase URLs in Docker**

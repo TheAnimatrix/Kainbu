@@ -3,10 +3,15 @@ services:
     image: ghcr.io/muchobien/pocketbase:latest
     container_name: kainbu-pocketbase
     restart: unless-stopped
+    entrypoint: ['/bin/sh', '/entrypoint.sh']
+    environment:
+      PB_ADMIN_EMAIL: ${POCKETBASE_ADMIN_EMAIL:-admin@kainbu.local}
+      PB_ADMIN_PASSWORD: ${POCKETBASE_ADMIN_PASSWORD:-kainbu-admin-change-me}
     volumes:
       - pb_data:/pb_data
       - ./pocketbase/pb_hooks:/pb_hooks
       - ./pocketbase/pb_migrations:/pb_migrations
+      - ./docker/pocketbase-entrypoint.sh:/entrypoint.sh:ro
     healthcheck:
       test: ['CMD-SHELL', 'wget -qO- http://127.0.0.1:8090/api/health >/dev/null 2>&1 || exit 1']
       interval: 10s
