@@ -13,6 +13,7 @@ COPY package.json package-lock.json .npmrc ./
 # API does not use npm workspaces; skip CLI prepare/build and install root prod deps only.
 RUN npm ci --omit=dev --workspaces=false --ignore-scripts
 COPY --from=build /app/server ./server
-COPY --from=build /app/src/lib/kainbu ./src/lib/kainbu
+COPY --from=build /app/src ./src
+COPY tsconfig.docker.json ./
 EXPOSE 8788
-CMD ["npx", "tsx", "server/index.ts"]
+CMD ["npx", "tsx", "--tsconfig", "tsconfig.docker.json", "server/index.ts"]
