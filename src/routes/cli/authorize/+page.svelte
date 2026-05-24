@@ -3,6 +3,7 @@
 	import { page } from '$app/stores';
 	import AuthView from '$lib/components/AuthView.svelte';
 	import { pocketbase, isPocketBaseConfigured } from '$lib/pocketbaseClient';
+	import { formatPocketBaseError } from '$lib/pocketbaseErrors';
 	import { getWorkspaceApiAccessToken, resolveWorkspaceApiUrl } from '$lib/kainbu/api';
 	import { BRAND_NAME } from '$lib/kainbu/constants';
 
@@ -55,7 +56,7 @@
 				await pocketbase.collection('users').authWithPassword(email, password);
 			}
 		} catch (error) {
-			errorMessage = error instanceof Error ? error.message : 'Unable to authenticate.';
+			errorMessage = formatPocketBaseError(error, 'Unable to authenticate.');
 		}
 
 		authLoading = false;

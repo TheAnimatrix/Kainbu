@@ -156,6 +156,7 @@
 		WorkspaceTab
 	} from '$lib/kainbu/types';
 	import { isPocketBaseConfigured, pocketbase } from '$lib/pocketbaseClient';
+	import { formatPocketBaseError } from '$lib/pocketbaseErrors';
 
 	const toAuthUser = (model: { id: string; email?: string } | null): AuthUser | null =>
 		model ? { id: model.id, email: model.email } : null;
@@ -1831,8 +1832,7 @@
 			await pocketbase.collection('users').authWithPassword(payload.email, payload.password);
 		} catch (error) {
 			console.error(error);
-			authErrorMessage =
-				error instanceof Error ? error.message : 'Unable to authenticate right now.';
+			authErrorMessage = formatPocketBaseError(error, 'Unable to authenticate right now.');
 		} finally {
 			isAuthLoading = false;
 		}

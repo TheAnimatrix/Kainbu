@@ -23,6 +23,7 @@ This repo’s `docker-compose.yml` has **no host `ports`**. Use `docker-compose.
 5. **Domains** — attach `https://kainbu.avarnic.com` (or your host) to service **`web`**, **container port `80`**.
    - Do **not** add a published host port.
 6. **Deploy**.
+7. After first deploy, open **PocketBase admin** at `https://your-domain/pb/_/` and confirm **Collections → users → API Rules → Create** is **empty** (public signup). The repo migration `1730000001_allow_user_signup.js` sets this on container start; restart the `pocketbase` service if signup still fails.
 
 ## Services (internal)
 
