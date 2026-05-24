@@ -1,0 +1,17 @@
+{
+	"name": "@kainbu/core",
+	"private": true,
+	"type": "module",
+	"version": "0.0.1",
+	"dependencies": {
+		"@supabase/supabase-js": "^2.86.0",
+		"dotenv": "^17.3.1"
+	},
+	"exports": {
+		".": "./src/index.ts",
+		"./supabase": "./src/supabase.ts",
+		"./board": "./src/board.ts",
+		"./persistence": "./src/persistence.ts",
+		"./types": "./src/types.ts"
+	}
+}
