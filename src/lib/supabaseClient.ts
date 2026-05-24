@@ -1,4 +1,5 @@
 import { createClient } from '@supabase/supabase-js';
+import { setSupabaseClient } from '$lib/kainbu/supabaseContext';
 
 const normalizeEnvValue = (value: string | undefined, fallback: string) =>
 	(value || fallback)
@@ -44,3 +45,5 @@ export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
 		storage: authStorage
 	}
 });
+
+setSupabaseClient(supabase);

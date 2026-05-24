@@ -1,4 +1,5 @@
 import { supabase } from '$lib/supabaseClient';
+import { invokeWorkspaceApi as invokeSharedWorkspaceApi, setWorkspaceApiConfig } from '$lib/kainbu/workspaceApi';
 
 const DEFAULT_PRODUCTION_API_BASE_URL = 'https://kainbu.vercel.app';
 
@@ -31,59 +32,20 @@ const apiBaseUrl = normalizeBaseUrl(
 	import.meta.env.VITE_API_BASE_URL || import.meta.env.PUBLIC_API_BASE_URL || inferDefaultApiBaseUrl()
 );
 
-type WorkspaceApiOptions = {
-	method?: 'GET' | 'POST' | 'PATCH' | 'PUT' | 'DELETE';
-	body?: unknown;
-};
+setWorkspaceApiConfig({
+	getApiBaseUrl: () => apiBaseUrl,
+	getAccessToken: async () => {
+		const {
+			data: { session }
+		} = await supabase.auth.getSession();
 
-const parseApiPayload = (responseText: string, contentType: string | null) => {
-	if (!responseText) {
-		return null;
+		if (!session?.access_token) {
+			throw new Error('You need to sign in again before using workspace actions.');
+		}
+
+		return session.access_token;
 	}
-
-	const trimmed = responseText.trim();
-	const looksLikeJson =
-		contentType?.toLowerCase().includes('application/json') ||
-		trimmed.startsWith('{') ||
-		trimmed.startsWith('[');
-
-	if (!looksLikeJson) {
-		return {
-			rawText: responseText
-		};
-	}
-
-	try {
-		return JSON.parse(responseText) as unknown;
-	} catch {
-		return {
-			rawText: responseText
-		};
-	}
-};
-
-const getApiErrorMessage = (payload: unknown, responseText: string, path: string) => {
-	if (
-		payload &&
-		typeof payload === 'object' &&
-		'error' in payload &&
-		typeof payload.error === 'string' &&
-		payload.error.trim()
-	) {
-		return payload.error.trim();
-	}
-
-	const trimmed = responseText.trim();
-	if (trimmed.startsWith('<!DOCTYPE') || trimmed.startsWith('<html')) {
-		return `Workspace API returned HTML for ${path}. The deployment is missing that API route.`;
-	}
-
-	if (trimmed) {
-		return trimmed.slice(0, 220);
-	}
-
-	return 'Workspace request failed.';
-};
+});
 
 export const getWorkspaceApiAccessToken = async () => {
 	const {
@@ -99,33 +61,4 @@ export const getWorkspaceApiAccessToken = async () => {
 
 export const resolveWorkspaceApiUrl = (path: string) => `${apiBaseUrl}${path}`;
 
-export const invokeWorkspaceApi = async <T>(path: string, options: WorkspaceApiOptions = {}) => {
-	const accessToken = await getWorkspaceApiAccessToken();
-
-	const response = await fetch(resolveWorkspaceApiUrl(path), {
-		method: options.method || 'POST',
-		headers: {
-			'Content-Type': 'application/json',
-			Authorization: `Bearer ${accessToken}`
-		},
-		...(options.body !== undefined ? { body: JSON.stringify(options.body) } : {})
-	});
-
-	const responseText = await response.text();
-	const payload = parseApiPayload(responseText, response.headers.get('content-type'));
-
-	if (!response.ok) {
-		throw new Error(getApiErrorMessage(payload, responseText, path));
-	}
-
-	if (
-		payload &&
-		typeof payload === 'object' &&
-		'rawText' in payload &&
-		typeof payload.rawText === 'string'
-	) {
-		throw new Error(getApiErrorMessage(payload, responseText, path));
-	}
-
-	return payload as T;
-};
+export const invokeWorkspaceApi = invokeSharedWorkspaceApi;

@@ -25,63 +25,83 @@ export const BACKGROUND_ALLOWED_MIME_TYPES = [
 export const BACKGROUND_GRADIENT_OPTIONS: BackgroundScenePreset[] = [
 	{
 		id: 'ember-haze',
-		label: 'Default',
-		swatch: 'linear-gradient(135deg, #160c09 0%, #5f270f 48%, #f59e0b 100%)',
+		label: 'Ember',
+		swatch: 'linear-gradient(135deg, #0b0908 0%, #2a160e 50%, #b4541c 100%)',
 		scene:
-			'radial-gradient(circle at top right, rgba(245, 158, 11, 0.2), transparent 24rem), radial-gradient(circle at bottom left, rgba(194, 65, 12, 0.2), transparent 30rem), linear-gradient(145deg, #0b0909 0%, #22100c 42%, #0e0908 100%)',
-		primaryGlow: 'rgba(245, 158, 11, 0.2)',
-		secondaryGlow: 'rgba(194, 65, 12, 0.18)',
-		gridOpacity: 0.22
+			'radial-gradient(ellipse 80% 60% at 85% 0%, rgba(245, 158, 11, 0.10), transparent 70%), radial-gradient(ellipse 70% 50% at 0% 100%, rgba(194, 65, 12, 0.10), transparent 70%), linear-gradient(150deg, #0b0908 0%, #14100d 100%)',
+		primaryGlow: 'rgba(245, 158, 11, 0.10)',
+		secondaryGlow: 'rgba(194, 65, 12, 0.10)',
+		gridOpacity: 0.10
 	},
 	{
 		id: 'lagoon-veil',
-		label: 'Lagoon Veil',
-		swatch: 'linear-gradient(135deg, #07141b 0%, #0d3f50 50%, #7dd3fc 100%)',
+		label: 'Lagoon',
+		swatch: 'linear-gradient(135deg, #07141b 0%, #0d3f50 60%, #38bdf8 100%)',
 		scene:
-			'radial-gradient(circle at top right, rgba(34, 211, 238, 0.18), transparent 24rem), radial-gradient(circle at bottom left, rgba(14, 116, 144, 0.2), transparent 28rem), linear-gradient(150deg, #050b12 0%, #0b1b24 38%, #071118 100%)',
-		primaryGlow: 'rgba(34, 211, 238, 0.18)',
-		secondaryGlow: 'rgba(14, 116, 144, 0.22)',
-		gridOpacity: 0.2
+			'radial-gradient(ellipse 80% 60% at 85% 0%, rgba(34, 211, 238, 0.09), transparent 70%), radial-gradient(ellipse 70% 50% at 0% 100%, rgba(14, 116, 144, 0.10), transparent 70%), linear-gradient(150deg, #060d12 0%, #0c1820 100%)',
+		primaryGlow: 'rgba(34, 211, 238, 0.10)',
+		secondaryGlow: 'rgba(14, 116, 144, 0.12)',
+		gridOpacity: 0.10
 	},
 	{
 		id: 'forest-glow',
-		label: 'Forest Glow',
-		swatch: 'linear-gradient(135deg, #0a120b 0%, #1c5a35 48%, #bef264 100%)',
+		label: 'Forest',
+		swatch: 'linear-gradient(135deg, #0a120b 0%, #1c5a35 60%, #84cc16 100%)',
 		scene:
-			'radial-gradient(circle at top right, rgba(163, 230, 53, 0.18), transparent 26rem), radial-gradient(circle at bottom left, rgba(34, 197, 94, 0.2), transparent 28rem), linear-gradient(150deg, #050805 0%, #0d1610 36%, #060907 100%)',
-		primaryGlow: 'rgba(163, 230, 53, 0.18)',
-		secondaryGlow: 'rgba(34, 197, 94, 0.18)',
-		gridOpacity: 0.2
+			'radial-gradient(ellipse 80% 60% at 85% 0%, rgba(132, 204, 22, 0.09), transparent 70%), radial-gradient(ellipse 70% 50% at 0% 100%, rgba(22, 163, 74, 0.10), transparent 70%), linear-gradient(150deg, #070b08 0%, #0c130d 100%)',
+		primaryGlow: 'rgba(132, 204, 22, 0.10)',
+		secondaryGlow: 'rgba(22, 163, 74, 0.10)',
+		gridOpacity: 0.10
 	},
 	{
 		id: 'indigo-rain',
-		label: 'Indigo Rain',
-		swatch: 'linear-gradient(135deg, #0b0f1c 0%, #223a7a 46%, #93c5fd 100%)',
+		label: 'Indigo',
+		swatch: 'linear-gradient(135deg, #0b0f1c 0%, #1e3a8a 60%, #60a5fa 100%)',
 		scene:
-			'radial-gradient(circle at top right, rgba(96, 165, 250, 0.16), transparent 24rem), radial-gradient(circle at bottom left, rgba(30, 64, 175, 0.22), transparent 28rem), linear-gradient(152deg, #060912 0%, #10172d 40%, #060913 100%)',
-		primaryGlow: 'rgba(96, 165, 250, 0.18)',
-		secondaryGlow: 'rgba(30, 64, 175, 0.18)',
-		gridOpacity: 0.2
+			'radial-gradient(ellipse 80% 60% at 85% 0%, rgba(96, 165, 250, 0.08), transparent 70%), radial-gradient(ellipse 70% 50% at 0% 100%, rgba(30, 64, 175, 0.12), transparent 70%), linear-gradient(150deg, #070a13 0%, #0d1224 100%)',
+		primaryGlow: 'rgba(96, 165, 250, 0.10)',
+		secondaryGlow: 'rgba(30, 64, 175, 0.10)',
+		gridOpacity: 0.10
 	},
 	{
 		id: 'rose-fog',
-		label: 'Rose Fog',
-		swatch: 'linear-gradient(135deg, #170d12 0%, #6f2440 50%, #f9a8d4 100%)',
+		label: 'Rose',
+		swatch: 'linear-gradient(135deg, #140a10 0%, #6f2440 60%, #f472b6 100%)',
 		scene:
-			'radial-gradient(circle at top right, rgba(244, 114, 182, 0.16), transparent 24rem), radial-gradient(circle at bottom left, rgba(190, 24, 93, 0.2), transparent 28rem), linear-gradient(150deg, #0b0709 0%, #1c0f16 38%, #0d080b 100%)',
-		primaryGlow: 'rgba(244, 114, 182, 0.18)',
-		secondaryGlow: 'rgba(190, 24, 93, 0.18)',
-		gridOpacity: 0.18
+			'radial-gradient(ellipse 80% 60% at 85% 0%, rgba(244, 114, 182, 0.08), transparent 70%), radial-gradient(ellipse 70% 50% at 0% 100%, rgba(190, 24, 93, 0.10), transparent 70%), linear-gradient(150deg, #0a070a 0%, #170c12 100%)',
+		primaryGlow: 'rgba(244, 114, 182, 0.10)',
+		secondaryGlow: 'rgba(190, 24, 93, 0.10)',
+		gridOpacity: 0.09
 	},
 	{
 		id: 'ash-sunrise',
-		label: 'Ash Sunrise',
-		swatch: 'linear-gradient(135deg, #111113 0%, #58463b 48%, #fde68a 100%)',
+		label: 'Ash',
+		swatch: 'linear-gradient(135deg, #0f0f10 0%, #44362d 60%, #fbbf24 100%)',
 		scene:
-			'radial-gradient(circle at top right, rgba(250, 204, 21, 0.15), transparent 24rem), radial-gradient(circle at bottom left, rgba(217, 119, 6, 0.16), transparent 30rem), linear-gradient(148deg, #09090b 0%, #171515 36%, #0b0a09 100%)',
-		primaryGlow: 'rgba(250, 204, 21, 0.16)',
-		secondaryGlow: 'rgba(217, 119, 6, 0.16)',
-		gridOpacity: 0.16
+			'radial-gradient(ellipse 80% 60% at 85% 0%, rgba(250, 204, 21, 0.07), transparent 70%), radial-gradient(ellipse 70% 50% at 0% 100%, rgba(217, 119, 6, 0.08), transparent 70%), linear-gradient(150deg, #09090b 0%, #131210 100%)',
+		primaryGlow: 'rgba(250, 204, 21, 0.08)',
+		secondaryGlow: 'rgba(217, 119, 6, 0.08)',
+		gridOpacity: 0.08
+	},
+	{
+		id: 'slate-paper',
+		label: 'Slate',
+		swatch: 'linear-gradient(135deg, #0f1115 0%, #1f242c 60%, #475569 100%)',
+		scene:
+			'radial-gradient(ellipse 80% 60% at 85% 0%, rgba(148, 163, 184, 0.06), transparent 70%), radial-gradient(ellipse 70% 50% at 0% 100%, rgba(51, 65, 85, 0.10), transparent 70%), linear-gradient(150deg, #0c0e12 0%, #14171c 100%)',
+		primaryGlow: 'rgba(148, 163, 184, 0.08)',
+		secondaryGlow: 'rgba(71, 85, 105, 0.10)',
+		gridOpacity: 0.08
+	},
+	{
+		id: 'pearl-dusk',
+		label: 'Pearl',
+		swatch: 'linear-gradient(135deg, #11100d 0%, #3a342a 60%, #d6c5a8 100%)',
+		scene:
+			'radial-gradient(ellipse 80% 60% at 85% 0%, rgba(214, 197, 168, 0.05), transparent 70%), radial-gradient(ellipse 70% 50% at 0% 100%, rgba(120, 113, 108, 0.08), transparent 70%), linear-gradient(150deg, #0b0a08 0%, #131210 100%)',
+		primaryGlow: 'rgba(214, 197, 168, 0.06)',
+		secondaryGlow: 'rgba(120, 113, 108, 0.08)',
+		gridOpacity: 0.08
 	}
 ];
 
@@ -90,61 +110,91 @@ export const BACKGROUND_SOLID_OPTIONS: BackgroundScenePreset[] = [
 		id: 'obsidian',
 		label: 'Obsidian',
 		swatch: '#09090b',
-		scene:
-			'radial-gradient(circle at top right, rgba(255, 255, 255, 0.05), transparent 22rem), radial-gradient(circle at bottom left, rgba(99, 102, 241, 0.08), transparent 28rem), #09090b',
-		primaryGlow: 'rgba(99, 102, 241, 0.1)',
-		secondaryGlow: 'rgba(255, 255, 255, 0.06)',
-		gridOpacity: 0.12
+		scene: '#09090b',
+		primaryGlow: 'rgba(255, 255, 255, 0.04)',
+		secondaryGlow: 'rgba(255, 255, 255, 0.03)',
+		gridOpacity: 0.08
+	},
+	{
+		id: 'graphite',
+		label: 'Graphite',
+		swatch: '#131418',
+		scene: '#131418',
+		primaryGlow: 'rgba(255, 255, 255, 0.04)',
+		secondaryGlow: 'rgba(255, 255, 255, 0.03)',
+		gridOpacity: 0.08
 	},
 	{
 		id: 'cinder',
 		label: 'Cinder',
 		swatch: '#1c1917',
-		scene:
-			'radial-gradient(circle at top right, rgba(251, 146, 60, 0.12), transparent 24rem), radial-gradient(circle at bottom left, rgba(120, 53, 15, 0.16), transparent 28rem), #1c1917',
-		primaryGlow: 'rgba(251, 146, 60, 0.12)',
-		secondaryGlow: 'rgba(120, 53, 15, 0.14)',
-		gridOpacity: 0.14
+		scene: '#1c1917',
+		primaryGlow: 'rgba(251, 146, 60, 0.05)',
+		secondaryGlow: 'rgba(120, 53, 15, 0.06)',
+		gridOpacity: 0.08
 	},
 	{
 		id: 'deep-sea',
 		label: 'Deep Sea',
-		swatch: '#102028',
-		scene:
-			'radial-gradient(circle at top right, rgba(56, 189, 248, 0.12), transparent 24rem), radial-gradient(circle at bottom left, rgba(8, 47, 73, 0.2), transparent 28rem), #102028',
-		primaryGlow: 'rgba(56, 189, 248, 0.14)',
-		secondaryGlow: 'rgba(8, 47, 73, 0.18)',
-		gridOpacity: 0.16
+		swatch: '#0f1c24',
+		scene: '#0f1c24',
+		primaryGlow: 'rgba(56, 189, 248, 0.05)',
+		secondaryGlow: 'rgba(8, 47, 73, 0.08)',
+		gridOpacity: 0.08
 	},
 	{
 		id: 'evergreen',
 		label: 'Evergreen',
-		swatch: '#17211a',
-		scene:
-			'radial-gradient(circle at top right, rgba(74, 222, 128, 0.12), transparent 24rem), radial-gradient(circle at bottom left, rgba(20, 83, 45, 0.18), transparent 28rem), #17211a',
-		primaryGlow: 'rgba(74, 222, 128, 0.12)',
-		secondaryGlow: 'rgba(20, 83, 45, 0.16)',
-		gridOpacity: 0.16
+		swatch: '#141d17',
+		scene: '#141d17',
+		primaryGlow: 'rgba(74, 222, 128, 0.05)',
+		secondaryGlow: 'rgba(20, 83, 45, 0.08)',
+		gridOpacity: 0.08
 	},
 	{
 		id: 'navy-room',
-		label: 'Navy Room',
-		swatch: '#171d31',
-		scene:
-			'radial-gradient(circle at top right, rgba(96, 165, 250, 0.12), transparent 24rem), radial-gradient(circle at bottom left, rgba(30, 58, 138, 0.2), transparent 28rem), #171d31',
-		primaryGlow: 'rgba(96, 165, 250, 0.12)',
-		secondaryGlow: 'rgba(30, 58, 138, 0.16)',
-		gridOpacity: 0.16
+		label: 'Navy',
+		swatch: '#141a2c',
+		scene: '#141a2c',
+		primaryGlow: 'rgba(96, 165, 250, 0.05)',
+		secondaryGlow: 'rgba(30, 58, 138, 0.08)',
+		gridOpacity: 0.08
 	},
 	{
 		id: 'mulberry',
 		label: 'Mulberry',
-		swatch: '#281824',
-		scene:
-			'radial-gradient(circle at top right, rgba(244, 114, 182, 0.12), transparent 24rem), radial-gradient(circle at bottom left, rgba(131, 24, 67, 0.18), transparent 28rem), #281824',
-		primaryGlow: 'rgba(244, 114, 182, 0.12)',
-		secondaryGlow: 'rgba(131, 24, 67, 0.16)',
-		gridOpacity: 0.15
+		swatch: '#221421',
+		scene: '#221421',
+		primaryGlow: 'rgba(244, 114, 182, 0.05)',
+		secondaryGlow: 'rgba(131, 24, 67, 0.08)',
+		gridOpacity: 0.08
+	},
+	{
+		id: 'sand',
+		label: 'Sand',
+		swatch: '#1c1814',
+		scene: '#1c1814',
+		primaryGlow: 'rgba(214, 197, 168, 0.04)',
+		secondaryGlow: 'rgba(120, 113, 108, 0.06)',
+		gridOpacity: 0.07
+	},
+	{
+		id: 'porcelain',
+		label: 'Porcelain',
+		swatch: '#15171a',
+		scene: '#15171a',
+		primaryGlow: 'rgba(148, 163, 184, 0.04)',
+		secondaryGlow: 'rgba(71, 85, 105, 0.06)',
+		gridOpacity: 0.07
+	},
+	{
+		id: 'plum',
+		label: 'Plum',
+		swatch: '#1a1426',
+		scene: '#1a1426',
+		primaryGlow: 'rgba(168, 85, 247, 0.05)',
+		secondaryGlow: 'rgba(88, 28, 135, 0.08)',
+		gridOpacity: 0.08
 	}
 ];
 

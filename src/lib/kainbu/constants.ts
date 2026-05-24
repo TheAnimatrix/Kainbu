@@ -7,6 +7,9 @@ import type { KanbanData, Project, UserSettings } from '$lib/kainbu/types';
 export const BRAND_NAME = 'Kainbu';
 export const BRAND_KATAKANA = 'カインブ';
 
+export const BOARD_LIST_TASKS_DEFAULT_LIMIT = 15;
+export const BOARD_LIST_TASKS_MAX_LIMIT = 50;
+
 export const TAG_COLORS = [
 	{
 		value: 'tone:red',

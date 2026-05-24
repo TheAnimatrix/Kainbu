@@ -114,6 +114,10 @@ const areTasksEqual = (left: Task, right: Task) => {
 	if (left.countdownAt !== right.countdownAt) return false;
 	if (left.alarmAt !== right.alarmAt) return false;
 	if ((left.assignedTo || '') !== (right.assignedTo || '')) return false;
+
+	const linkSignature = (ids: string[] | undefined) => [...new Set(ids || [])].sort().join('|');
+	if (linkSignature(left.linkedTaskIds) !== linkSignature(right.linkedTaskIds)) return false;
+
 	return areTagsEqual(left.tags || [], right.tags || []);
 };
 
