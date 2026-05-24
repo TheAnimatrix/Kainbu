@@ -58,19 +58,21 @@ const mapTaskCommentRecord = (record: Record<string, unknown>, projectId: string
 export const fetchTaskAssets = async (projectId: string, taskId: string) => {
 	const projectPbId = await getProjectPbId(projectId);
 	const records = await pocketbase.collection('project_task_assets').getFullList({
-		filter: `${projectRelationFilter(projectPbId)} && task_client_id = "${pbEscapeFilter(taskId)}"`,
-		sort: '-created'
+		filter: `${projectRelationFilter(projectPbId)} && task_client_id = "${pbEscapeFilter(taskId)}"`
 	});
-	return records.map((record) => mapTaskAssetRecord(record, projectId));
+	return records
+		.map((record) => mapTaskAssetRecord(record, projectId))
+		.sort((left, right) => right.createdAt - left.createdAt);
 };
 
 export const fetchTaskComments = async (projectId: string, taskId: string) => {
 	const projectPbId = await getProjectPbId(projectId);
 	const records = await pocketbase.collection('project_task_comments').getFullList({
-		filter: `${projectRelationFilter(projectPbId)} && task_client_id = "${pbEscapeFilter(taskId)}"`,
-		sort: 'created'
+		filter: `${projectRelationFilter(projectPbId)} && task_client_id = "${pbEscapeFilter(taskId)}"`
 	});
-	return records.map((record) => mapTaskCommentRecord(record, projectId));
+	return records
+		.map((record) => mapTaskCommentRecord(record, projectId))
+		.sort((left, right) => left.createdAt - right.createdAt);
 };
 
 export const fetchTaskDetails = async (projectId: string, taskId: string) => {
