@@ -1,5 +1,6 @@
 /// <reference path="../pb_data/types.d.ts" />
 
+/** Idempotent repair when 1730000013 did not run on an existing deployment. */
 migrate(
 	(app) => {
 		const appSettings = app.findCollectionByNameOrId('app_settings');

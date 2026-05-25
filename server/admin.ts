@@ -10,7 +10,8 @@ import {
 	requireAppAdmin
 } from './adminAuth.js';
 import {
-	invalidateAiModelCatalogCache,
+	AiModelCatalogPersistenceError,
+	getAiModelCatalogSource,
 	loadAiModelCatalog,
 	saveAiModelCatalog
 } from './ai-models.js';
@@ -319,8 +320,9 @@ export const handleAdminPatchUser = async (c: Context) => {
 export const handleAdminGetModelSettings = async (c: Context) => {
 	try {
 		await requireAppAdmin(c.req.header('Authorization'));
-		const catalog = await loadAiModelCatalog();
-		return c.json({ catalog });
+		const source = await getAiModelCatalogSource();
+		const catalog = await loadAiModelCatalog({ fresh: true });
+		return c.json({ catalog, source, persisted: source === 'database' });
 	} catch (error) {
 		const { status, message } = adminError(error);
 		return c.json({ error: message }, status as 401 | 403 | 500);
@@ -336,11 +338,11 @@ export const handleAdminPutModelSettings = async (c: Context) => {
 		}
 
 		const catalog = await saveAiModelCatalog(normalizeAiModelCatalog(body.catalog));
-		invalidateAiModelCatalogCache();
-		await loadAiModelCatalog();
-
-		return c.json({ ok: true, catalog });
+		return c.json({ ok: true, catalog, source: 'database', persisted: true });
 	} catch (error) {
+		if (error instanceof AiModelCatalogPersistenceError) {
+			return c.json({ error: error.message }, 503);
+		}
 		const { status, message } = adminError(error);
 		return c.json({ error: message }, status as 401 | 403 | 500);
 	}

@@ -50,6 +50,19 @@ migrate(
 		}
 
 		try {
+			appSettings.fields.getByName('ai_models_json');
+		} catch {
+			appSettings.fields.add(
+				new TextField({
+					name: 'ai_models_json',
+					required: false,
+					max: 50000
+				})
+			);
+			app.save(appSettings);
+		}
+
+		try {
 			app.findCollectionByNameOrId('ai_usage_events');
 		} catch {
 			const aiUsageEvents = new Collection({

@@ -102,8 +102,14 @@ export const updateAdminAiSettings = (apiKey: string) =>
 		body: JSON.stringify({ apiKey })
 	});
 
+export type AdminModelSettings = {
+	catalog: AdminModelCatalog;
+	source: 'database' | 'defaults';
+	persisted: boolean;
+};
+
 export const fetchAdminModelSettings = () =>
-	adminFetch<{ catalog: AdminModelCatalog }>('/api/admin/settings/models');
+	adminFetch<AdminModelSettings>('/api/admin/settings/models');
 
 export const updateAdminModelSettings = (catalog: AdminModelCatalog) =>
 	adminFetch<{ ok: boolean; catalog: AdminModelCatalog }>('/api/admin/settings/models', {

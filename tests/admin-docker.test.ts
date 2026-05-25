@@ -196,12 +196,34 @@ describe('Local Docker — admin model settings', () => {
 		expect(get.body.catalog?.models?.length).toBeGreaterThan(0);
 
 		const catalog = get.body.catalog;
+		const marker = `e2e-model-${Date.now()}`;
+		const putCatalog = {
+			...catalog,
+			models: [
+				{
+					...catalog.models[0],
+					id: marker,
+					openrouterModel: catalog.models[0].openrouterModel,
+					enabled: true,
+					thinkingLevels: ['none'],
+					defaultThinkingLevel: 'none',
+					position: 0
+				}
+			],
+			defaultModelId: marker
+		};
 		const put = await authJson('/api/admin/settings/models', adminToken, {
 			method: 'PUT',
-			body: JSON.stringify({ catalog })
+			body: JSON.stringify({ catalog: putCatalog })
 		});
 		expect(put.response.status).toBe(200);
-		expect(put.body.catalog?.defaultModelId).toBe(catalog.defaultModelId);
+		expect(put.body.persisted).toBe(true);
+		expect(put.body.catalog?.defaultModelId).toBe(marker);
+
+		const reload = await authJson('/api/admin/settings/models', adminToken);
+		expect(reload.response.status).toBe(200);
+		expect(reload.body.persisted).toBe(true);
+		expect(reload.body.catalog?.defaultModelId).toBe(marker);
 
 		const models = await fetch(`${API}/api/models`).then((res) => res.json());
 		expect(Array.isArray(models)).toBe(true);

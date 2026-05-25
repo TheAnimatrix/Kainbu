@@ -17,6 +17,7 @@
 	let saving = false;
 	let error = '';
 	let success = '';
+	let catalogSource: 'database' | 'defaults' = 'defaults';
 	let catalog: AdminModelCatalog | null = null;
 
 	const load = async () => {
@@ -25,6 +26,11 @@
 		try {
 			const result = await fetchAdminModelSettings();
 			catalog = structuredClone(result.catalog);
+			catalogSource = result.source;
+			if (!result.persisted) {
+				error =
+					'No saved model catalog in the database yet. Saving will create one after PocketBase migrations are applied.';
+			}
 		} catch (loadError) {
 			error = loadError instanceof Error ? loadError.message : 'Failed to load models';
 		} finally {
@@ -95,6 +101,8 @@
 		try {
 			const result = await updateAdminModelSettings(catalog);
 			catalog = structuredClone(result.catalog);
+			catalogSource = 'database';
+			error = '';
 			success = 'Models saved.';
 		} catch (saveError) {
 			error = saveError instanceof Error ? saveError.message : 'Failed to save models';
@@ -134,6 +142,12 @@
 			</div>
 		</div>
 
+		{#if catalogSource === 'defaults' && !loading}
+			<p class="px-1 text-sm text-amber-400">
+				Showing built-in defaults — changes will not stick until PocketBase has the
+				<code class="text-xs">ai_models_json</code> field (restart/rebuild pocketbase after deploy).
+			</p>
+		{/if}
 		{#if error}
 			<p class="px-1 text-sm text-red-400">{error}</p>
 		{/if}
