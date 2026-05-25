@@ -1,0 +1,9 @@
+FROM ghcr.io/muchobien/pocketbase:latest
+
+COPY pocketbase/pb_migrations /pb_migrations
+COPY pocketbase/pb_hooks /pb_hooks
+COPY docker/pocketbase-entrypoint.sh /entrypoint.sh
+
+RUN chmod +x /entrypoint.sh
+
+ENTRYPOINT ["/entrypoint.sh"]

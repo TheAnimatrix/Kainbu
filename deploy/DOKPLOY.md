@@ -16,7 +16,7 @@ This repo’s `docker-compose.yml` has **no host `ports`**. Use `docker-compose.
    - **Source:** Git → `https://github.com/TheAnimatrix/Kainbu`
    - **Branch:** `master` (or your deploy branch)
    - **Compose file:** `docker-compose.yml`
-   - **Build:** enabled (builds `api` + `web`)
+   - **Build:** enabled (builds `pocketbase`, `api`, and `web`)
 4. **Environment** — paste from [`dokploy.env.example`](./dokploy.env.example), set:
    - `POCKETBASE_ADMIN_PASSWORD`
    - `OPENROUTER_API_KEY`
