@@ -1151,7 +1151,7 @@ export const createProject = async (
 	const seed = normalizeProjectStructure({
 		...seedBase,
 		...seedInput,
-		id: seedInput.id || seedBase.id,
+		id: createId(),
 		name: seedInput.name || name,
 		ownerUserId: userId,
 		accessRole: 'owner' as const,

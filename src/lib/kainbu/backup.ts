@@ -51,6 +51,84 @@ type WorkspaceBackup = {
 const isObject = (value: unknown): value is Record<string, unknown> =>
 	typeof value === 'object' && value !== null;
 
+/** PocketBase / Supabase-era backups stored UUIDs on every record; never reuse them on import. */
+const stripSupabaseLegacyProject = (raw: Record<string, unknown>) => {
+	const {
+		id: _projectId,
+		projectId: _legacyProjectId,
+		activeBoardId: _activeBoardId,
+		activePageId: _activePageId,
+		ownerUserId: _ownerUserId,
+		owner: _owner,
+		user_id: _userId,
+		userId: _userIdCamel,
+		members: _members,
+		invites: _invites,
+		accessRole: _accessRole,
+		...rest
+	} = raw;
+
+	const boards = Array.isArray(raw.boards)
+		? raw.boards
+				.filter((entry): entry is Record<string, unknown> => isObject(entry))
+				.map(stripSupabaseLegacyBoard)
+		: undefined;
+
+	const pages = Array.isArray(raw.pages)
+		? raw.pages
+				.filter((entry): entry is Record<string, unknown> => isObject(entry))
+				.map(stripSupabaseLegacyPage)
+		: undefined;
+
+	return {
+		...rest,
+		...(boards ? { boards } : {}),
+		...(pages ? { pages } : {})
+	};
+};
+
+const stripSupabaseLegacyBoard = (raw: Record<string, unknown>) => {
+	const { id: _id, projectId: _projectId, ...rest } = raw;
+	return rest;
+};
+
+const stripSupabaseLegacyPage = (raw: Record<string, unknown>) => {
+	const { id: _id, projectId: _projectId, ...rest } = raw;
+	return rest;
+};
+
+const importScratchpadFromBackup = (value: unknown, fallbackContent: string) => {
+	if (typeof value === 'string') {
+		return normalizeScratchpadData('', fallbackContent || value);
+	}
+
+	if (!isObject(value)) {
+		return normalizeScratchpadData('', fallbackContent);
+	}
+
+	if (Array.isArray(value.pads)) {
+		const pads = value.pads
+			.filter((entry): entry is Record<string, unknown> => isObject(entry))
+			.map((pad, index) => ({
+				id: createId(),
+				name:
+					typeof pad.name === 'string' && pad.name.trim() ? pad.name.trim() : `Page ${index + 1}`,
+				content: typeof pad.content === 'string' ? pad.content : ''
+			}));
+
+		if (pads.length) {
+			return { activePadId: pads[0].id, pads };
+		}
+	}
+
+	if (typeof value.content === 'string') {
+		const pad = { id: createId(), name: 'Notes', content: value.content };
+		return { activePadId: pad.id, pads: [pad] };
+	}
+
+	return normalizeScratchpadData('', fallbackContent);
+};
+
 const stripTagForBackup = (tag: Tag): BackupTag => ({
 	label: tag.label,
 	color: tag.color
@@ -187,11 +265,16 @@ const normalizeProject = (
 	userId: string
 ): Project => {
 	const now = Date.now();
-	const seed = EMPTY_PROJECT(userId, typeof candidate.name === 'string' ? candidate.name : 'Imported Project');
-	const legacyKanban =
-		Array.isArray(candidate.kanbanData) ? (candidate.kanbanData as KanbanData) : undefined;
-	const legacyBoards = Array.isArray(candidate.boards) ? (candidate.boards as Array<Partial<ProjectBoard>>) : [];
-	const legacyPages = Array.isArray(candidate.pages) ? (candidate.pages as Array<Partial<ProjectPage>>) : [];
+	const stripped: Record<string, unknown> = stripSupabaseLegacyProject(candidate);
+	const seed = EMPTY_PROJECT(
+		userId,
+		typeof stripped.name === 'string' ? stripped.name : 'Imported Project'
+	);
+	const legacyKanban = Array.isArray(stripped.kanbanData) ? (stripped.kanbanData as KanbanData) : undefined;
+	const legacyBoards = Array.isArray(stripped.boards)
+		? (stripped.boards as Array<Partial<ProjectBoard>>)
+		: [];
+	const legacyPages = Array.isArray(stripped.pages) ? (stripped.pages as Array<Partial<ProjectPage>>) : [];
 
 	const boards: ProjectBoard[] = legacyBoards.length
 		? legacyBoards.map((board, index) => {
@@ -237,8 +320,8 @@ const normalizeProject = (
 					projectId: seed.id,
 					name: 'Notes',
 					position: 0,
-					content: normalizeScratchpadData(
-						candidate.scratchpadData,
+					content: importScratchpadFromBackup(
+						stripped.scratchpadData,
 						seed.scratchpadData.pads[0]?.content || ''
 					).pads[0]?.content || '',
 					createdAt: now,
@@ -266,8 +349,8 @@ const normalizeProject = (
 		activeBoardId: activeBoard?.id || '',
 		activePageId: activePage?.id || '',
 		kanbanData: activeBoard?.kanbanData || [],
-		scratchpadData: normalizeScratchpadData(
-			candidate.scratchpadData,
+		scratchpadData: importScratchpadFromBackup(
+			stripped.scratchpadData,
 			activePage?.content || seed.scratchpadData.pads[0]?.content || ''
 		),
 		chatHistory: seed.chatHistory,
@@ -317,7 +400,7 @@ const normalizeLegacySession = (session: LegacySession, userId: string): Project
 		activeBoardId: boardId,
 		activePageId: pageId,
 		kanbanData,
-		scratchpadData: normalizeScratchpadData(session.scratchpadData),
+		scratchpadData: importScratchpadFromBackup(session.scratchpadData, ''),
 		chatHistory: normalizeChatHistory(session.chatHistory || []),
 		createdAt: session.createdAt || seed.createdAt,
 		updatedAt: session.lastModified || session.createdAt || seed.updatedAt,
@@ -356,7 +439,9 @@ export const parseProjectsImport = async (file: File, userId: string): Promise<P
 		(parsed.version === BACKUP_VERSION || parsed.version === 2 || parsed.version === 1) &&
 		Array.isArray(parsed.projects)
 	) {
-		return parsed.projects.map((project) => normalizeProject(project as Record<string, unknown>, userId));
+		return parsed.projects
+			.filter((project): project is Record<string, unknown> => isObject(project))
+			.map((project) => normalizeProject(project, userId));
 	}
 
 	if (Array.isArray(parsed)) {

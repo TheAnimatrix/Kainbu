@@ -45,15 +45,36 @@ describe('backup restore', () => {
 		expect(calur?.boards.map((board) => board.name)).toEqual(['Board', 'Board 2']);
 	});
 
-	it('assigns fresh ids when importing legacy backups that still contain ids', async () => {
+	it('assigns fresh ids when importing legacy Supabase/PocketBase backups that still contain ids', async () => {
 		const raw = readFileSync('k:/Downloads/kainbu-backup-2026-05-25.json', 'utf8');
-		const legacy = JSON.parse(raw) as { projects: Array<{ boards: Array<{ id: string }> }> };
-		const legacyBoardId = legacy.projects.find((p) => p.boards.length > 1)?.boards[0]?.id;
+		const legacy = JSON.parse(raw) as {
+			projects: Array<{
+				boards: Array<{ id: string; projectId?: string }>;
+				pages?: Array<{ id: string }>;
+			}>;
+		};
+		const multiBoardProject = legacy.projects.find((p) => p.boards.length > 1);
+		const legacyBoardId = multiBoardProject?.boards[0]?.id;
+		const legacyProjectIdOnBoard = multiBoardProject?.boards[0]?.projectId;
+		const legacyPageId = legacy.projects[0]?.pages?.[0]?.id;
 		expect(legacyBoardId).toBeTruthy();
 
 		const imported = await parseProjectsImport(new MockFile(raw) as unknown as File, 'user-1');
 		const calur = imported.find((project) => project.name === 'Calur');
 		expect(calur?.boards[0]?.id).not.toBe(legacyBoardId);
+		if (legacyProjectIdOnBoard) {
+			expect(calur?.boards[0]?.projectId).not.toBe(legacyProjectIdOnBoard);
+		}
+		if (legacyPageId) {
+			for (const project of imported) {
+				for (const page of project.pages) {
+					expect(page.id).not.toBe(legacyPageId);
+				}
+				for (const pad of project.scratchpadData.pads) {
+					expect(pad.id).not.toBe(legacyPageId);
+				}
+			}
+		}
 	});
 
 	it('createProject seed merge keeps every imported board', async () => {
