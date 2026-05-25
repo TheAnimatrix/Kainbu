@@ -219,6 +219,8 @@ export interface ProjectMembership {
 	username?: string | null;
 	joinedAt: number;
 	lastOpenedAt: number;
+	viewingBoardId?: string;
+	presenceAt?: number;
 	isCurrentUser?: boolean;
 }
 
@@ -641,6 +643,8 @@ export interface ProjectMembershipRow {
 	joined_at: string;
 	last_opened_at: string;
 	pinned_at: string | null;
+	viewing_board_client_id: string | null;
+	presence_at: string | null;
 	created_at: string;
 	updated_at: string;
 }

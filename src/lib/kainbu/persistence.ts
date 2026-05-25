@@ -12,6 +12,7 @@ import { normalizeProjectStructure } from '$lib/kainbu/projectStructure';
 import { normalizeScratchpadData, serializeScratchpadData } from '$lib/kainbu/scratchpad';
 import { normalizeUserSettings } from '$lib/kainbu/settings';
 import { pbNoAutoCancel } from '$lib/kainbu/pbRequest';
+import { isPocketBaseRecordId } from '$lib/kainbu/recordIds';
 import { normalizeDueTimestamp } from '$lib/kainbu/timing';
 import { getPb } from '$lib/kainbu/pocketbaseContext';
 import {
@@ -407,6 +408,8 @@ const mapMembershipRow = (
 	username,
 	joinedAt: new Date(row.joined_at).getTime(),
 	lastOpenedAt: new Date(row.last_opened_at).getTime(),
+	viewingBoardId: row.viewing_board_client_id || undefined,
+	presenceAt: row.presence_at ? new Date(row.presence_at).getTime() : undefined,
 	isCurrentUser: row.user_id === currentUserId
 });
 
@@ -579,10 +582,7 @@ const mapTaskUpsertRow = (
 	completed_at: task.completedAt ?? null,
 	countdown_at: normalizeDueTimestamp(task.countdownAt) ?? null,
 	alarm_at: normalizeDueTimestamp(task.alarmAt) ?? null,
-	assigned_to:
-		typeof task.assignedTo === 'string' && UUID_PATTERN.test(task.assignedTo.trim())
-			? task.assignedTo.trim()
-			: null,
+	assigned_to: isPocketBaseRecordId(task.assignedTo) ? task.assignedTo.trim() : null,
 	linked_task_ids: normalizeLinkedTaskIds(task.linkedTaskIds),
 	position
 });
@@ -1427,6 +1427,15 @@ export const touchProjectLastOpened = async (projectId: string) => {
 	await invokeWorkspaceApi('/api/workspace/projects/touch', {
 		body: {
 			projectId
+		}
+	});
+};
+
+export const reportBoardPresence = async (projectId: string, boardId: string | null) => {
+	await invokeWorkspaceApi('/api/workspace/boards/presence', {
+		body: {
+			projectId,
+			boardId
 		}
 	});
 };

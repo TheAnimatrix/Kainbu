@@ -57,7 +57,9 @@
 		syncLeadingCardCheckboxLine,
 		toggleMarkdownCheckbox
 	} from '$lib/kainbu/taskMarkdown';
+	import { getBoardPresenceViewers } from '$lib/kainbu/boardPresence';
 	import { formatTimingLabel, getTaskDueAt } from '$lib/kainbu/timing';
+	import BoardViewersPill from '$lib/components/BoardViewersPill.svelte';
 	import {
 		addBidirectionalLink,
 		buildLinkGroupLayout,
@@ -144,6 +146,8 @@
 	export let defaultShowCheckbox = true;
 	export let active = true;
 	export let members: ProjectMembership[] = [];
+	export let activeBoardId = '';
+	export let currentUserId = '';
 	export let onChange: (nextData: KanbanData, options?: BoardChangeOptions) => void;
 	export let onSendToChat: (payload: { task: Task; column: Column }) => void;
 	export let onActiveTaskChange: (
@@ -337,6 +341,7 @@
 	$: visibleDiffData = boardSearchFiltering
 		? filterColumnsForBoardSearch(diffData, boardSearchQuery)
 		: diffData;
+	$: boardPresenceViewers = getBoardPresenceViewers(members, activeBoardId, currentUserId);
 	$: linkViewComponentIds = linkViewAnchorId
 		? new Set(getConnectedComponent(linkViewAnchorId, taskLinkGraph))
 		: new Set<string>();
@@ -1451,6 +1456,7 @@
 							<Network size={13} />
 							Link groups
 						</button>
+						<BoardViewersPill viewers={boardPresenceViewers} />
 						<button
 							type="button"
 							class={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-[11px] font-semibold transition ${

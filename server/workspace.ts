@@ -99,6 +99,11 @@ type WorkspaceLeaveProjectRequest = {
 	projectId: string;
 };
 
+type WorkspaceBoardPresenceRequest = {
+	projectId: string;
+	boardId: string | null;
+};
+
 const requireString = (value: unknown, field: string) => {
 	if (typeof value !== 'string' || !value.trim()) {
 		throw new WorkspaceApiError(400, `${field} is required.`);
@@ -288,6 +293,31 @@ export const handleWorkspaceTouchProjectRequest = async (
 	if (!membership) throw new WorkspaceApiError(404, 'Membership not found.');
 	await admin.collection('project_memberships').update(membership.id, {
 		last_opened_at: new Date().toISOString()
+	});
+
+	return { ok: true };
+};
+
+export const handleWorkspaceBoardPresenceRequest = async (
+	body: WorkspaceBoardPresenceRequest,
+	authorization: string | undefined
+) => {
+	const userId = await getAuthenticatedUserId(authorization);
+	const admin = await createAdminPb();
+	const projectId = requireString(body.projectId, 'projectId');
+	const boardId =
+		typeof body.boardId === 'string' && body.boardId.trim() ? body.boardId.trim() : '';
+
+	await ensureMembership(admin, projectId, userId);
+
+	const membership = await getMembership(admin, projectId, userId);
+	if (!membership) throw new WorkspaceApiError(404, 'Membership not found.');
+
+	const now = new Date().toISOString();
+	await admin.collection('project_memberships').update(membership.id, {
+		last_opened_at: now,
+		viewing_board_client_id: boardId,
+		presence_at: boardId ? now : ''
 	});
 
 	return { ok: true };

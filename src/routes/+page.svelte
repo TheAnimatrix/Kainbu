@@ -101,6 +101,7 @@
 		renameProject as renameProjectRemote,
 		renameProjectBoard as renameProjectBoardRemote,
 		renameProjectPage as renameProjectPageRemote,
+		reportBoardPresence,
 		respondToProjectInvite,
 		saveProjectAiState,
 		supportsProfileBackgroundTheme,
@@ -113,6 +114,7 @@
 		updateUsername,
 		upsertUserSettings
 	} from '$lib/kainbu/persistence';
+	import { BOARD_PRESENCE_INTERVAL_MS } from '$lib/kainbu/boardPresence';
 	import { getProjectMemberDisplayName, getProjectMemberSearchText } from '$lib/kainbu/members';
 	import {
 		getProjectPage,
@@ -274,6 +276,7 @@
 
 	const focusOnMount = (node: HTMLElement) => { node.focus(); };
 
+	let boardPresenceTimer: ReturnType<typeof setInterval> | null = null;
 	const boardSyncTimeouts = new Map<string, ReturnType<typeof setTimeout>>();
 	const pendingBoardSyncs = new Map<
 		string,
@@ -1556,6 +1559,56 @@
 			refreshSyncStatus(syncErrorMessage.length === 0 && !hasPendingLocalChanges());
 		}
 	};
+
+	const clearBoardPresenceTimer = () => {
+		if (boardPresenceTimer) {
+			clearInterval(boardPresenceTimer);
+			boardPresenceTimer = null;
+		}
+	};
+
+	const isBoardWorkspaceVisible = () =>
+		Boolean(
+			currentProject &&
+				(isMobile ? mobileTab === 'kanban' : desktopWorkspaceTab === 'board')
+		);
+
+	const pingBoardPresence = async () => {
+		if (!user || !currentProject || document.visibilityState === 'hidden') return;
+
+		if (!isBoardWorkspaceVisible()) {
+			try {
+				await reportBoardPresence(currentProject.id, null);
+			} catch (error) {
+				console.error(error);
+			}
+			return;
+		}
+
+		const boardId = currentProject.activeBoardId;
+		if (!boardId) return;
+
+		try {
+			await reportBoardPresence(currentProject.id, boardId);
+		} catch (error) {
+			console.error(error);
+		}
+	};
+
+	$: boardPresenceKey =
+		user && currentProject?.id
+			? `${currentProject.id}::${currentProject.activeBoardId}::${isMobile ? mobileTab : desktopWorkspaceTab}`
+			: '';
+
+	$: if (boardPresenceKey) {
+		clearBoardPresenceTimer();
+		void pingBoardPresence();
+		boardPresenceTimer = setInterval(() => {
+			void pingBoardPresence();
+		}, BOARD_PRESENCE_INTERVAL_MS);
+	} else {
+		clearBoardPresenceTimer();
+	}
 
 	const mergeRemoteProjects = (localProjects: Project[], remoteProjects: Project[]) => {
 		const localProjectsById = new Map(localProjects.map((project) => [project.id, project]));
@@ -3701,6 +3754,7 @@
 		stopWorkspaceSubscription = null;
 
 		if (authStateReloadTimeout) clearTimeout(authStateReloadTimeout);
+		clearBoardPresenceTimer();
 		if (remoteRefreshTimeout) clearTimeout(remoteRefreshTimeout);
 		if (localSnapshotTimeout) clearTimeout(localSnapshotTimeout);
 		if (settingsSyncTimeout) clearTimeout(settingsSyncTimeout);
@@ -4032,6 +4086,8 @@
 											>
 												<KanbanBoard
 													projectId={currentProject.id}
+													activeBoardId={currentProject.activeBoardId}
+													currentUserId={user?.id || ''}
 													data={kanbanData}
 													comparisonData={kanbanComparisonData}
 													{highlightedTaskIds}
@@ -4201,6 +4257,8 @@
 											>
 												<KanbanBoard
 													projectId={currentProject.id}
+													activeBoardId={currentProject.activeBoardId}
+													currentUserId={user?.id || ''}
 													data={kanbanData}
 													comparisonData={kanbanComparisonData}
 													{highlightedTaskIds}

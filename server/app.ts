@@ -12,6 +12,7 @@ import {
 	handleCliDeviceStart
 } from './cli-auth.js';
 import {
+	handleWorkspaceBoardPresenceRequest,
 	handleWorkspaceCancelInviteRequest,
 	handleWorkspaceCreateInviteRequest,
 	handleWorkspaceLeaveProjectRequest,
@@ -302,6 +303,18 @@ app.post('/api/workspace/projects/touch', async (c) => {
 	try {
 		const payload = await handleWorkspaceTouchProjectRequest(
 			(await c.req.json()) as { projectId: string },
+			c.req.header('Authorization')
+		);
+		return c.json(payload);
+	} catch (error) {
+		return handleWorkspaceMutationError(c, error);
+	}
+});
+
+app.post('/api/workspace/boards/presence', async (c) => {
+	try {
+		const payload = await handleWorkspaceBoardPresenceRequest(
+			(await c.req.json()) as { projectId: string; boardId: string | null },
 			c.req.header('Authorization')
 		);
 		return c.json(payload);

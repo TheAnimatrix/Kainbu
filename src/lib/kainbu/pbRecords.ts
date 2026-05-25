@@ -1,3 +1,4 @@
+import { isPocketBaseRecordId } from '$lib/kainbu/recordIds';
 import { normalizeDueTimestamp } from '$lib/kainbu/timing';
 import type {
 	ProfileRow,
@@ -62,6 +63,11 @@ export const mapMembershipRecord = (
 	joined_at: iso(record.joined_at, iso(record.created)),
 	last_opened_at: iso(record.last_opened_at, iso(record.created)),
 	pinned_at: record.pinned_at ? iso(record.pinned_at) : null,
+	viewing_board_client_id:
+		typeof record.viewing_board_client_id === 'string' && record.viewing_board_client_id.trim()
+			? record.viewing_board_client_id.trim()
+			: null,
+	presence_at: record.presence_at ? iso(record.presence_at) : null,
 	created_at: iso(record.created),
 	updated_at: iso(record.updated)
 });
@@ -136,7 +142,10 @@ export const mapTaskRecord = (
 	completed_at: typeof record.completed_at === 'number' ? record.completed_at : null,
 	countdown_at: normalizeDueTimestamp(record.countdown_at) ?? null,
 	alarm_at: normalizeDueTimestamp(record.alarm_at) ?? null,
-	assigned_to: record.assigned_to ? relationId(record.assigned_to) : null,
+	assigned_to: (() => {
+		const id = record.assigned_to ? relationId(record.assigned_to) : '';
+		return id && isPocketBaseRecordId(id) ? id : null;
+	})(),
 	linked_task_ids: Array.isArray(record.linked_task_ids)
 		? (record.linked_task_ids as string[])
 		: null,
