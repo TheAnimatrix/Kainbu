@@ -3,6 +3,7 @@
  *
  * Prerequisites:
  *   docker compose -f docker-compose.yml -f docker-compose.local.yml up --build -d
+ *   API is published on host port 8789 (avoids conflict with local `npm run dev:full` on 8788).
  *
  * Run:
  *   npx vitest run tests/local-docker.test.ts
@@ -12,7 +13,7 @@ import PocketBase from 'pocketbase';
 
 const WEB = process.env.KAINBU_TEST_WEB || 'http://127.0.0.1:3000';
 const PB = process.env.KAINBU_TEST_PB || 'http://127.0.0.1:8090';
-const API = process.env.KAINBU_TEST_BASE || 'http://127.0.0.1:8788';
+const API = process.env.KAINBU_TEST_BASE || 'http://127.0.0.1:8789';
 
 const email = `e2e-${Date.now()}@kainbu.test`;
 const password = 'testpass123456';
