@@ -2,18 +2,70 @@
 	import { onMount } from 'svelte';
 	import AdminStatRow from '$lib/components/admin/AdminStatRow.svelte';
 	import {
+		compareNumbers,
+		compareStrings,
+		parsePbDateMs,
+		sortDirSymbol,
+		toggleSort,
+		type SortDir
+	} from '$lib/components/admin/tableSort';
+	import {
 		fetchAdminUsageByUser,
 		fetchAdminUsageSummary,
 		type AdminUsageByUserRow,
 		type AdminUsageSummary
 	} from '$lib/kainbu/adminApi';
 
+	type UsageSortKey = 'user' | 'requests' | 'tokens' | 'cost' | 'lastActivity';
+
 	let loading = true;
 	let error = '';
 	let summary: AdminUsageSummary | null = null;
 	let users: AdminUsageByUserRow[] = [];
+	let sortKey: UsageSortKey = 'requests';
+	let sortDir: SortDir = 'desc';
 
 	const formatTokens = (value: number) => value.toLocaleString();
+
+	const setSort = (key: UsageSortKey) => {
+		const next = toggleSort(key, sortKey, sortDir);
+		sortKey = next.key;
+		sortDir = next.dir;
+	};
+
+	const userLabel = (row: AdminUsageByUserRow) => row.email || row.username || row.userId;
+
+	const compareUsageRows = (left: AdminUsageByUserRow, right: AdminUsageByUserRow) => {
+		let cmp = 0;
+		switch (sortKey) {
+			case 'user':
+				cmp = compareStrings(userLabel(left), userLabel(right));
+				break;
+			case 'requests':
+				cmp = compareNumbers(left.requestCount, right.requestCount);
+				break;
+			case 'tokens':
+				cmp = compareNumbers(
+					left.promptTokens + left.completionTokens,
+					right.promptTokens + right.completionTokens
+				);
+				break;
+			case 'cost':
+				cmp = compareNumbers(left.costUsd, right.costUsd);
+				break;
+			case 'lastActivity':
+				cmp = compareNumbers(parsePbDateMs(left.lastActivity), parsePbDateMs(right.lastActivity));
+				break;
+		}
+		return sortDir === 'asc' ? cmp : -cmp;
+	};
+
+	$: sortedUsers = [...users].sort(compareUsageRows);
+
+	const headerClass = (key: UsageSortKey) =>
+		`inline-flex items-center gap-1 font-medium uppercase tracking-wide transition-colors hover:text-app-text ${
+			sortKey === key ? 'text-app-text' : ''
+		}`;
 
 	onMount(async () => {
 		try {
@@ -31,7 +83,7 @@
 	});
 </script>
 
-<section class="h-full overflow-y-auto px-3 py-3 sm:px-4 sm:py-4 lg:px-6 lg:py-5">
+<section class="px-3 py-3 sm:px-4 sm:py-4 lg:px-6 lg:py-5">
 	<div class="mx-auto flex min-w-0 max-w-5xl flex-col gap-4">
 		<div class="px-1">
 			<p class="text-[10px] font-semibold uppercase tracking-[0.25em] text-app-primary">Admin</p>
@@ -58,11 +110,46 @@
 				<table class="w-full min-w-[36rem] text-left text-sm">
 					<thead class="border-b border-app-border/40 bg-app-surface/60 text-xs uppercase tracking-wide text-app-subtext">
 						<tr>
-							<th class="px-3 py-2 font-medium">User</th>
-							<th class="px-3 py-2 font-medium">Requests</th>
-							<th class="px-3 py-2 font-medium">Tokens</th>
-							<th class="px-3 py-2 font-medium">Cost</th>
-							<th class="px-3 py-2 font-medium">Last activity</th>
+							<th class="px-3 py-2">
+								<button type="button" class={headerClass('user')} on:click={() => setSort('user')}>
+									User
+									<span class="text-app-primary">{sortDirSymbol(sortKey === 'user', sortDir)}</span>
+								</button>
+							</th>
+							<th class="px-3 py-2">
+								<button
+									type="button"
+									class={headerClass('requests')}
+									on:click={() => setSort('requests')}
+								>
+									Requests
+									<span class="text-app-primary">{sortDirSymbol(sortKey === 'requests', sortDir)}</span>
+								</button>
+							</th>
+							<th class="px-3 py-2">
+								<button type="button" class={headerClass('tokens')} on:click={() => setSort('tokens')}>
+									Tokens
+									<span class="text-app-primary">{sortDirSymbol(sortKey === 'tokens', sortDir)}</span>
+								</button>
+							</th>
+							<th class="px-3 py-2">
+								<button type="button" class={headerClass('cost')} on:click={() => setSort('cost')}>
+									Cost
+									<span class="text-app-primary">{sortDirSymbol(sortKey === 'cost', sortDir)}</span>
+								</button>
+							</th>
+							<th class="px-3 py-2">
+								<button
+									type="button"
+									class={headerClass('lastActivity')}
+									on:click={() => setSort('lastActivity')}
+								>
+									Last activity
+									<span class="text-app-primary">
+										{sortDirSymbol(sortKey === 'lastActivity', sortDir)}
+									</span>
+								</button>
+							</th>
 						</tr>
 					</thead>
 					<tbody>
@@ -71,7 +158,7 @@
 								<td colspan="5" class="px-3 py-4 text-app-subtext">No usage recorded yet.</td>
 							</tr>
 						{:else}
-							{#each users as row}
+							{#each sortedUsers as row (row.userId)}
 								<tr class="border-t border-app-border/30">
 									<td class="px-3 py-2">
 										<div class="font-medium text-app-text">{row.email || row.userId}</div>

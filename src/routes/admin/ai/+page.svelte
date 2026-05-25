@@ -49,7 +49,7 @@
 	};
 </script>
 
-<section class="h-full overflow-y-auto px-3 py-3 sm:px-4 sm:py-4 lg:px-6 lg:py-5">
+<section class="px-3 py-3 sm:px-4 sm:py-4 lg:px-6 lg:py-5">
 	<div class="mx-auto flex min-w-0 max-w-3xl flex-col gap-4">
 		<div class="px-1">
 			<p class="text-[10px] font-semibold uppercase tracking-[0.25em] text-app-primary">Admin</p>

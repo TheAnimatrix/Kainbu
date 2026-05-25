@@ -1,20 +1,31 @@
 <script lang="ts">
-	import { page } from '$app/stores';
+	import { page } from '$app/state';
 
-	export let email = '';
+	let { email = '' }: { email?: string } = $props();
 
 	const links = [
 		{ href: '/admin', label: 'Overview', exact: true },
 		{ href: '/admin/ai', label: 'AI key' },
 		{ href: '/admin/usage', label: 'Usage' },
 		{ href: '/admin/users', label: 'Users' }
-	];
+	] as const;
 
-	const isActive = (href: string, exact = false) => {
-		const path = $page.url.pathname;
-		if (exact) return path === href;
-		return path === href || path.startsWith(`${href}/`);
-	};
+	const activeHref = $derived.by(() => {
+		const path = page.url.pathname;
+		let match = '';
+
+		for (const link of links) {
+			if (link.exact) {
+				if (path === link.href) return link.href;
+				continue;
+			}
+			if (path === link.href || path.startsWith(`${link.href}/`)) {
+				if (link.href.length > match.length) match = link.href;
+			}
+		}
+
+		return match;
+	});
 </script>
 
 <aside
@@ -31,7 +42,7 @@
 		{#each links as link}
 			<a
 				href={link.href}
-				class="rounded-md px-3 py-1.5 text-sm transition-colors {isActive(link.href, link.exact)
+				class="rounded-md px-3 py-1.5 text-sm transition-colors {activeHref === link.href
 					? 'bg-app-element text-app-text'
 					: 'text-app-subtext hover:bg-app-element/60 hover:text-app-text'}"
 			>
@@ -41,10 +52,7 @@
 	</nav>
 
 	<div class="mt-auto border-t border-app-border/30 px-2 pt-3">
-		<a
-			href="/"
-			class="text-xs text-app-subtext transition-colors hover:text-app-text"
-		>
+		<a href="/" class="text-xs text-app-subtext transition-colors hover:text-app-text">
 			← Workspace
 		</a>
 	</div>

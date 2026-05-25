@@ -1,11 +1,23 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { fetchAdminUsers, patchAdminUser, type AdminUserRow } from '$lib/kainbu/adminApi';
+	import {
+		compareNumbers,
+		compareStrings,
+		parsePbDateMs,
+		sortDirSymbol,
+		toggleSort,
+		type SortDir
+	} from '$lib/components/admin/tableSort';
+
+	type UserSortKey = 'email' | 'username' | 'admin' | 'disabled' | 'created';
 
 	let loading = true;
 	let savingId = '';
 	let error = '';
 	let users: AdminUserRow[] = [];
+	let sortKey: UserSortKey = 'email';
+	let sortDir: SortDir = 'asc';
 
 	const loadUsers = async () => {
 		loading = true;
@@ -21,6 +33,41 @@
 	};
 
 	onMount(loadUsers);
+
+	const setSort = (key: UserSortKey) => {
+		const next = toggleSort(key, sortKey, sortDir);
+		sortKey = next.key;
+		sortDir = next.dir;
+	};
+
+	const compareUsers = (left: AdminUserRow, right: AdminUserRow) => {
+		let cmp = 0;
+		switch (sortKey) {
+			case 'email':
+				cmp = compareStrings(left.email || '', right.email || '');
+				break;
+			case 'username':
+				cmp = compareStrings(left.username || '', right.username || '');
+				break;
+			case 'admin':
+				cmp = compareNumbers(Number(left.is_admin), Number(right.is_admin));
+				break;
+			case 'disabled':
+				cmp = compareNumbers(Number(left.disabled), Number(right.disabled));
+				break;
+			case 'created':
+				cmp = compareNumbers(parsePbDateMs(left.created), parsePbDateMs(right.created));
+				break;
+		}
+		return sortDir === 'asc' ? cmp : -cmp;
+	};
+
+	$: sortedUsers = [...users].sort(compareUsers);
+
+	const headerClass = (key: UserSortKey) =>
+		`inline-flex items-center gap-1 font-medium uppercase tracking-wide transition-colors hover:text-app-text ${
+			sortKey === key ? 'text-app-text' : ''
+		}`;
 
 	const toggleAdmin = async (user: AdminUserRow) => {
 		if (user.on_allowlist && user.is_admin) {
@@ -53,7 +100,7 @@
 	};
 </script>
 
-<section class="h-full overflow-y-auto px-3 py-3 sm:px-4 sm:py-4 lg:px-6 lg:py-5">
+<section class="px-3 py-3 sm:px-4 sm:py-4 lg:px-6 lg:py-5">
 	<div class="mx-auto flex min-w-0 max-w-5xl flex-col gap-4">
 		<div class="px-1">
 			<p class="text-[10px] font-semibold uppercase tracking-[0.25em] text-app-primary">Admin</p>
@@ -71,15 +118,52 @@
 				<table class="w-full min-w-[40rem] text-left text-sm">
 					<thead class="border-b border-app-border/40 bg-app-surface/60 text-xs uppercase tracking-wide text-app-subtext">
 						<tr>
-							<th class="px-3 py-2 font-medium">Email</th>
-							<th class="px-3 py-2 font-medium">Username</th>
-							<th class="px-3 py-2 font-medium">Admin</th>
-							<th class="px-3 py-2 font-medium">Disabled</th>
-							<th class="px-3 py-2 font-medium">Created</th>
+							<th class="px-3 py-2">
+								<button type="button" class={headerClass('email')} on:click={() => setSort('email')}>
+									Email
+									<span class="text-app-primary">{sortDirSymbol(sortKey === 'email', sortDir)}</span>
+								</button>
+							</th>
+							<th class="px-3 py-2">
+								<button
+									type="button"
+									class={headerClass('username')}
+									on:click={() => setSort('username')}
+								>
+									Username
+									<span class="text-app-primary">{sortDirSymbol(sortKey === 'username', sortDir)}</span>
+								</button>
+							</th>
+							<th class="px-3 py-2">
+								<button type="button" class={headerClass('admin')} on:click={() => setSort('admin')}>
+									Admin
+									<span class="text-app-primary">{sortDirSymbol(sortKey === 'admin', sortDir)}</span>
+								</button>
+							</th>
+							<th class="px-3 py-2">
+								<button
+									type="button"
+									class={headerClass('disabled')}
+									on:click={() => setSort('disabled')}
+								>
+									Disabled
+									<span class="text-app-primary">{sortDirSymbol(sortKey === 'disabled', sortDir)}</span>
+								</button>
+							</th>
+							<th class="px-3 py-2">
+								<button
+									type="button"
+									class={headerClass('created')}
+									on:click={() => setSort('created')}
+								>
+									Created
+									<span class="text-app-primary">{sortDirSymbol(sortKey === 'created', sortDir)}</span>
+								</button>
+							</th>
 						</tr>
 					</thead>
 					<tbody>
-						{#each users as user}
+						{#each sortedUsers as user (user.id)}
 							<tr class="border-t border-app-border/30">
 								<td class="px-3 py-2">
 									<div class="text-app-text">{user.email}</div>
