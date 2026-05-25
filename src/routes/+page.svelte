@@ -1568,10 +1568,7 @@
 	};
 
 	const isBoardWorkspaceVisible = () =>
-		Boolean(
-			currentProject &&
-				(isMobile ? mobileTab === 'kanban' : desktopWorkspaceTab === 'board')
-		);
+		Boolean(currentProject && visibleWorkspaceTab === 'kanban');
 
 	const pingBoardPresence = async () => {
 		if (!user || !currentProject || document.visibilityState === 'hidden') return;
@@ -1590,6 +1587,20 @@
 
 		try {
 			await reportBoardPresence(currentProject.id, boardId);
+			const presenceAt = Date.now();
+			const projectId = currentProject.id;
+			projects = projects.map((entry) =>
+				entry.id !== projectId
+					? entry
+					: {
+							...entry,
+							members: entry.members.map((member) =>
+								member.userId === user.id
+									? { ...member, viewingBoardId: boardId, presenceAt }
+									: member
+							)
+						}
+			);
 		} catch (error) {
 			console.error(error);
 		}
@@ -1628,8 +1639,28 @@
 			const preferLocalPageState =
 				preferLocalFallback || hasPendingPageSyncForProject(remoteProject.id);
 			const preferLocalAiState = pendingChatSyncs.has(remoteProject.id) || preferLocalFallback;
+			const mergedMembers = remoteProject.members.map((remoteMember) => {
+				const localMember = localProject.members.find(
+					(member) => member.userId === remoteMember.userId
+				);
+				if (!localMember) return remoteMember;
+
+				const localPresence = localMember.presenceAt ?? 0;
+				const remotePresence = remoteMember.presenceAt ?? 0;
+				if (localPresence > remotePresence) {
+					return {
+						...remoteMember,
+						viewingBoardId: localMember.viewingBoardId ?? remoteMember.viewingBoardId,
+						presenceAt: localMember.presenceAt
+					};
+				}
+
+				return remoteMember;
+			});
+
 			merged.push({
 				...remoteProject,
+				members: mergedMembers,
 				backgroundTheme: preferLocalFallback
 					? localProject.backgroundTheme
 					: remoteProject.backgroundTheme,
