@@ -1,12 +1,14 @@
 import type PocketBase from 'pocketbase';
 import type { BackgroundTheme } from '../src/lib/kainbu/types.js';
 import { createAdminPb, getAuthenticatedUserId } from './pocketbase.js';
+import { ClientResponseError } from 'pocketbase';
 import {
 	getProjectPbId,
 	getProjectRecord,
 	pbEscapeFilter,
 	projectClientFilter,
-	projectRelationFilter
+	projectRelationFilter,
+	resolveProjectClientId
 } from './pbWorkspace.js';
 
 const VALID_GRADIENT_BACKGROUND_IDS = new Set([
@@ -189,12 +191,17 @@ const ensureMembership = async (admin: PocketBase, projectId: string, userId: st
 
 const getInviteOrThrow = async (admin: PocketBase, inviteId: string) => {
 	try {
-		const data = await admin.collection('project_invites').getOne(inviteId);
+		const data = await admin.collection('project_invites').getOne(inviteId, {
+			expand: 'project'
+		});
+		const projectPbId = String(data.project);
+		const expandedProject = (data.expand as { project?: { client_id?: string } })?.project;
+		const projectClientId = await resolveProjectClientId(admin, projectPbId, expandedProject);
+
 		return {
 			id: String(data.id),
-			project_id: String(
-				(data.expand as { project?: { client_id?: string } })?.project?.client_id || data.project
-			),
+			project_id: projectClientId,
+			project_pb_id: projectPbId,
 			invitee_user_id: relationId(data.invitee),
 			invitee_email: String(data.invitee_email || ''),
 			invited_by_user_id: relationId(data.invited_by),
@@ -240,6 +247,17 @@ export const toWorkspaceApiError = (error: unknown) => {
 		return {
 			status: error.status,
 			message: error.message
+		};
+	}
+
+	if (error instanceof ClientResponseError) {
+		const status = error.status === 404 ? 404 : error.status >= 400 && error.status < 600 ? error.status : 500;
+		return {
+			status,
+			message:
+				status === 404
+					? 'The requested resource was not found.'
+					: error.message || 'PocketBase request failed.'
 		};
 	}
 
@@ -424,7 +442,7 @@ export const handleWorkspaceRespondInviteRequest = async (
 	});
 
 	if (accept) {
-		const projectPbId = await getProjectPbId(admin, invite.project_id);
+		const projectPbId = invite.project_pb_id;
 		const existingMembership = await getMembership(admin, invite.project_id, invite.invitee_user_id);
 		const now = new Date().toISOString();
 		if (existingMembership) {
