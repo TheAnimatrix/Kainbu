@@ -103,7 +103,6 @@
 					{referenceOptions}
 					{onReferenceNavigate}
 					onChange={(nextValue) => onChange(nextValue)}
-					placeholder={`## Notes\n- Add context\n- Link tasks with @\n- Use / for blocks`}
 				/>
 			</div>
 		{/if}

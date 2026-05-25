@@ -1,4 +1,3 @@
-import fs from "fs/promises";
 import type { AiScopeHint } from "./types.js";
 import {
     WORKSPACE_AI_MAX_ADD_COLUMN_CALLS,
@@ -27,7 +26,12 @@ import {
     updateTask,
 } from "./kanban-ops.js";
 import type { MaterializedWorkspace } from "./sync.js";
-import { recordWorkspaceMutation } from "./sync.js";
+import {
+    createWorkspacePage,
+    listWorkspacePages,
+    recordWorkspaceMutation,
+    setWorkspacePageContent,
+} from "./sync.js";
 import { webSearch } from "./tools.js";
 
 export type ToolRunCounters = {
@@ -40,6 +44,9 @@ export type ToolRunCounters = {
     updateColumnCalls: number;
     boardMutations: number;
 };
+
+const trimString = (value: unknown) =>
+    typeof value === "string" && value.trim().length > 0 ? value.trim() : "";
 
 export const createToolRunCounters = (): ToolRunCounters => ({
     toolCalls: 0,
@@ -109,8 +116,13 @@ export const humanizeToolCall = (
         const taskRefs = Array.isArray(args.taskRefs) ? args.taskRefs : [];
         return `Deleting ${taskRefs.length} task(s)`;
     }
+    if (name === "list_pages") return "Listing pages";
     if (name === "get_page") return "Reading page";
-    if (name === "set_page") return "Updating page";
+    if (name === "set_page") return "Updating current page";
+    if (name === "create_page") {
+        const title = String(args.title || "");
+        return `Creating page "${title}"`;
+    }
     if (name === "web_search") return "Searching the web";
     return `Using ${name}`;
 };
@@ -285,14 +297,28 @@ export const executeWorkspaceTool = async (
         return formatToolResult(result);
     }
 
+    if (name === "list_pages") {
+        return formatToolResult(listWorkspacePages(workspace));
+    }
+
     if (name === "get_page") {
-        const content = workspace.page.content;
+        const pageId = trimString(args.pageId) || workspace.page.id;
+        const page = workspace.pages.find((entry) => entry.id === pageId) || workspace.page;
+        const content = page.content;
         if (content.length <= WORKSPACE_AI_READ_MAX_CHARS) {
-            return JSON.stringify({ ok: true, name: workspace.page.name, content });
+            return JSON.stringify({
+                ok: true,
+                pageId: page.id,
+                name: page.name,
+                isActive: page.id === workspace.page.id,
+                content,
+            });
         }
         return JSON.stringify({
             ok: true,
-            name: workspace.page.name,
+            pageId: page.id,
+            name: page.name,
+            isActive: page.id === workspace.page.id,
             content: content.slice(0, WORKSPACE_AI_READ_MAX_CHARS),
             truncated: true,
         });
@@ -300,20 +326,16 @@ export const executeWorkspaceTool = async (
 
     if (name === "set_page") {
         const content = String(args.content ?? "");
-        const previousContent = await fs.readFile(workspace.page.filePath, "utf8");
-        await fs.writeFile(workspace.page.filePath, content, "utf8");
-        try {
-            workspace.page.content = content;
-            recordWorkspaceMutation(workspace, workspace.page.filePath);
-            return JSON.stringify({ ok: true, message: "Page updated." });
-        } catch (error) {
-            await fs.writeFile(workspace.page.filePath, previousContent, "utf8");
-            workspace.page.content = previousContent;
-            return JSON.stringify({
-                ok: false,
-                error: error instanceof Error ? error.message : "Invalid page content.",
-            });
-        }
+        const pageId = typeof args.pageId === "string" ? args.pageId : undefined;
+        const result = await setWorkspacePageContent(workspace, content, { pageId });
+        return formatToolResult(result);
+    }
+
+    if (name === "create_page") {
+        const title = String(args.title || "");
+        const content = String(args.content ?? "");
+        const result = await createWorkspacePage(workspace, title, content);
+        return formatToolResult(result);
     }
 
     if (name === "web_search") {

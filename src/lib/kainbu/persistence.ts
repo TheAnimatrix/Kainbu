@@ -1313,15 +1313,20 @@ export const createProjectBoard = async (projectId: string, name: string, positi
 	return mapBoardRow(mapBoardRecord(data, projectId), [], []);
 };
 
-export const createProjectPage = async (projectId: string, name: string, position: number) => {
+export const createProjectPage = async (
+	projectId: string,
+	name: string,
+	position: number,
+	options?: { clientId?: string; content?: string }
+) => {
 	const pb = getPb();
 	const projectPbId = await getProjectPbId(projectId);
-	const clientId = createId();
+	const clientId = options?.clientId?.trim() || createId();
 	const data = await pb.collection('project_pages').create({
 		project: projectPbId,
 		client_id: clientId,
 		name,
-		content: '',
+		content: sanitizeProjectPageContent(options?.content ?? ''),
 		position
 	});
 	return mapPageRow(mapPageRecord(data, projectId));
@@ -1374,12 +1379,19 @@ export const deleteProjectPage = async (projectId: string, pageId: string) => {
 	await deleteProjectChildByClientId('project_pages', projectId, pageId);
 };
 
+export const sanitizeProjectPageContent = (content: unknown) => {
+	if (typeof content !== 'string') return '';
+	return content.replace(/\0/g, '').slice(0, 500_000);
+};
+
 export const updateProjectPageContent = async (
 	projectId: string,
 	pageId: string,
 	content: string
 ) => {
-	await updateProjectChildByClientId('project_pages', projectId, pageId, { content });
+	await updateProjectChildByClientId('project_pages', projectId, pageId, {
+		content: sanitizeProjectPageContent(content)
+	});
 };
 
 export const updateProjectScratchpad = async (

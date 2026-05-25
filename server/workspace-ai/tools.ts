@@ -251,22 +251,57 @@ export const OpenRouterTools = [
     {
         type: "function",
         function: {
-            name: "get_page",
-            description: "Read the current page content.",
+            name: "list_pages",
+            description: "List all notes/pages in the project with pageId and title.",
             parameters: { type: "object", properties: {} },
         },
     },
     {
         type: "function",
         function: {
+            name: "get_page",
+            description:
+                "Read a page by pageId, or the currently viewed page when pageId is omitted.",
+            parameters: {
+                type: "object",
+                properties: {
+                    pageId: { type: "string", description: "Page id from list_pages" },
+                },
+            },
+        },
+    },
+    {
+        type: "function",
+        function: {
             name: "set_page",
-            description: "Replace the entire current page with new markdown/plain text content.",
+            description:
+                "Replace a page body with new markdown. Updates the currently viewed page unless pageId is set. Do not use for new notes — use create_page instead.",
             parameters: {
                 type: "object",
                 properties: {
                     content: { type: "string", description: "Full page content" },
+                    pageId: {
+                        type: "string",
+                        description: "Optional page id; default is the page the user is viewing",
+                    },
                 },
                 required: ["content"],
+            },
+        },
+    },
+    {
+        type: "function",
+        function: {
+            name: "create_page",
+            description:
+                "Create a new note/page with title and content. Use when the user wants a separate note, not editing the page they are viewing.",
+            parameters: {
+                type: "object",
+                properties: {
+                    title: { type: "string", description: "Page title" },
+                    content: { type: "string", description: "Full page content" },
+                },
+                required: ["title", "content"],
             },
         },
     },

@@ -61,7 +61,11 @@
 	} from '$lib/kainbu/constants';
 	import { fetchWorkspaceAiModels, generateSessionTitle, invokeWorkspaceAi } from '$lib/kainbu/ai';
 	import { exportProjectsToFile, parseProjectsImport } from '$lib/kainbu/backup';
-	import { getKanbanFingerprint, getScratchpadFingerprint } from '$lib/kainbu/fingerprint';
+	import {
+		getKanbanFingerprint,
+		getProjectPagesFingerprint,
+		getScratchpadFingerprint
+	} from '$lib/kainbu/fingerprint';
 	import { createId } from '$lib/kainbu/id';
 	import {
 		addProjectAiSession,
@@ -713,7 +717,9 @@
 			return getKanbanFingerprint(project.kanbanData) !== proposal.baseFingerprint;
 		}
 
-		return getScratchpadFingerprint(project.scratchpadData) !== proposal.baseFingerprint;
+		return (
+			getProjectPagesFingerprint(project.pages) !== proposal.baseFingerprint
+		);
 	};
 	const refreshPendingProposalStaleness = (nextProjects = projects) => {
 		pendingProposals = pendingProposals.map((proposal) => {
@@ -3207,7 +3213,7 @@
 						...proposal,
 						projectId: projectSnapshot.id,
 						stale:
-							getScratchpadFingerprint(projectSnapshot.scratchpadData) !==
+							getProjectPagesFingerprint(projectSnapshot.pages) !==
 							proposal.baseFingerprint,
 						originalScratchpadState: structuredClone(projectSnapshot.scratchpadData)
 					}
@@ -3327,41 +3333,141 @@
 		} else if (refreshedProposal.target === 'scratchpad') {
 			const nextScratchpadState = refreshedProposal.preview.scratchpadState;
 			const targetPadId = refreshedProposal.padId || nextScratchpadState.activePadId;
-			const nextPad =
-				getScratchpadPad(nextScratchpadState, targetPadId) ||
-				getActiveScratchpadPad(nextScratchpadState);
-			const nextContent = nextPad?.content || '';
-			const pageId = nextPad?.id || nextProject.activePageId;
-			if (!pageId) {
-				applyError = 'Could not find the page to update.';
+			const previewPads = nextScratchpadState.pads || [];
+
+			if (!previewPads.length) {
+				applyError = 'Could not find any page changes to apply.';
 			} else {
 				logWorkspaceAiProposalDebug('accept:start', nextProject.id, refreshedProposal, {
-					currentFingerprint: getScratchpadFingerprint(nextProject.scratchpadData),
-					targetPageId: pageId,
+					currentFingerprint: getProjectPagesFingerprint(nextProject.pages),
+					targetPageId: targetPadId,
 					currentActivePageId: nextProject.activePageId,
-					stale: refreshedProposal.stale
+					stale: refreshedProposal.stale,
+					previewPadCount: previewPads.length
 				});
-				const updateResult = updateProjectLocal(nextProject.id, (project) =>
-					updateProjectPageState(setProjectActivePage(project, pageId), pageId, nextContent)
-				);
-				applied = Boolean(updateResult);
-				if (applied) {
-					bumpProjectRevision(nextProject.id, 'scratchpad');
-					scheduleScratchpadSync(nextProject.id, pageId, nextContent, 0);
+
+				try {
+					let workingProject =
+						projects.find((entry) => entry.id === nextProject.id) || nextProject;
+
+					for (const pad of previewPads) {
+						const existingPage = workingProject.pages.find((page) => page.id === pad.id);
+						if (!existingPage) {
+							const createdPage = await runSyncAction(
+								() =>
+									createProjectPage(
+										workingProject.id,
+										pad.name || 'Untitled',
+										workingProject.pages.length,
+										{ clientId: pad.id, content: pad.content || '' }
+									),
+								'Unable to create a new page right now.'
+							);
+							const withPage = updateProjectLocal(workingProject.id, (project) =>
+								setProjectActivePage(
+									{
+										...project,
+										pages: [...project.pages, createdPage]
+									},
+									createdPage.id
+								)
+							);
+							if (!withPage) {
+								throw new Error('Could not add the new page locally.');
+							}
+							workingProject =
+								projects.find((entry) => entry.id === workingProject.id) || withPage;
+							if (pad.name && pad.name !== createdPage.name) {
+								await runSyncAction(
+									() =>
+										renameProjectPageRemote(
+											workingProject.id,
+											createdPage.id,
+											pad.name
+										),
+									'Unable to rename the new page right now.'
+								);
+								updateProjectLocal(workingProject.id, (project) => ({
+									...project,
+									pages: project.pages.map((page) =>
+										page.id === createdPage.id
+											? { ...page, name: pad.name, updatedAt: Date.now() }
+											: page
+									)
+								}));
+								workingProject =
+									projects.find((entry) => entry.id === workingProject.id) ||
+									workingProject;
+							}
+						} else if (pad.name && pad.name !== existingPage.name) {
+							await runSyncAction(
+								() =>
+									renameProjectPageRemote(workingProject.id, existingPage.id, pad.name),
+								'Unable to rename this page right now.'
+							);
+							updateProjectLocal(workingProject.id, (project) => ({
+								...project,
+								pages: project.pages.map((page) =>
+									page.id === existingPage.id
+										? { ...page, name: pad.name, updatedAt: Date.now() }
+										: page
+								)
+							}));
+							workingProject =
+								projects.find((entry) => entry.id === workingProject.id) || workingProject;
+						}
+					}
+
+					for (const pad of previewPads) {
+						const pageId = pad.id;
+						const nextContent = pad.content || '';
+						const pageExists = workingProject.pages.some((page) => page.id === pageId);
+						if (!pageExists) continue;
+
+						const updateResult = updateProjectLocal(workingProject.id, (project) =>
+							updateProjectPageState(project, pageId, nextContent)
+						);
+						if (!updateResult) {
+							throw new Error(`Could not apply content for page "${pad.name}".`);
+						}
+						await runSyncAction(
+							() => syncProjectPageContent(workingProject.id, pageId, nextContent),
+							'Unable to sync page content right now.'
+						);
+					}
+
+					const finalPadId =
+						previewPads.find((pad) => pad.id === targetPadId)?.id ||
+						previewPads[0]?.id ||
+						workingProject.activePageId;
+					updateProjectLocal(workingProject.id, (project) =>
+						setProjectActivePage(project, finalPadId)
+					);
+
+					applied = true;
+					bumpProjectRevision(workingProject.id, 'scratchpad');
 					desktopWorkspaceTab = 'scratchpad';
 					mobileTab = 'scratchpad';
-				} else {
-					applyError = 'Could not apply page changes.';
+				} catch (error) {
+					applyError =
+						error instanceof Error ? error.message : 'Could not apply page changes.';
 				}
+
 				const updatedProject =
 					projects.find((entry) => entry.id === nextProject.id) || nextProject;
 				logWorkspaceAiProposalDebug('accept:finish', nextProject.id, refreshedProposal, {
 					applied,
-					targetPageId: pageId,
-					resultFingerprint: getScratchpadFingerprint(updatedProject.scratchpadData),
+					targetPageId: targetPadId,
+					resultFingerprint: getProjectPagesFingerprint(updatedProject.pages),
 					resultMatchesPreview:
-						getScratchpadFingerprint(updatedProject.scratchpadData) ===
-						getScratchpadFingerprint(refreshedProposal.preview.scratchpadState)
+						getProjectPagesFingerprint(updatedProject.pages) ===
+						getProjectPagesFingerprint(
+							previewPads.map((pad) => ({
+								id: pad.id,
+								name: pad.name,
+								content: pad.content
+							}))
+						)
 				});
 			}
 		}

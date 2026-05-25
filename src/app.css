@@ -565,17 +565,44 @@
 		margin-top: 0.25rem;
 	}
 
+	.markdown-editor__prosemirror.is-editor-empty:first-child::before,
 	.markdown-editor__prosemirror p.is-editor-empty:first-child::before,
-	.markdown-editor__prosemirror p.is-empty:first-child::before,
-	.markdown-editor__prosemirror p.is-empty::before,
-	.markdown-editor__prosemirror .is-editor-empty:first-child > p::before,
-	.markdown-editor__prosemirror p[data-placeholder]:empty::before {
+	.markdown-editor__prosemirror .is-editor-empty:first-child > p.is-editor-empty:first-child::before,
+	.markdown-editor__prosemirror.ProseMirror-focused p.is-empty::before {
 		content: attr(data-placeholder);
 		float: left;
 		height: 0;
 		color: color-mix(in srgb, var(--color-app-subtext) 62%, transparent);
 		pointer-events: none;
 		white-space: pre-wrap;
+	}
+
+	/* Task/card description: match page note block spacing */
+	.task-modal__description-editor .block-editor-prose > * + * {
+		margin-top: 0.5rem;
+	}
+
+	.task-modal__description-editor .block-editor-prose > * + h1,
+	.task-modal__description-editor .block-editor-prose > * + h2,
+	.task-modal__description-editor .block-editor-prose > * + h3 {
+		margin-top: 1.25rem;
+	}
+
+	.task-modal__description-editor .block-editor-prose > h1 + *,
+	.task-modal__description-editor .block-editor-prose > h2 + *,
+	.task-modal__description-editor .block-editor-prose > h3 + * {
+		margin-top: 0.5rem;
+	}
+
+	.task-modal__description-editor .block-editor-prose > * + ul,
+	.task-modal__description-editor .block-editor-prose > * + ol,
+	.task-modal__description-editor .block-editor-prose > * + blockquote,
+	.task-modal__description-editor .block-editor-prose > * + pre {
+		margin-top: 0.65rem;
+	}
+
+	.task-modal__description-editor .markdown-editor__prosemirror > * + * {
+		margin-top: 0.5rem;
 	}
 
 	.markdown-editor__prosemirror ul[data-type='taskList'] {

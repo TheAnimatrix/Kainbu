@@ -50,6 +50,7 @@ type MaterializedPage = {
     baseRevision: number;
     baseFingerprint: string;
     editCallCount: number;
+    position: number;
 };
 
 export type MaterializedWorkspace = {
@@ -57,7 +58,63 @@ export type MaterializedWorkspace = {
     projectId: string;
     board: MaterializedBoard;
     page: MaterializedPage;
+    pages: MaterializedPage[];
+    pagesBaseFingerprint: string;
     boardRefs: BoardRefMap;
+};
+
+const PAGE_CONTENT_MAX_CHARS = 500_000;
+
+export const sanitizePageContent = (value: unknown) => {
+    if (typeof value !== "string") return "";
+    return value.replace(/\0/g, "").slice(0, PAGE_CONTENT_MAX_CHARS);
+};
+
+const PAGE_TEMPLATE_MARKERS = ["## Notes", "- Add context", "- Link tasks with @", "- Use / for blocks"];
+
+export const stripEditorTemplateFromContent = (content: string) => {
+    const normalized = sanitizePageContent(content).replace(/\r\n/g, "\n");
+    const lines = normalized.split("\n");
+    const filtered = lines.filter((line) => {
+        const trimmed = line.trim();
+        if (!trimmed) return true;
+        if (trimmed === "## Notes") return false;
+        if (trimmed === "- Add context") return false;
+        if (trimmed === "- Link tasks with @") return false;
+        if (trimmed === "- Use / for blocks") return false;
+        return true;
+    });
+    return filtered.join("\n").replace(/\n{3,}/g, "\n\n").trim();
+};
+
+export const getPagesFingerprint = (pages: Array<{ id: string; name: string; content: string }>) =>
+    JSON.stringify(
+        [...pages]
+            .sort((left, right) => left.id.localeCompare(right.id))
+            .map((page) => ({
+                id: page.id,
+                name: page.name,
+                content: page.content,
+            }))
+    );
+
+const materializedPageFilePath = (tempDir: string, pageId: string) =>
+    path.join(tempDir, "pages", `${pageId}.md`);
+
+const writeMaterializedPageFile = async (workspace: MaterializedWorkspace, page: MaterializedPage) => {
+    const content = sanitizePageContent(page.content);
+    await fs.mkdir(path.dirname(page.filePath), { recursive: true });
+    await fs.writeFile(page.filePath, content, "utf8");
+    page.content = content;
+};
+
+const readMaterializedPages = async (workspace: MaterializedWorkspace) => {
+    const pages: MaterializedPage[] = [];
+    for (const page of workspace.pages) {
+        const content = sanitizePageContent(await fs.readFile(page.filePath, "utf8"));
+        pages.push({ ...page, content });
+    }
+    return pages;
 };
 
 const isFiniteNumber = (value: unknown): value is number =>
@@ -299,6 +356,7 @@ const mapPageRow = (row: ProjectPageRow) => ({
     id: row.id,
     name: row.name,
     content: row.content || "",
+    position: row.position,
 });
 
 const relationId = (value: unknown) => {
@@ -499,10 +557,14 @@ const loadProjectWorkspaceState = async (
         tasks.filter((task) => (task.board_id || fallbackBoardId) === activeBoardRow.id)
     );
     const page = mapPageRow(activePageRow);
+    const allPages = pages
+        .map((row) => mapPageRow(row))
+        .sort((left, right) => left.position - right.position);
 
     return {
         board,
         page,
+        pages: allPages,
         boardBaseRevision: scope?.revisions?.kanban ?? 0,
         pageBaseRevision: scope?.revisions?.scratchpad ?? 0,
     };
@@ -516,11 +578,36 @@ export const materializeWorkspace = async (
     const loaded = await loadProjectWorkspaceState(projectId, authorization, scope);
     const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), `kainbu-workspace-${projectId}-`));
     const boardFilePath = path.join(tempDir, CURRENT_BOARD_FILE);
-    const pageFilePath = path.join(tempDir, CURRENT_PAGE_FILE);
+    const activePageFilePath = path.join(tempDir, CURRENT_PAGE_FILE);
     const boardContent = serializeKanbanDocument(loaded.board.kanbanData);
 
     await fs.writeFile(boardFilePath, boardContent, "utf8");
-    await fs.writeFile(pageFilePath, loaded.page.content, "utf8");
+
+    const materializedPages: MaterializedPage[] = [];
+    for (const [index, sourcePage] of loaded.pages.entries()) {
+        const filePath =
+            sourcePage.id === loaded.page.id
+                ? activePageFilePath
+                : materializedPageFilePath(tempDir, sourcePage.id);
+        const content = sanitizePageContent(sourcePage.content);
+        await fs.mkdir(path.dirname(filePath), { recursive: true });
+        await fs.writeFile(filePath, content, "utf8");
+        materializedPages.push({
+            id: sourcePage.id,
+            name: sourcePage.name,
+            content,
+            filePath,
+            originalContent: content,
+            baseRevision: loaded.pageBaseRevision,
+            baseFingerprint: "",
+            editCallCount: 0,
+            position: Number.isFinite(sourcePage.position) ? sourcePage.position : index,
+        });
+    }
+
+    const activePage =
+        materializedPages.find((entry) => entry.id === loaded.page.id) || materializedPages[0];
+    const pagesBaseFingerprint = getPagesFingerprint(materializedPages);
 
     return {
         tempDir,
@@ -536,18 +623,9 @@ export const materializeWorkspace = async (
             editCallCount: 0,
             mutationCount: 0,
         },
-        page: {
-            id: loaded.page.id,
-            name: loaded.page.name,
-            content: loaded.page.content,
-            filePath: pageFilePath,
-            originalContent: loaded.page.content,
-            baseRevision: loaded.pageBaseRevision,
-            baseFingerprint: getScratchpadFingerprint(
-                buildScratchpadPreviewState(loaded.page.id, loaded.page.name, loaded.page.content)
-            ),
-            editCallCount: 0,
-        },
+        page: activePage,
+        pages: materializedPages,
+        pagesBaseFingerprint,
         boardRefs: {
             boardName: loaded.board.name,
             indexText: "",
@@ -577,7 +655,8 @@ export const resolveWorkspaceFilePath = (workspace: MaterializedWorkspace, filep
 };
 
 export const canMutateWorkspacePath = (workspace: MaterializedWorkspace, filepath: string) =>
-    filepath === workspace.board.filePath || filepath === workspace.page.filePath;
+    filepath === workspace.board.filePath ||
+    workspace.pages.some((page) => page.filePath === filepath);
 
 export const validateWorkspaceFile = async (workspace: MaterializedWorkspace, filepath: string) => {
     if (filepath === workspace.board.filePath) {
@@ -965,34 +1044,177 @@ const buildKanbanProposal = (
     };
 };
 
-const buildScratchpadProposal = (
-    page: MaterializedPage,
-    nextContent: string,
-    scope?: AiScopeHint
-): AiScratchpadProposal => {
-    const ops: ScratchpadPatchOperation[] = [
-        {
-            type: "replace_pad_content",
-            padId: page.id,
-            content: nextContent,
+const buildScratchpadStateFromPages = (pages: MaterializedPage[], activePadId: string) => ({
+    activePadId: pages.some((page) => page.id === activePadId) ? activePadId : pages[0]?.id || activePadId,
+    pads: pages.map((page) => ({
+        id: page.id,
+        name: page.name,
+        content: page.content,
+    })),
+});
+
+const derivePagePatchOps = (
+    originalPages: MaterializedPage[],
+    nextPages: MaterializedPage[]
+): ScratchpadPatchOperation[] => {
+    const ops: ScratchpadPatchOperation[] = [];
+    const originalById = new Map(originalPages.map((page) => [page.id, page]));
+    const nextById = new Map(nextPages.map((page) => [page.id, page]));
+
+    for (const [index, page] of nextPages.entries()) {
+        if (!originalById.has(page.id)) {
+            ops.push({
+                type: "create_pad",
+                pad: {
+                    id: page.id,
+                    name: page.name,
+                    content: page.content,
+                },
+                index,
+            });
         }
-    ];
+    }
+
+    for (const page of nextPages) {
+        const original = originalById.get(page.id);
+        if (!original) continue;
+        if (original.name !== page.name) {
+            ops.push({
+                type: "rename_pad",
+                padId: page.id,
+                name: page.name,
+            });
+        }
+        if (original.content !== page.content) {
+            ops.push({
+                type: "replace_pad_content",
+                padId: page.id,
+                content: page.content,
+            });
+        }
+    }
+
+    for (const page of originalPages) {
+        if (!nextById.has(page.id)) {
+            ops.push({
+                type: "delete_pad",
+                padId: page.id,
+            });
+        }
+    }
+
+    return ops;
+};
+
+export const listWorkspacePages = (workspace: MaterializedWorkspace) => ({
+    ok: true as const,
+    pages: workspace.pages.map((page) => ({
+        pageId: page.id,
+        title: page.name,
+        isActive: page.id === workspace.page.id,
+    })),
+});
+
+export const setWorkspacePageContent = async (
+    workspace: MaterializedWorkspace,
+    content: string,
+    options?: { pageId?: string }
+) => {
+    const pageId = trimString(options?.pageId) || workspace.page.id;
+    const page = workspace.pages.find((entry) => entry.id === pageId);
+    if (!page) {
+        return {
+            ok: false as const,
+            error: `Unknown page id "${pageId}".`,
+            pageIds: workspace.pages.map((entry) => entry.id),
+        };
+    }
+
+    const nextContent = stripEditorTemplateFromContent(content);
+    const previousContent = await fs.readFile(page.filePath, "utf8");
+    page.content = nextContent;
+    await writeMaterializedPageFile(workspace, page);
+    try {
+        recordWorkspaceMutation(workspace, page.filePath);
+        page.editCallCount += 1;
+        if (page.id === workspace.page.id) {
+            workspace.page.content = nextContent;
+        }
+        return { ok: true as const, message: `Updated page "${page.name}".`, pageId: page.id };
+    } catch (error) {
+        await fs.writeFile(page.filePath, previousContent, "utf8");
+        page.content = previousContent;
+        if (page.id === workspace.page.id) {
+            workspace.page.content = previousContent;
+        }
+        return {
+            ok: false as const,
+            error: error instanceof Error ? error.message : "Invalid page content.",
+        };
+    }
+};
+
+export const createWorkspacePage = async (
+    workspace: MaterializedWorkspace,
+    title: string,
+    content: string
+) => {
+    const name = trimString(title) || "Untitled";
+    const nextContent = stripEditorTemplateFromContent(content);
+    const id = randomUUID();
+    const page: MaterializedPage = {
+        id,
+        name,
+        content: nextContent,
+        filePath: materializedPageFilePath(workspace.tempDir, id),
+        originalContent: "",
+        baseRevision: workspace.page.baseRevision,
+        baseFingerprint: "",
+        editCallCount: 0,
+        position: workspace.pages.length,
+    };
+
+    await writeMaterializedPageFile(workspace, page);
+    recordWorkspaceMutation(workspace, page.filePath);
+    page.editCallCount += 1;
+    workspace.pages.push(page);
+
+    return {
+        ok: true as const,
+        pageId: id,
+        message: `Created page "${name}".`,
+    };
+};
+
+const buildScratchpadProposal = (
+    pages: MaterializedPage[],
+    activePadId: string,
+    ops: ScratchpadPatchOperation[],
+    scope?: AiScopeHint,
+    baseRevision = 0,
+    baseFingerprint = ""
+): AiScratchpadProposal => {
     const proposalSafety = buildProposalSafety(ops, scope);
+    const previewState = buildScratchpadStateFromPages(pages, activePadId);
+    const activePage = pages.find((page) => page.id === activePadId) || pages[0];
 
     return {
         id: randomUUID(),
         target: "scratchpad",
-        summary: summarizeScratchpadProposal(page.name),
-        scope: "pad",
-        editCallCount: Math.max(1, page.editCallCount),
+        summary: summarizeScratchpadProposal(activePage?.name || "page"),
+        scope: ops.some((op) => op.type === "create_pad") ? "scratchpad" : "pad",
+        editCallCount: Math.max(
+            1,
+            pages.reduce((total, page) => total + page.editCallCount, 0)
+        ),
         ops,
         proposalSafety,
         preview: {
-            scratchpadState: buildScratchpadPreviewState(page.id, page.name, nextContent),
+            scratchpadState: previewState,
         },
-        baseRevision: page.baseRevision,
-        baseFingerprint: page.baseFingerprint,
-        padId: page.id,
+        baseRevision,
+        baseFingerprint,
+        padId: activePadId,
     };
 };
 
@@ -1008,14 +1230,25 @@ export const collectWorkspaceProposals = async (
         proposals.push(buildKanbanProposal(workspace.board, nextKanbanData, scope));
     }
 
-    const pageContent = await fs.readFile(workspace.page.filePath, "utf8");
-    const nextScratchpadState = buildScratchpadPreviewState(
-        workspace.page.id,
-        workspace.page.name,
-        pageContent
-    );
-    if (getScratchpadFingerprint(nextScratchpadState) !== workspace.page.baseFingerprint) {
-        proposals.push(buildScratchpadProposal(workspace.page, pageContent, scope));
+    const originalPages = workspace.pages.map((page) => ({
+        ...page,
+        content: page.originalContent,
+    }));
+    const nextPages = await readMaterializedPages(workspace);
+    if (getPagesFingerprint(nextPages) !== workspace.pagesBaseFingerprint) {
+        const ops = derivePagePatchOps(originalPages, nextPages);
+        if (ops.length) {
+            proposals.push(
+                buildScratchpadProposal(
+                    nextPages,
+                    workspace.page.id,
+                    ops,
+                    scope,
+                    workspace.page.baseRevision,
+                    workspace.pagesBaseFingerprint
+                )
+            );
+        }
     }
 
     return proposals;

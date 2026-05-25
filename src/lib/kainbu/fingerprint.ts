@@ -45,3 +45,16 @@ export const canonicalizeScratchpadData = (scratchpadData: ScratchpadData) => {
 
 export const getScratchpadFingerprint = (scratchpadData: ScratchpadData) =>
 	JSON.stringify(canonicalizeScratchpadData(scratchpadData));
+
+export const getProjectPagesFingerprint = (
+	pages: Array<{ id: string; name: string; content: string }>
+) =>
+	JSON.stringify(
+		[...pages]
+			.sort((left, right) => left.id.localeCompare(right.id))
+			.map((page) => ({
+				id: page.id,
+				name: page.name,
+				content: page.content
+			}))
+	);

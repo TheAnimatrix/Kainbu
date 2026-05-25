@@ -66,7 +66,21 @@ const makeWorkspace = async (kanbanData: KanbanData): Promise<MaterializedWorksp
 			baseFingerprint: '',
 			editCallCount: 0
 		},
-		boardRefs: buildBoardRefIndex(kanban, 'Main')
+		boardRefs: buildBoardRefIndex(kanban, 'Main'),
+		pages: [
+			{
+				id: 'page-1',
+				name: 'Notes',
+				content: '',
+				filePath: '/tmp/test/current-page.md',
+				originalContent: '',
+				baseRevision: 0,
+				baseFingerprint: '',
+				editCallCount: 0,
+				position: 0
+			}
+		],
+		pagesBaseFingerprint: '[]'
 	};
 };
 

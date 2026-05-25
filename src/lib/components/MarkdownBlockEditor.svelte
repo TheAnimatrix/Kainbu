@@ -1633,7 +1633,7 @@
 					placeholder: () =>
 						placeholder || (isPageBlockHandleMode ? TRAILING_BLOCK_HINT : ''),
 					emptyEditorClass: 'is-editor-empty',
-					showOnlyCurrent: false,
+					showOnlyCurrent: true,
 					showOnlyWhenEditable: true,
 					includeChildren: false
 				}),
