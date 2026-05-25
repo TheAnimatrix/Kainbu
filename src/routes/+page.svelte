@@ -1666,9 +1666,13 @@
 
 			const preferLocalFallback = localProject.updatedAt > remoteProject.updatedAt;
 			const preferLocalBoardState =
-				preferLocalFallback || hasPendingBoardSyncForProject(remoteProject.id);
+				preferLocalFallback ||
+				hasPendingBoardSyncForProject(remoteProject.id) ||
+				localProject.boards.length > remoteProject.boards.length;
 			const preferLocalPageState =
-				preferLocalFallback || hasPendingPageSyncForProject(remoteProject.id);
+				preferLocalFallback ||
+				hasPendingPageSyncForProject(remoteProject.id) ||
+				localProject.pages.length > remoteProject.pages.length;
 			const preferLocalAiState = pendingChatSyncs.has(remoteProject.id) || preferLocalFallback;
 			const mergedMembers = remoteProject.members.map((remoteMember) => {
 				const localMember = localProject.members.find(
@@ -1871,7 +1875,7 @@
 
 		workspaceRefreshPromise = (async () => {
 			try {
-				const workspace = await fetchWorkspace(currentUser.id);
+				const workspace = await fetchWorkspace(currentUser.id, { fresh: true });
 				applyWorkspaceState({
 					nextProjects: mergeRemoteProjects(projects, workspace.projects),
 					nextIncomingInvites: workspace.incomingInvites,
@@ -1892,7 +1896,7 @@
 	};
 
 	const scheduleRemoteRefresh = () => {
-		if (!user) return;
+		if (!user || isRestoring) return;
 		if (remoteRefreshTimeout) clearTimeout(remoteRefreshTimeout);
 		remoteRefreshTimeout = setTimeout(() => {
 			remoteRefreshTimeout = null;
@@ -3648,10 +3652,20 @@
 		exportProjectsToFile(projects);
 	};
 
+	const pauseWorkspaceRealtimeDuringRestore = () => {
+		if (remoteRefreshTimeout) {
+			clearTimeout(remoteRefreshTimeout);
+			remoteRefreshTimeout = null;
+		}
+		stopWorkspaceSubscription?.();
+		stopWorkspaceSubscription = null;
+	};
+
 	const handleRestoreProjects = async (file: File) => {
 		if (!user) return;
 		const currentUser = user;
 
+		pauseWorkspaceRealtimeDuringRestore();
 		isRestoring = true;
 
 		try {
@@ -3692,6 +3706,12 @@
 			}
 
 			if (createdProjects.length) {
+				const restoredSyncAt = Date.now();
+				const nextLastProjectSyncAt = { ...lastProjectSyncAt };
+				for (const projectId of createdProjectIds) {
+					nextLastProjectSyncAt[projectId] = restoredSyncAt;
+				}
+
 				applyWorkspaceState({
 					nextProjects: [
 						...createdProjects,
@@ -3700,7 +3720,8 @@
 								!createdProjects.some((createdProject) => createdProject.id === project.id)
 						)
 					],
-					preferredProjectId: createdProjects[0].id
+					preferredProjectId: createdProjects[0].id,
+					nextLastProjectSyncAt
 				});
 				desktopWorkspaceTab = 'dashboard';
 				mobileTab = 'dashboard';
@@ -3713,6 +3734,7 @@
 				error instanceof Error ? error.message : 'Unable to restore that backup file.';
 		} finally {
 			isRestoring = false;
+			startWorkspaceSubscription(currentUser);
 		}
 	};
 

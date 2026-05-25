@@ -58,10 +58,20 @@ describe.runIf(process.env.KAINBU_TEST_PB || true)('backup restore integration',
 		expect(calur).toBeTruthy();
 		expect(calur!.boards.length).toBe(2);
 
-		const created = await createProject(userId, calur!.name, calur);
+		const created = await createProject(userId, calur!.name, calur, { skipWorkspaceFetch: true });
 		expect(created.boards.length).toBe(2);
 
-		const workspace = await fetchWorkspace(userId);
+		const pb = new PocketBase(PB);
+		await pb.collection('users').authWithPassword(email, password);
+		const projectPb = await pb
+			.collection('projects')
+			.getFirstListItem(`client_id = "${created.id}"`);
+		const boardRecords = await pb.collection('project_boards').getFullList({
+			filter: `project = "${projectPb.id}"`
+		});
+		expect(boardRecords).toHaveLength(2);
+
+		const workspace = await fetchWorkspace(userId, { fresh: true });
 		const restored = workspace.projects.find((project) => project.id === created.id);
 		expect(restored?.boards.length).toBe(2);
 		expect(restored?.boards.map((board) => board.name).sort()).toEqual(['Board', 'Board 2']);

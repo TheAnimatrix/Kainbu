@@ -1102,6 +1102,10 @@ const loadWorkspaceFromRemote = async (userId: string) => {
 	};
 };
 
+export const invalidateWorkspaceFetch = (userId: string) => {
+	workspaceFetchByUser.delete(userId);
+};
+
 export const fetchWorkspace = async (
 	userId: string,
 	options?: {
@@ -1110,7 +1114,15 @@ export const fetchWorkspace = async (
 	}
 ) => {
 	if (options?.fresh) {
-		workspaceFetchByUser.delete(userId);
+		const inflight = workspaceFetchByUser.get(userId);
+		if (inflight) {
+			try {
+				await inflight;
+			} catch {
+				// A stale in-flight fetch may fail; the reload below is authoritative.
+			}
+		}
+		invalidateWorkspaceFetch(userId);
 	} else {
 		const inflight = workspaceFetchByUser.get(userId);
 		if (inflight) return inflight;
@@ -1203,6 +1215,7 @@ export const createProject = async (
 			deriveBoardMutations(normalizedSeed.id, board.id, [], board.kanbanData)
 		);
 	}
+	invalidateWorkspaceFetch(userId);
 	await saveProjectAiState(
 		normalizedSeed.id,
 		userId,

@@ -83,43 +83,43 @@ const normalizeProject = (
 		ownerUserId: userId,
 		accessRole: 'owner',
 		name: candidate.name || seed.name,
-		boards:
-			candidate.boards?.map((board, index) => ({
-				...board,
-				id: board.id || createId(),
-				projectId: seed.id,
-				position: board.position ?? index,
-				kanbanData: normalizeKanbanData(board.kanbanData, seed.kanbanData),
-				createdAt: board.createdAt || now,
-				updatedAt: board.updatedAt || now
-			})) ||
-			[
-				{
-					...seed.boards[0],
+		boards: candidate.boards?.length
+			? candidate.boards.map((board, index) => ({
+					...board,
+					id: board.id || createId(),
 					projectId: seed.id,
-					kanbanData: normalizeKanbanData(candidate.kanbanData, seed.kanbanData)
-				}
-			],
-		pages:
-			candidate.pages?.map((page, index) => ({
-				...page,
-				id: page.id || createId(),
-				projectId: seed.id,
-				position: page.position ?? index,
-				content: typeof page.content === 'string' ? page.content : '',
-				createdAt: page.createdAt || now,
-				updatedAt: page.updatedAt || now
-			})) ||
-			[
-				{
-					...seed.pages[0],
+					position: board.position ?? index,
+					kanbanData: normalizeKanbanData(board.kanbanData, seed.kanbanData),
+					createdAt: board.createdAt || now,
+					updatedAt: board.updatedAt || now
+				}))
+			: [
+					{
+						...seed.boards[0],
+						projectId: seed.id,
+						kanbanData: normalizeKanbanData(candidate.kanbanData, seed.kanbanData)
+					}
+				],
+		pages: candidate.pages?.length
+			? candidate.pages.map((page, index) => ({
+					...page,
+					id: page.id || createId(),
 					projectId: seed.id,
-					content: normalizeScratchpadData(
-						candidate.scratchpadData,
-						seed.scratchpadData.pads[0]?.content || ''
-					).pads[0]?.content || ''
-				}
-			],
+					position: page.position ?? index,
+					content: typeof page.content === 'string' ? page.content : '',
+					createdAt: page.createdAt || now,
+					updatedAt: page.updatedAt || now
+				}))
+			: [
+					{
+						...seed.pages[0],
+						projectId: seed.id,
+						content: normalizeScratchpadData(
+							candidate.scratchpadData,
+							seed.scratchpadData.pads[0]?.content || ''
+						).pads[0]?.content || ''
+					}
+				],
 		activeBoardId: candidate.activeBoardId || candidate.boards?.[0]?.id || seed.boards[0].id,
 		activePageId: candidate.activePageId || candidate.pages?.[0]?.id || seed.pages[0].id,
 		kanbanData: normalizeKanbanData(candidate.kanbanData, seed.kanbanData),
