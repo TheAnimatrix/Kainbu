@@ -165,11 +165,46 @@ const isMailConfiguredRecord = (
 const toBool = (value: unknown, fallback: boolean) =>
 	typeof value === 'boolean' ? value : fallback;
 
-const updateUserEmailAuthRule = async (emailConfigured: boolean) => {
+/** Must match pocketbase/pb_migrations/1730000010_admin_panel.js — partial collection updates can clear rules. */
+const USERS_COLLECTION_API_RULES = {
+	listRule: '@request.auth.is_admin = true || @request.auth.id = id',
+	viewRule: '@request.auth.is_admin = true || @request.auth.id = id',
+	updateRule: '@request.auth.id = id',
+	deleteRule: '@request.auth.id = id'
+} as const;
+
+const syncUsersAuthCollectionSettings = async (
+	emailConfigured: boolean,
+	appUrl = ''
+) => {
 	const pb = await createAdminPb();
-	await pb.collections.update('users', {
+	const patch: Record<string, unknown> = {
+		...USERS_COLLECTION_API_RULES,
 		authRule: emailConfigured ? 'verified = true' : ''
-	});
+	};
+
+	if (emailConfigured && appUrl) {
+		patch.verificationTemplate = {
+			subject: 'Verify your Kainbu email',
+			body: `<p>Welcome to Kainbu.</p><p><a href="${appUrl}/auth/confirm-verification/{TOKEN}">Verify your email</a></p>`
+		};
+		patch.resetPasswordTemplate = {
+			subject: 'Reset your Kainbu password',
+			body: `<p>Use this link to set a new Kainbu password.</p><p><a href="${appUrl}/auth/confirm-password-reset/{TOKEN}">Reset password</a></p>`
+		};
+	}
+
+	await pb.collections.update('users', patch);
+
+	// Existing accounts predate verification — don't lock them out of the dashboard.
+	if (emailConfigured) {
+		const unverified = await pb.collection('users').getFullList({
+			filter: 'verified = false'
+		});
+		for (const user of unverified) {
+			await pb.collection('users').update(user.id, { verified: true });
+		}
+	}
 };
 
 const publicAuthSettingsFromRecord = (
@@ -449,26 +484,13 @@ export const handleAdminPutAuthEmailSettings = async (c: Context) => {
 						}
 		});
 
-		if (provider !== 'off') {
-			await pb.collections.update('users', {
-				verificationTemplate: {
-					subject: 'Verify your Kainbu email',
-					body: `<p>Welcome to Kainbu.</p><p><a href="${appUrl}/auth/confirm-verification/{TOKEN}">Verify your email</a></p>`
-				},
-				resetPasswordTemplate: {
-					subject: 'Reset your Kainbu password',
-					body: `<p>Use this link to set a new Kainbu password.</p><p><a href="${appUrl}/auth/confirm-password-reset/{TOKEN}">Reset password</a></p>`
-				}
-			});
-		}
-
 		const saved = await upsertSettingsRecord(patch);
 		const updated =
 			settingsRecordAsData(saved) ?? settingsRecordAsData(await getSettingsRecord());
 		const pbSettingsAfter = await pb.settings.getAll();
 		const smtpAfter = (pbSettingsAfter.smtp || {}) as Record<string, unknown>;
 		const emailConfigured = isMailConfiguredRecord(updated, smtpAfter);
-		await updateUserEmailAuthRule(emailConfigured);
+		await syncUsersAuthCollectionSettings(emailConfigured, appUrl);
 		if (provider === 'resend' && !settingsText(updated, 'resend_api_key')) {
 			console.error(
 				'[admin] auth-email save: mail_provider=resend but resend_api_key missing after upsert'
