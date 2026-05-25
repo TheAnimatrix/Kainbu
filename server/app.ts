@@ -19,6 +19,7 @@ import {
 	handleAdminCreateUser,
 	handleAdminResetUserPassword,
 	handleAdminPutAuthEmailSettings,
+	handleAdminRepairUsersCollection,
 	handleAdminPutAiSettings,
 	handleAdminPutModelSettings,
 	handleAdminUsageByModel,
@@ -507,6 +508,7 @@ app.get('/api/admin/settings/ai', handleAdminGetAiSettings);
 app.put('/api/admin/settings/ai', handleAdminPutAiSettings);
 app.get('/api/admin/settings/auth-email', handleAdminGetAuthEmailSettings);
 app.put('/api/admin/settings/auth-email', handleAdminPutAuthEmailSettings);
+app.post('/api/admin/repair/users-collection', handleAdminRepairUsersCollection);
 app.get('/api/admin/settings/models', handleAdminGetModelSettings);
 app.put('/api/admin/settings/models', handleAdminPutModelSettings);
 app.get('/api/admin/usage/summary', handleAdminUsageSummary);

@@ -19,6 +19,7 @@ import {
 } from './ai-models.js';
 import { normalizeAiModelCatalog } from '../src/lib/kainbu/aiModelCatalog.js';
 import { invalidateOpenRouterKeyCache } from './openrouter-key.js';
+import { repairUsersCollectionApiRules } from './usersCollectionRules.js';
 import { getEnv } from './env.js';
 
 const parseDays = (value: string | undefined, fallback = 30) => {
@@ -165,38 +166,28 @@ const isMailConfiguredRecord = (
 const toBool = (value: unknown, fallback: boolean) =>
 	typeof value === 'boolean' ? value : fallback;
 
-/** Must match pocketbase/pb_migrations/1730000010_admin_panel.js — partial collection updates can clear rules. */
-const USERS_COLLECTION_API_RULES = {
-	listRule: '@request.auth.is_admin = true || @request.auth.id = id',
-	viewRule: '@request.auth.is_admin = true || @request.auth.id = id',
-	updateRule: '@request.auth.id = id',
-	deleteRule: '@request.auth.id = id'
-} as const;
-
 const syncUsersAuthCollectionSettings = async (
 	emailConfigured: boolean,
 	appUrl = ''
 ) => {
 	const pb = await createAdminPb();
-	const patch: Record<string, unknown> = {
-		...USERS_COLLECTION_API_RULES,
-		authRule: emailConfigured ? 'verified = true' : ''
-	};
+	const templates =
+		emailConfigured && appUrl
+			? {
+					verificationTemplate: {
+						subject: 'Verify your Kainbu email',
+						body: `<p>Welcome to Kainbu.</p><p><a href="${appUrl}/auth/confirm-verification/{TOKEN}">Verify your email</a></p>`
+					},
+					resetPasswordTemplate: {
+						subject: 'Reset your Kainbu password',
+						body: `<p>Use this link to set a new Kainbu password.</p><p><a href="${appUrl}/auth/confirm-password-reset/{TOKEN}">Reset password</a></p>`
+					}
+				}
+			: {};
 
-	if (emailConfigured && appUrl) {
-		patch.verificationTemplate = {
-			subject: 'Verify your Kainbu email',
-			body: `<p>Welcome to Kainbu.</p><p><a href="${appUrl}/auth/confirm-verification/{TOKEN}">Verify your email</a></p>`
-		};
-		patch.resetPasswordTemplate = {
-			subject: 'Reset your Kainbu password',
-			body: `<p>Use this link to set a new Kainbu password.</p><p><a href="${appUrl}/auth/confirm-password-reset/{TOKEN}">Reset password</a></p>`
-		};
-	}
+	await repairUsersCollectionApiRules(pb, templates);
 
-	await pb.collections.update('users', patch);
-
-	// Existing accounts predate verification — don't lock them out of the dashboard.
+	// Verification is enforced in app signup/login — not via PB authRule (breaks record API).
 	if (emailConfigured) {
 		const unverified = await pb.collection('users').getFullList({
 			filter: 'verified = false'
@@ -204,6 +195,17 @@ const syncUsersAuthCollectionSettings = async (
 		for (const user of unverified) {
 			await pb.collection('users').update(user.id, { verified: true });
 		}
+	}
+};
+
+export const handleAdminRepairUsersCollection = async (c: Context) => {
+	try {
+		await requireAppAdmin(c.req.header('Authorization'));
+		const result = await repairUsersCollectionApiRules();
+		return c.json({ ok: true, ...result });
+	} catch (error) {
+		const { status, message } = adminError(error);
+		return c.json({ error: message }, status as 401 | 403 | 500);
 	}
 };
 

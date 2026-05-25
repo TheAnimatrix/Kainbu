@@ -171,7 +171,7 @@
 		WorkspaceTab
 	} from '$lib/kainbu/types';
 	import { isPocketBaseConfigured, pocketbase } from '$lib/pocketbaseClient';
-	import { formatPocketBaseError } from '$lib/pocketbaseErrors';
+	import { formatPocketBaseError, isOwnUserRecordNotFound } from '$lib/pocketbaseErrors';
 	import { shouldIgnorePocketBaseError } from '$lib/kainbu/pbRequest';
 	import { fetchAuthSettings, signupWithAuthSettings } from '$lib/kainbu/adminApi';
 
@@ -1798,10 +1798,20 @@
 			}
 
 			if (settingsResult.status === 'rejected') {
+				if (clearStaleAuthSession(currentUser.id, settingsResult.reason)) {
+					return;
+				}
 				workspaceError =
 					settingsResult.reason instanceof Error
 						? settingsResult.reason.message
 						: 'Unable to load your preferences.';
+			}
+
+			if (
+				profileResult.status === 'rejected' &&
+				clearStaleAuthSession(currentUser.id, profileResult.reason)
+			) {
+				return;
 			}
 
 			const resolvedSettings = localSnapshot?.dirtySettings
@@ -1837,6 +1847,7 @@
 			syncUsernameDraftFromProfile(resolveProfileAfterFetch(currentUser, profileResult));
 		} catch (error) {
 			if (shouldIgnorePocketBaseError(error)) return;
+			if (clearStaleAuthSession(currentUser.id, error)) return;
 			console.error(error);
 			const message = error instanceof Error ? error.message : 'Unable to load your workspace.';
 			if (/autocancell?ed/i.test(message)) return;
@@ -1857,6 +1868,7 @@
 			syncUsernameDraftFromProfile(nextProfile);
 			profileLoaded = true;
 		} catch (error) {
+			if (clearStaleAuthSession(currentUser.id, error)) return;
 			console.error(error);
 		}
 	};
@@ -3992,6 +4004,18 @@
 			console.error(error);
 			workspaceError = error instanceof Error ? error.message : 'Unable to sign out right now.';
 		}
+	};
+
+	const clearStaleAuthSession = (currentUserId: string, error: unknown) => {
+		if (!isOwnUserRecordNotFound(error, currentUserId)) return false;
+		pocketbase.authStore.clear();
+		user = null;
+		profileLoaded = false;
+		workspaceHydrating = false;
+		workspaceError = '';
+		authErrorMessage =
+			'Your session is no longer valid (account not found or access rules reset). Sign in again.';
+		return true;
 	};
 
 	const handleRetryInitialization = async () => {
