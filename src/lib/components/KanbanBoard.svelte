@@ -60,6 +60,7 @@
 	import { getBoardPresenceViewers } from '$lib/kainbu/boardPresence';
 	import { formatTimingLabel, getTaskDueAt } from '$lib/kainbu/timing';
 	import BoardViewersPill from '$lib/components/BoardViewersPill.svelte';
+	import ShareWorkspaceLinkButton from '$lib/components/ShareWorkspaceLinkButton.svelte';
 	import {
 		addBidirectionalLink,
 		buildLinkGroupLayout,
@@ -148,6 +149,7 @@
 	export let members: ProjectMembership[] = [];
 	export let activeBoardId = '';
 	export let currentUserId = '';
+	export let shareUrl = '';
 	export let onChange: (nextData: KanbanData, options?: BoardChangeOptions) => void;
 	export let onSendToChat: (payload: { task: Task; column: Column }) => void;
 	export let onActiveTaskChange: (
@@ -1457,6 +1459,7 @@
 							Link groups
 						</button>
 						<BoardViewersPill viewers={boardPresenceViewers} />
+						<ShareWorkspaceLinkButton url={shareUrl} />
 						<button
 							type="button"
 							class={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-[11px] font-semibold transition ${
