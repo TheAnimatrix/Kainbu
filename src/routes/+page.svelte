@@ -4219,7 +4219,7 @@
 								<div
 									class="rounded-lg border border-app-primary/25 bg-app-primary/10 px-4 py-3 text-sm text-app-text"
 								>
-									Restoring boards from backup. Shared board data is being recreated now.
+									Restoring boards from backup. Board and page data is being recreated now.
 								</div>
 							{/if}
 						</div>
