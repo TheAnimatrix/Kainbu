@@ -1,4 +1,5 @@
 import type { Context } from 'hono';
+import { randomBytes } from 'crypto';
 import { createAdminPb, mapPocketBaseError } from './pocketbase.js';
 import {
 	APP_SETTINGS_SINGLETON,
@@ -31,8 +32,8 @@ const parseCreatedMs = (value: unknown) => {
 	return Date.parse(normalized);
 };
 
-const isUsageEventInWindow = (event: { created?: string }, sinceMs: number) => {
-	const created = parseCreatedMs(event.created);
+const isUsageEventInWindow = (event: unknown, sinceMs: number) => {
+	const created = parseCreatedMs((event as Record<string, unknown> | null)?.created);
 	// Rows created before the autodate migration have no created field — include them.
 	if (!Number.isFinite(created)) return true;
 	return created >= sinceMs;
@@ -58,6 +59,42 @@ const getSettingsRecord = async () => {
 	return rows[0] ?? null;
 };
 
+const normalizeMailProvider = (value: unknown): 'off' | 'smtp' | 'resend' => {
+	const normalized = typeof value === 'string' ? value.trim().toLowerCase() : '';
+	return normalized === 'smtp' || normalized === 'resend' ? normalized : 'off';
+};
+
+const isMailConfiguredRecord = (record: Record<string, unknown> | null | undefined) => {
+	const provider = normalizeMailProvider(record?.mail_provider);
+	if (provider === 'smtp') return true;
+	if (provider === 'resend') {
+		return Boolean(typeof record?.resend_api_key === 'string' && record.resend_api_key.trim());
+	}
+	return false;
+};
+
+const toBool = (value: unknown, fallback: boolean) =>
+	typeof value === 'boolean' ? value : fallback;
+
+const updateUserEmailAuthRule = async (emailConfigured: boolean) => {
+	const pb = await createAdminPb();
+	await pb.collections.update('users', {
+		authRule: emailConfigured ? 'verified = true' : ''
+	});
+};
+
+const publicAuthSettingsFromRecord = (record: Record<string, unknown> | null | undefined) => {
+	const emailConfigured = isMailConfiguredRecord(record);
+	return {
+		signupsEnabled: toBool(record?.signups_enabled, true),
+		emailConfigured,
+		emailVerificationEnabled: emailConfigured
+	};
+};
+
+const randomPassword = () =>
+	`${randomBytes(18).toString('base64url')}A1!`.slice(0, 24);
+
 const upsertSettingsRecord = async (data: Record<string, unknown>) => {
 	const pb = await createAdminPb();
 	const existing = await getSettingsRecord();
@@ -66,8 +103,59 @@ const upsertSettingsRecord = async (data: Record<string, unknown>) => {
 	}
 	return pb.collection('app_settings').create({
 		singleton: APP_SETTINGS_SINGLETON,
+		signups_enabled: true,
+		mail_provider: 'off',
 		...data
 	});
+};
+
+export const handleGetAuthSettings = async (c: Context) => {
+	try {
+		const record = await getSettingsRecord();
+		return c.json(publicAuthSettingsFromRecord(record));
+	} catch (error) {
+		const { status, message } = adminError(error);
+		return c.json({ error: message }, status as 500);
+	}
+};
+
+export const handleAuthSignup = async (c: Context) => {
+	try {
+		const record = await getSettingsRecord();
+		const settings = publicAuthSettingsFromRecord(record);
+		if (!settings.signupsEnabled) {
+			return c.json({ error: 'Signups are disabled.' }, 403);
+		}
+
+		const body = (await c.req.json()) as { email?: string; password?: string };
+		const email = typeof body.email === 'string' ? body.email.trim().toLowerCase() : '';
+		const password = typeof body.password === 'string' ? body.password : '';
+		if (!email || !password) {
+			return c.json({ error: 'Email and password are required.' }, 400);
+		}
+
+		const pb = await createAdminPb();
+		const user = await pb.collection('users').create({
+			email,
+			emailVisibility: true,
+			verified: !settings.emailVerificationEnabled,
+			password,
+			passwordConfirm: password
+		});
+
+		if (settings.emailVerificationEnabled) {
+			await pb.collection('users').requestVerification(email);
+		}
+
+		return c.json({
+			ok: true,
+			userId: user.id,
+			requiresVerification: settings.emailVerificationEnabled
+		});
+	} catch (error) {
+		const { status, message } = adminError(error);
+		return c.json({ error: message }, status as 400 | 403 | 500);
+	}
 };
 
 export const handleAdminMe = async (c: Context) => {
@@ -119,6 +207,147 @@ export const handleAdminPutAiSettings = async (c: Context) => {
 	} catch (error) {
 		const { status, message } = adminError(error);
 		return c.json({ error: message }, status as 401 | 403 | 500);
+	}
+};
+
+export const handleAdminGetAuthEmailSettings = async (c: Context) => {
+	try {
+		await requireAppAdmin(c.req.header('Authorization'));
+		const record = await getSettingsRecord();
+		const pb = await createAdminPb();
+		const pbSettings = await pb.settings.getAll();
+		const provider = normalizeMailProvider(record?.mail_provider);
+		const smtp = (pbSettings.smtp || {}) as Record<string, unknown>;
+		const meta = (pbSettings.meta || {}) as Record<string, unknown>;
+		const resendKey = typeof record?.resend_api_key === 'string' ? record.resend_api_key.trim() : '';
+
+		return c.json({
+			...publicAuthSettingsFromRecord(record),
+			mailProvider: provider,
+			resendKeyHint: provider === 'resend' && resendKey ? maskApiKey(resendKey) : '',
+			appUrl: typeof meta.appURL === 'string' ? meta.appURL : '',
+			fromName: typeof meta.senderName === 'string' ? meta.senderName : '',
+			fromEmail: typeof meta.senderAddress === 'string' ? meta.senderAddress : '',
+			smtp: {
+				host: typeof smtp.host === 'string' ? smtp.host : '',
+				port: Number(smtp.port) || 587,
+				username: typeof smtp.username === 'string' ? smtp.username : '',
+				passwordHint: typeof smtp.password === 'string' && smtp.password ? 'configured' : '',
+				tls: smtp.tls === true,
+				authMethod: typeof smtp.authMethod === 'string' && smtp.authMethod ? smtp.authMethod : 'PLAIN'
+			}
+		});
+	} catch (error) {
+		const { status, message } = adminError(error);
+		return c.json({ error: message }, status as 401 | 403 | 500);
+	}
+};
+
+export const handleAdminPutAuthEmailSettings = async (c: Context) => {
+	try {
+		await requireAppAdmin(c.req.header('Authorization'));
+		const body = (await c.req.json()) as {
+			signupsEnabled?: boolean;
+			mailProvider?: string;
+			appUrl?: string;
+			fromName?: string;
+			fromEmail?: string;
+			resendApiKey?: string;
+			smtp?: {
+				host?: string;
+				port?: number;
+				username?: string;
+				password?: string;
+				tls?: boolean;
+				authMethod?: string;
+			};
+		};
+
+		const provider = normalizeMailProvider(body.mailProvider);
+		const fromEmail = typeof body.fromEmail === 'string' ? body.fromEmail.trim() : '';
+		const fromName = typeof body.fromName === 'string' ? body.fromName.trim() : 'Kainbu';
+		const appUrl = typeof body.appUrl === 'string' ? body.appUrl.trim().replace(/\/+$/, '') : '';
+
+		if (provider !== 'off' && (!fromEmail || !appUrl)) {
+			return c.json({ error: 'App URL and sender email are required when email is enabled.' }, 400);
+		}
+		if (provider === 'smtp' && !body.smtp?.host?.trim()) {
+			return c.json({ error: 'SMTP host is required.' }, 400);
+		}
+
+		const existing = await getSettingsRecord();
+		const patch: Record<string, unknown> = {
+			signups_enabled: typeof body.signupsEnabled === 'boolean' ? body.signupsEnabled : true,
+			mail_provider: provider
+		};
+		if (provider === 'resend') {
+			const nextKey =
+				typeof body.resendApiKey === 'string' && body.resendApiKey.trim()
+					? body.resendApiKey.trim()
+					: typeof existing?.resend_api_key === 'string'
+						? existing.resend_api_key
+						: '';
+			if (!nextKey) return c.json({ error: 'Resend API key is required.' }, 400);
+			patch.resend_api_key = nextKey;
+		}
+
+		const pb = await createAdminPb();
+		const current = await pb.settings.getAll();
+		const currentMeta = (current.meta || {}) as Record<string, unknown>;
+		const currentSmtp = (current.smtp || {}) as Record<string, unknown>;
+		const smtpPassword =
+			typeof body.smtp?.password === 'string' && body.smtp.password
+				? body.smtp.password
+				: typeof currentSmtp.password === 'string'
+					? currentSmtp.password
+					: '';
+
+		await pb.settings.update({
+			meta: {
+				...currentMeta,
+				appName: 'Kainbu',
+				appURL: appUrl,
+				senderName: fromName,
+				senderAddress: fromEmail
+			},
+			smtp:
+				provider === 'smtp'
+					? {
+							...currentSmtp,
+							enabled: true,
+							host: body.smtp?.host?.trim() || '',
+							port: Number(body.smtp?.port) || 587,
+							username: body.smtp?.username?.trim() || '',
+							password: smtpPassword,
+							tls: body.smtp?.tls === true,
+							authMethod: body.smtp?.authMethod === 'LOGIN' ? 'LOGIN' : 'PLAIN'
+						}
+					: {
+							...currentSmtp,
+							enabled: false
+						}
+		});
+
+		if (provider !== 'off') {
+			await pb.collections.update('users', {
+				verificationTemplate: {
+					subject: 'Verify your Kainbu email',
+					body: `<p>Welcome to Kainbu.</p><p><a href="${appUrl}/auth/confirm-verification/{TOKEN}">Verify your email</a></p>`
+				},
+				resetPasswordTemplate: {
+					subject: 'Reset your Kainbu password',
+					body: `<p>Use this link to set a new Kainbu password.</p><p><a href="${appUrl}/auth/confirm-password-reset/{TOKEN}">Reset password</a></p>`
+				}
+			});
+		}
+
+		await upsertSettingsRecord(patch);
+		const updated = await getSettingsRecord();
+		await updateUserEmailAuthRule(isMailConfiguredRecord(updated));
+		return c.json({ ok: true, ...publicAuthSettingsFromRecord(updated) });
+	} catch (error) {
+		const { status, message } = adminError(error);
+		return c.json({ error: message }, status as 400 | 401 | 403 | 500);
 	}
 };
 
@@ -279,10 +508,47 @@ export const handleAdminListUsers = async (c: Context) => {
 	}
 };
 
+export const handleAdminCreateUser = async (c: Context) => {
+	try {
+		await requireAppAdmin(c.req.header('Authorization'));
+		const body = (await c.req.json()) as { email?: string; password?: string; is_admin?: boolean };
+		const email = typeof body.email === 'string' ? body.email.trim().toLowerCase() : '';
+		const password = typeof body.password === 'string' ? body.password : '';
+		if (!email || !password) return c.json({ error: 'Email and password are required.' }, 400);
+
+		const pb = await createAdminPb();
+		const user = await pb.collection('users').create({
+			email,
+			emailVisibility: true,
+			verified: true,
+			password,
+			passwordConfirm: password,
+			is_admin: body.is_admin === true
+		});
+		return c.json({
+			ok: true,
+			user: {
+				id: user.id,
+				email: user.email,
+				username: user.username,
+				is_admin: isUserAppAdmin(user),
+				is_admin_field: user.is_admin === true,
+				disabled: user.disabled === true,
+				created: user.created,
+				on_allowlist: isEmailOnAdminAllowlist(typeof user.email === 'string' ? user.email : undefined)
+			}
+		});
+	} catch (error) {
+		const { status, message } = adminError(error);
+		return c.json({ error: message }, status as 400 | 401 | 403 | 500);
+	}
+};
+
 export const handleAdminPatchUser = async (c: Context) => {
 	try {
 		await requireAppAdmin(c.req.header('Authorization'));
 		const userId = c.req.param('id');
+		if (!userId) return c.json({ error: 'User id is required' }, 400);
 		const body = (await c.req.json()) as { is_admin?: boolean; disabled?: boolean };
 		const pb = await createAdminPb();
 		const target = await pb.collection('users').getOne(userId);
@@ -314,6 +580,21 @@ export const handleAdminPatchUser = async (c: Context) => {
 	} catch (error) {
 		const { status, message } = adminError(error);
 		return c.json({ error: message }, status as 401 | 403 | 500);
+	}
+};
+
+export const handleAdminResetUserPassword = async (c: Context) => {
+	try {
+		await requireAppAdmin(c.req.header('Authorization'));
+		const userId = c.req.param('id');
+		if (!userId) return c.json({ error: 'User id is required' }, 400);
+		const password = randomPassword();
+		const pb = await createAdminPb();
+		await pb.collection('users').update(userId, { password, passwordConfirm: password });
+		return c.json({ ok: true, password });
+	} catch (error) {
+		const { status, message } = adminError(error);
+		return c.json({ error: message }, status as 401 | 403 | 404 | 500);
 	}
 };
 

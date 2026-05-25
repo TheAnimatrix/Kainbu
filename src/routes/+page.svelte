@@ -173,6 +173,7 @@
 	import { isPocketBaseConfigured, pocketbase } from '$lib/pocketbaseClient';
 	import { formatPocketBaseError } from '$lib/pocketbaseErrors';
 	import { shouldIgnorePocketBaseError } from '$lib/kainbu/pbRequest';
+	import { fetchAuthSettings, signupWithAuthSettings } from '$lib/kainbu/adminApi';
 
 	const toAuthUser = (model: { id: string; email?: string } | null): AuthUser | null =>
 		model ? { id: model.id, email: model.email } : null;
@@ -216,6 +217,8 @@
 	let isAuthLoading = false;
 	let authInfoMessage = '';
 	let authErrorMessage = '';
+	let signupsEnabled = true;
+	let emailConfigured = false;
 	let workspaceError = '';
 	let syncErrorMessage = '';
 	let syncStatus: SyncStatus = 'idle';
@@ -1989,12 +1992,10 @@
 
 		try {
 			if (payload.isSignUp) {
-				await pocketbase.collection('users').create({
-					email: payload.email,
-					password: payload.password,
-					passwordConfirm: payload.password
-				});
-				authInfoMessage = 'Account created. Sign in with your email and password.';
+				const result = await signupWithAuthSettings(payload.email, payload.password);
+				authInfoMessage = result.requiresVerification
+					? 'Account created. Check your email to verify your address before signing in.'
+					: 'Account created. Sign in with your email and password.';
 				return;
 			}
 
@@ -2002,6 +2003,26 @@
 		} catch (error) {
 			console.error(error);
 			authErrorMessage = formatPocketBaseError(error, 'Unable to authenticate right now.');
+		} finally {
+			isAuthLoading = false;
+		}
+	};
+
+	const handlePasswordResetRequest = async (email: string) => {
+		authErrorMessage = '';
+		authInfoMessage = '';
+		const normalizedEmail = email.trim().toLowerCase();
+		if (!normalizedEmail) {
+			authErrorMessage = 'Enter your email before requesting a reset link.';
+			return;
+		}
+		isAuthLoading = true;
+		try {
+			await pocketbase.collection('users').requestPasswordReset(normalizedEmail);
+			authInfoMessage = 'Password reset email sent if that account exists.';
+		} catch (error) {
+			console.error(error);
+			authErrorMessage = formatPocketBaseError(error, 'Unable to send password reset email.');
 		} finally {
 			isAuthLoading = false;
 		}
@@ -3281,7 +3302,7 @@
 		mobileTab = 'scratchpad';
 	};
 
-	const handleAcceptProposal = (proposalId: string) => {
+	const handleAcceptProposal = async (proposalId: string) => {
 		if (!currentProject) return;
 		const proposal = activePendingProposals.find((entry) => entry.id === proposalId);
 		if (!proposal) return;
@@ -3376,7 +3397,7 @@
 								throw new Error('Could not add the new page locally.');
 							}
 							workingProject =
-								projects.find((entry) => entry.id === workingProject.id) || withPage;
+								projects.find((entry) => entry.id === workingProject.id) || withPage.nextProject;
 							if (pad.name && pad.name !== createdPage.name) {
 								await runSyncAction(
 									() =>
@@ -4014,6 +4035,14 @@
 
 	onMount(() => {
 		void loadAiModels();
+		void fetchAuthSettings()
+			.then((settings) => {
+				signupsEnabled = settings.signupsEnabled;
+				emailConfigured = settings.emailConfigured;
+			})
+			.catch((error) => {
+				console.error(error);
+			});
 		if (!isPocketBaseConfigured) {
 			authHydrating = false;
 			return;
@@ -4099,9 +4128,12 @@
 		configured={isPocketBaseConfigured}
 		infoMessage={authInfoMessage}
 		errorMessage={authErrorMessage}
+		{signupsEnabled}
+		{emailConfigured}
 		theme={settings.backgroundTheme}
 		backgroundImageUrl={personalBackgroundImageUrl}
 		on:submit={(event) => handleAuthSubmit(event.detail)}
+		on:resetPassword={(event) => handlePasswordResetRequest(event.detail.email)}
 	/>
 {:else}
 	<div

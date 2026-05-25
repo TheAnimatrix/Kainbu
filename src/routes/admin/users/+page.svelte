@@ -1,6 +1,12 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { fetchAdminUsers, patchAdminUser, type AdminUserRow } from '$lib/kainbu/adminApi';
+	import {
+		createAdminUser,
+		fetchAdminUsers,
+		patchAdminUser,
+		resetAdminUserPassword,
+		type AdminUserRow
+	} from '$lib/kainbu/adminApi';
 	import {
 		compareNumbers,
 		compareStrings,
@@ -16,6 +22,10 @@
 	let savingId = '';
 	let error = '';
 	let users: AdminUserRow[] = [];
+	let newEmail = '';
+	let newPassword = '';
+	let newIsAdmin = false;
+	let generatedPassword = '';
 	let sortKey: UserSortKey = 'email';
 	let sortDir: SortDir = 'asc';
 
@@ -98,6 +108,37 @@
 			savingId = '';
 		}
 	};
+
+	const createUser = async () => {
+		savingId = 'new';
+		error = '';
+		generatedPassword = '';
+		try {
+			await createAdminUser({ email: newEmail, password: newPassword, is_admin: newIsAdmin });
+			newEmail = '';
+			newPassword = '';
+			newIsAdmin = false;
+			await loadUsers();
+		} catch (createError) {
+			error = createError instanceof Error ? createError.message : 'Create user failed';
+		} finally {
+			savingId = '';
+		}
+	};
+
+	const resetPassword = async (user: AdminUserRow) => {
+		savingId = user.id;
+		error = '';
+		generatedPassword = '';
+		try {
+			const result = await resetAdminUserPassword(user.id);
+			generatedPassword = `${user.email}: ${result.password}`;
+		} catch (resetError) {
+			error = resetError instanceof Error ? resetError.message : 'Password reset failed';
+		} finally {
+			savingId = '';
+		}
+	};
 </script>
 
 <section class="px-3 py-3 sm:px-4 sm:py-4 lg:px-6 lg:py-5">
@@ -110,12 +151,47 @@
 		{#if error}
 			<p class="px-1 text-sm text-red-400">{error}</p>
 		{/if}
+		{#if generatedPassword}
+			<p class="px-1 text-sm text-emerald-300">New password: <code>{generatedPassword}</code></p>
+		{/if}
 
 		{#if loading}
 			<p class="px-1 text-sm text-app-subtext">Loading…</p>
 		{:else}
+			<form
+				class="grid gap-2 border border-app-border/40 p-3 sm:grid-cols-[1fr_1fr_auto_auto]"
+				on:submit|preventDefault={createUser}
+			>
+				<input
+					bind:value={newEmail}
+					type="email"
+					required
+					placeholder="email@example.com"
+					class="rounded-lg border border-app-border bg-app-bg px-3 py-2 text-sm outline-none focus:border-app-primary/60"
+				/>
+				<input
+					bind:value={newPassword}
+					type="password"
+					required
+					minlength="8"
+					placeholder="Password"
+					class="rounded-lg border border-app-border bg-app-bg px-3 py-2 text-sm outline-none focus:border-app-primary/60"
+				/>
+				<label class="flex items-center gap-2 px-1 text-sm text-app-subtext">
+					<input type="checkbox" bind:checked={newIsAdmin} />
+					Admin
+				</label>
+				<button
+					type="submit"
+					disabled={savingId === 'new'}
+					class="rounded-md bg-app-primary px-3 py-2 text-xs font-semibold text-white disabled:opacity-60"
+				>
+					Create user
+				</button>
+			</form>
+
 			<div class="overflow-x-auto border border-app-border/40">
-				<table class="w-full min-w-[40rem] text-left text-sm">
+				<table class="w-full min-w-[48rem] text-left text-sm">
 					<thead class="border-b border-app-border/40 bg-app-surface/60 text-xs uppercase tracking-wide text-app-subtext">
 						<tr>
 							<th class="px-3 py-2">
@@ -160,6 +236,7 @@
 									<span class="text-app-primary">{sortDirSymbol(sortKey === 'created', sortDir)}</span>
 								</button>
 							</th>
+							<th class="px-3 py-2 text-xs uppercase tracking-wide text-app-subtext">Actions</th>
 						</tr>
 					</thead>
 					<tbody>
@@ -196,6 +273,16 @@
 								</td>
 								<td class="px-3 py-2 text-xs text-app-subtext">
 									{user.created ? new Date(user.created).toLocaleDateString() : '—'}
+								</td>
+								<td class="px-3 py-2">
+									<button
+										type="button"
+										class="rounded border border-app-border/50 px-2 py-0.5 text-xs disabled:opacity-50"
+										disabled={savingId === user.id}
+										on:click={() => resetPassword(user)}
+									>
+										Reset password
+									</button>
 								</td>
 							</tr>
 						{/each}

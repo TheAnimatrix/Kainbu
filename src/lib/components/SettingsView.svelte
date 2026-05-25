@@ -3,6 +3,8 @@
 	import { Check, ImageUp, RefreshCcw, Trash2 } from 'lucide-svelte';
 	import AccountIdentityForm from '$lib/components/AccountIdentityForm.svelte';
 	import { fetchAdminMe } from '$lib/kainbu/adminApi';
+	import { pocketbase } from '$lib/pocketbaseClient';
+	import { formatPocketBaseError } from '$lib/pocketbaseErrors';
 	import {
 		BACKGROUND_GRADIENT_OPTIONS,
 		BACKGROUND_SOLID_OPTIONS,
@@ -43,6 +45,11 @@
 	let personalUploadInput: HTMLInputElement | null = null;
 	let boardUploadInput: HTMLInputElement | null = null;
 	let showAdminLink = false;
+	let oldPassword = '';
+	let newPassword = '';
+	let passwordSaving = false;
+	let passwordMessage = '';
+	let passwordError = '';
 
 	onMount(async () => {
 		try {
@@ -75,6 +82,36 @@
 			void handler(file);
 		}
 		input.value = '';
+	};
+
+	const changePassword = async () => {
+		const userId = pocketbase.authStore.model?.id;
+		passwordMessage = '';
+		passwordError = '';
+		if (!userId) {
+			passwordError = 'Sign in again before changing your password.';
+			return;
+		}
+		if (newPassword.length < 8) {
+			passwordError = 'Use at least 8 characters for the new password.';
+			return;
+		}
+
+		passwordSaving = true;
+		try {
+			await pocketbase.collection('users').update(userId, {
+				oldPassword,
+				password: newPassword,
+				passwordConfirm: newPassword
+			});
+			oldPassword = '';
+			newPassword = '';
+			passwordMessage = 'Password changed.';
+		} catch (error) {
+			passwordError = formatPocketBaseError(error, 'Unable to change password.');
+		} finally {
+			passwordSaving = false;
+		}
 	};
 </script>
 
@@ -139,6 +176,44 @@
 						onSubmit={onUsernameSubmit}
 					/>
 				</div>
+				<form
+					class="border-t border-app-border/30 pt-5"
+					on:submit|preventDefault={changePassword}
+				>
+					<p class="text-xs font-semibold text-app-text">Password</p>
+					<div class="mt-3 grid gap-2 sm:grid-cols-2">
+						<input
+							bind:value={oldPassword}
+							type="password"
+							autocomplete="current-password"
+							placeholder="Current password"
+							class="rounded-lg border border-app-border bg-app-bg px-3 py-2 text-sm outline-none focus:border-app-primary/60"
+						/>
+						<input
+							bind:value={newPassword}
+							type="password"
+							minlength="8"
+							autocomplete="new-password"
+							placeholder="New password"
+							class="rounded-lg border border-app-border bg-app-bg px-3 py-2 text-sm outline-none focus:border-app-primary/60"
+						/>
+					</div>
+					<div class="mt-3 flex flex-wrap items-center gap-3">
+						<button
+							type="submit"
+							disabled={passwordSaving}
+							class="rounded-md bg-app-primary px-3 py-1.5 text-xs font-medium text-white hover:bg-app-primary-hover disabled:opacity-60"
+						>
+							{passwordSaving ? 'Changing...' : 'Change password'}
+						</button>
+						{#if passwordMessage}
+							<p class="text-xs text-emerald-300">{passwordMessage}</p>
+						{/if}
+						{#if passwordError}
+							<p class="text-xs text-red-400">{passwordError}</p>
+						{/if}
+					</div>
+				</form>
 			</div>
 		{:else}
 			<div class="grid gap-5 lg:grid-cols-[1.15fr_0.85fr]">

@@ -45,6 +45,28 @@ export type AdminAiSettings = {
 	keyHint: string;
 };
 
+export type AuthSettings = {
+	signupsEnabled: boolean;
+	emailConfigured: boolean;
+	emailVerificationEnabled: boolean;
+};
+
+export type AdminAuthEmailSettings = AuthSettings & {
+	mailProvider: 'off' | 'smtp' | 'resend';
+	resendKeyHint: string;
+	appUrl: string;
+	fromName: string;
+	fromEmail: string;
+	smtp: {
+		host: string;
+		port: number;
+		username: string;
+		passwordHint: string;
+		tls: boolean;
+		authMethod: 'PLAIN' | 'LOGIN';
+	};
+};
+
 export type AdminUsageSummary = {
 	days: number;
 	requestCount: number;
@@ -102,6 +124,53 @@ export const updateAdminAiSettings = (apiKey: string) =>
 		body: JSON.stringify({ apiKey })
 	});
 
+export const fetchAuthSettings = async () => {
+	const response = await fetch(resolveWorkspaceApiUrl('/api/auth/settings'));
+	const body = (await response.json().catch(() => ({}))) as AuthSettings & { error?: string };
+	if (!response.ok) throw new Error(body.error || 'Unable to load auth settings.');
+	return body;
+};
+
+export const signupWithAuthSettings = (email: string, password: string) =>
+	fetch(resolveWorkspaceApiUrl('/api/auth/signup'), {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify({ email, password })
+	}).then(async (response) => {
+		const body = (await response.json().catch(() => ({}))) as {
+			ok?: boolean;
+			userId?: string;
+			requiresVerification?: boolean;
+			error?: string;
+		};
+		if (!response.ok) throw new Error(body.error || 'Signup failed.');
+		return body;
+	});
+
+export const fetchAdminAuthEmailSettings = () =>
+	adminFetch<AdminAuthEmailSettings>('/api/admin/settings/auth-email');
+
+export const updateAdminAuthEmailSettings = (settings: {
+	signupsEnabled: boolean;
+	mailProvider: 'off' | 'smtp' | 'resend';
+	appUrl: string;
+	fromName: string;
+	fromEmail: string;
+	resendApiKey?: string;
+	smtp?: {
+		host: string;
+		port: number;
+		username: string;
+		password?: string;
+		tls: boolean;
+		authMethod: 'PLAIN' | 'LOGIN';
+	};
+}) =>
+	adminFetch<{ ok: boolean } & AuthSettings>('/api/admin/settings/auth-email', {
+		method: 'PUT',
+		body: JSON.stringify(settings)
+	});
+
 export type AdminModelSettings = {
 	catalog: AdminModelCatalog;
 	source: 'database' | 'defaults';
@@ -137,6 +206,12 @@ export const fetchAdminUsers = (page = 1) =>
 		items: AdminUserRow[];
 	}>(`/api/admin/users?page=${page}`);
 
+export const createAdminUser = (user: { email: string; password: string; is_admin?: boolean }) =>
+	adminFetch<{ ok: boolean; user: AdminUserRow }>('/api/admin/users', {
+		method: 'POST',
+		body: JSON.stringify(user)
+	});
+
 export const patchAdminUser = (
 	userId: string,
 	patch: { is_admin?: boolean; disabled?: boolean }
@@ -144,4 +219,10 @@ export const patchAdminUser = (
 	adminFetch<{ ok: boolean; user: AdminUserRow }>(`/api/admin/users/${userId}`, {
 		method: 'PATCH',
 		body: JSON.stringify(patch)
+	});
+
+export const resetAdminUserPassword = (userId: string) =>
+	adminFetch<{ ok: boolean; password: string }>(`/api/admin/users/${userId}/reset-password`, {
+		method: 'POST',
+		body: JSON.stringify({})
 	});

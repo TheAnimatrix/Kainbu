@@ -6,6 +6,7 @@
 	const links = [
 		{ href: '/admin', label: 'Overview', exact: true },
 		{ href: '/admin/ai', label: 'AI key' },
+		{ href: '/admin/auth', label: 'Auth & email' },
 		{ href: '/admin/models', label: 'Models' },
 		{ href: '/admin/usage', label: 'Usage' },
 		{ href: '/admin/users', label: 'Users' }
@@ -16,7 +17,7 @@
 		let match = '';
 
 		for (const link of links) {
-			if (link.exact) {
+			if ('exact' in link && link.exact) {
 				if (path === link.href) return link.href;
 				continue;
 			}

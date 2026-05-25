@@ -64,7 +64,8 @@ const makeWorkspace = async (kanbanData: KanbanData): Promise<MaterializedWorksp
 			originalContent: '',
 			baseRevision: 0,
 			baseFingerprint: '',
-			editCallCount: 0
+			editCallCount: 0,
+			position: 0
 		},
 		boardRefs: buildBoardRefIndex(kanban, 'Main'),
 		pages: [

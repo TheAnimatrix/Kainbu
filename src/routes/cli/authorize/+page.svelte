@@ -5,6 +5,7 @@
 	import { pocketbase, isPocketBaseConfigured } from '$lib/pocketbaseClient';
 	import { formatPocketBaseError } from '$lib/pocketbaseErrors';
 	import { getWorkspaceApiAccessToken, resolveWorkspaceApiUrl } from '$lib/kainbu/api';
+	import { fetchAuthSettings, signupWithAuthSettings } from '$lib/kainbu/adminApi';
 	import { BRAND_NAME } from '$lib/kainbu/constants';
 
 	let loading = false;
@@ -15,6 +16,8 @@
 	let userCode = '';
 	let approved = false;
 	let approving = false;
+	let signupsEnabled = true;
+	let emailConfigured = false;
 
 	const formatCode = (raw: string) => {
 		const compact = raw.replace(/[^A-Za-z0-9]/g, '').toUpperCase().slice(0, 8);
@@ -31,6 +34,12 @@
 	onMount(() => {
 		const code = $page.url.searchParams.get('code');
 		if (code) userCode = formatCode(code);
+		void fetchAuthSettings()
+			.then((settings) => {
+				signupsEnabled = settings.signupsEnabled;
+				emailConfigured = settings.emailConfigured;
+			})
+			.catch(() => {});
 		void refreshSession();
 		const unsubscribe = pocketbase.authStore.onChange(() => {
 			void refreshSession();
@@ -46,12 +55,10 @@
 
 		try {
 			if (isSignUp) {
-				await pocketbase.collection('users').create({
-					email,
-					password,
-					passwordConfirm: password
-				});
-				infoMessage = 'Account created. Sign in, then authorize the CLI.';
+				const result = await signupWithAuthSettings(email, password);
+				infoMessage = result.requiresVerification
+					? 'Account created. Check your email before signing in to authorize the CLI.'
+					: 'Account created. Sign in, then authorize the CLI.';
 			} else {
 				await pocketbase.collection('users').authWithPassword(email, password);
 			}
@@ -61,6 +68,28 @@
 
 		authLoading = false;
 		await refreshSession();
+	};
+
+	const handlePasswordResetRequest = async (
+		event: CustomEvent<{ email: string }>
+	) => {
+		const email = event.detail.email.trim().toLowerCase();
+		if (!email) {
+			errorMessage = 'Enter your email before requesting a reset link.';
+			return;
+		}
+
+		authLoading = true;
+		errorMessage = '';
+		infoMessage = '';
+		try {
+			await pocketbase.collection('users').requestPasswordReset(email);
+			infoMessage = 'Password reset email sent if that account exists.';
+		} catch (error) {
+			errorMessage = formatPocketBaseError(error, 'Unable to send password reset email.');
+		} finally {
+			authLoading = false;
+		}
 	};
 
 	const approveCli = async () => {
@@ -112,9 +141,12 @@
 		<AuthView
 			loading={authLoading}
 			configured={isPocketBaseConfigured}
+			{signupsEnabled}
+			{emailConfigured}
 			{infoMessage}
 			{errorMessage}
 			on:submit={handleAuthSubmit}
+			on:resetPassword={handlePasswordResetRequest}
 		/>
 	{:else}
 		<section class="rounded-xl border border-app-border bg-app-surface p-5 shadow-kainbu-lg">

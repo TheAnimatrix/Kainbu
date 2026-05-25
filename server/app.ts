@@ -11,15 +11,21 @@ import { recordAiUsageEvent } from './ai-usage.js';
 import { getAuthenticatedUserId } from './pocketbase.js';
 import {
 	handleAdminGetAiSettings,
+	handleAdminGetAuthEmailSettings,
 	handleAdminGetModelSettings,
 	handleAdminListUsers,
 	handleAdminMe,
 	handleAdminPatchUser,
+	handleAdminCreateUser,
+	handleAdminResetUserPassword,
+	handleAdminPutAuthEmailSettings,
 	handleAdminPutAiSettings,
 	handleAdminPutModelSettings,
 	handleAdminUsageByModel,
 	handleAdminUsageByUser,
-	handleAdminUsageSummary
+	handleAdminUsageSummary,
+	handleAuthSignup,
+	handleGetAuthSettings
 } from './admin.js';
 import { loadAiModelCatalog } from './ai-models.js';
 import { getWorkspaceAiModels, handleWorkspaceAiRequest } from './workspace-ai.js';
@@ -102,6 +108,8 @@ app.get('/api/models', async (c) => {
 	c.header('Cache-Control', 'no-store');
 	return c.json(getWorkspaceAiModels());
 });
+app.get('/api/auth/settings', handleGetAuthSettings);
+app.post('/api/auth/signup', handleAuthSignup);
 
 const handleWorkspaceMutationError = (c: Context, error: unknown) => {
 	const { status, message } = toWorkspaceApiError(error);
@@ -497,13 +505,17 @@ app.post('/api/workspace/members/leave', async (c) => {
 app.get('/api/admin/me', handleAdminMe);
 app.get('/api/admin/settings/ai', handleAdminGetAiSettings);
 app.put('/api/admin/settings/ai', handleAdminPutAiSettings);
+app.get('/api/admin/settings/auth-email', handleAdminGetAuthEmailSettings);
+app.put('/api/admin/settings/auth-email', handleAdminPutAuthEmailSettings);
 app.get('/api/admin/settings/models', handleAdminGetModelSettings);
 app.put('/api/admin/settings/models', handleAdminPutModelSettings);
 app.get('/api/admin/usage/summary', handleAdminUsageSummary);
 app.get('/api/admin/usage/by-model', handleAdminUsageByModel);
 app.get('/api/admin/usage/by-user', handleAdminUsageByUser);
 app.get('/api/admin/users', handleAdminListUsers);
+app.post('/api/admin/users', handleAdminCreateUser);
 app.patch('/api/admin/users/:id', handleAdminPatchUser);
+app.post('/api/admin/users/:id/reset-password', handleAdminResetUserPassword);
 
 app.onError((error, c) => {
 	console.error('[api] unhandled error', error);

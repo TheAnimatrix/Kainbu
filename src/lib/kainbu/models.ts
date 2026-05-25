@@ -40,7 +40,7 @@ export const thinkingLevelLabel = (level: AiThinkingLevel) =>
 export const defaultThinkingLevelForModel = (modelConfig: AiModelConfig): AiThinkingLevel => {
 	const allowed = modelConfig.allowedThinkingLevels?.length
 		? modelConfig.allowedThinkingLevels
-		: ['none'];
+		: (['none'] satisfies AiThinkingLevel[]);
 	const preferred = modelConfig.defaultThinkingLevel;
 	if (preferred && allowed.includes(preferred)) return preferred;
 	if (modelConfig.thinking?.level && allowed.includes(modelConfig.thinking.level)) {

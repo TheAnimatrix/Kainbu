@@ -7,6 +7,8 @@
 
 	export let loading = false;
 	export let configured = true;
+	export let signupsEnabled = true;
+	export let emailConfigured = false;
 	export let infoMessage = '';
 	export let errorMessage = '';
 	export let theme: BackgroundTheme | undefined = undefined;
@@ -23,11 +25,20 @@
 
 	const dispatch = createEventDispatcher<{
 		submit: { email: string; password: string; isSignUp: boolean };
+		resetPassword: { email: string };
 	}>();
 
 	const submit = () => {
 		dispatch('submit', { email, password, isSignUp });
 	};
+
+	const requestPasswordReset = () => {
+		dispatch('resetPassword', { email });
+	};
+
+	$: if (!signupsEnabled && isSignUp) {
+		isSignUp = false;
+	}
 </script>
 
 <div
@@ -136,13 +147,29 @@
 			</button>
 		</form>
 
-		<div class="mt-4 text-center">
+		<div class="mt-4 flex flex-col items-center gap-2 text-center">
+			{#if emailConfigured && !isSignUp}
+				<button
+					type="button"
+					class="text-xs text-app-subtext transition hover:text-app-primary"
+					on:click={requestPasswordReset}
+				>
+					Forgot password?
+				</button>
+			{/if}
 			<button
 				type="button"
 				class="text-xs text-app-subtext transition hover:text-app-primary"
-				on:click={() => (isSignUp = !isSignUp)}
+				disabled={!signupsEnabled}
+				on:click={() => {
+					if (signupsEnabled) isSignUp = !isSignUp;
+				}}
 			>
-				{isSignUp ? 'Already have an account? Sign in' : "Don't have an account? Sign up"}
+				{#if signupsEnabled}
+					{isSignUp ? 'Already have an account? Sign in' : "Don't have an account? Sign up"}
+				{:else}
+					Signups are disabled. Sign in with an existing account.
+				{/if}
 			</button>
 		</div>
 	</div>
