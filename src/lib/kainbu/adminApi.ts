@@ -68,6 +68,19 @@ export type AdminUsageByUserRow = {
 	lastActivity: string;
 };
 
+export type AdminModelCatalog = import('$lib/kainbu/aiModelCatalog').AiModelCatalog;
+
+export type AdminUsageByModelRow = {
+	model: string;
+	requestCount: number;
+	promptTokens: number;
+	completionTokens: number;
+	cachedTokens: number;
+	costUsd: number;
+	costEventsWithValue: number;
+	lastActivity: string;
+};
+
 export type AdminUserRow = {
 	id: string;
 	email: string;
@@ -89,8 +102,22 @@ export const updateAdminAiSettings = (apiKey: string) =>
 		body: JSON.stringify({ apiKey })
 	});
 
+export const fetchAdminModelSettings = () =>
+	adminFetch<{ catalog: AdminModelCatalog }>('/api/admin/settings/models');
+
+export const updateAdminModelSettings = (catalog: AdminModelCatalog) =>
+	adminFetch<{ ok: boolean; catalog: AdminModelCatalog }>('/api/admin/settings/models', {
+		method: 'PUT',
+		body: JSON.stringify({ catalog })
+	});
+
 export const fetchAdminUsageSummary = (days = 30) =>
 	adminFetch<AdminUsageSummary>(`/api/admin/usage/summary?days=${days}`);
+
+export const fetchAdminUsageByModel = (days = 30) =>
+	adminFetch<{ days: number; models: AdminUsageByModelRow[] }>(
+		`/api/admin/usage/by-model?days=${days}`
+	);
 
 export const fetchAdminUsageByUser = (days = 30) =>
 	adminFetch<{ days: number; users: AdminUsageByUserRow[] }>(`/api/admin/usage/by-user?days=${days}`);

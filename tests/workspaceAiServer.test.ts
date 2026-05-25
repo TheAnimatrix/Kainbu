@@ -37,27 +37,24 @@ describe('workspace AI thinking config', () => {
 	const grokModel = DEFAULT_AI_MODEL_CONFIGS.find((entry) => entry.id === 'grok 0.1 build');
 	const geminiModel = DEFAULT_AI_MODEL_CONFIGS[0];
 
-	it('preserves model-specific reasoning fields when applying a level', () => {
-		expect(applyThinkingLevel(grokModel!, 'high')).toEqual({
-			...grokModel,
-			thinking: {
-				type: 'enabled',
-				budget_tokens: 8192,
-				temperature: 0.7,
-				level: 'high'
-			}
+	it('applies thinking budget for models that support reasoning', () => {
+		expect(applyThinkingLevel(grokModel!, 'high').thinking).toEqual({
+			type: 'enabled',
+			budget_tokens: 8192,
+			level: 'high'
 		});
 	});
 
-	it('adds reasoning config for models without defaults', () => {
-		expect(applyThinkingLevel(geminiModel, 'low')).toEqual({
-			...geminiModel,
-			thinking: {
-				type: 'enabled',
-				budget_tokens: 2048,
-				level: 'low'
-			}
+	it('adds reasoning config when the model allows the level', () => {
+		expect(applyThinkingLevel(grokModel!, 'low').thinking).toEqual({
+			type: 'enabled',
+			budget_tokens: 2048,
+			level: 'low'
 		});
+	});
+
+	it('falls back when the requested level is not allowed', () => {
+		expect(applyThinkingLevel(geminiModel, 'low').thinking).toBeNull();
 	});
 
 	it('clears reasoning when thinking is disabled', () => {
@@ -97,5 +94,18 @@ describe('workspace AI request validation', () => {
 				history: null
 			})
 		).toThrowError('history must be an array.');
+	});
+
+	it('rejects thinking levels not allowed for the model', () => {
+		const geminiModel = DEFAULT_AI_MODEL_CONFIGS[0];
+		expect(() =>
+			validateWorkspaceAiRequest({
+				projectId: 'project-1',
+				sessionId: 'session-1',
+				modelId: geminiModel.id,
+				thinkingLevel: 'max',
+				history: []
+			})
+		).toThrowError(/not allowed/);
 	});
 });

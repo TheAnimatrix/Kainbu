@@ -6,6 +6,7 @@
 	const links = [
 		{ href: '/admin', label: 'Overview', exact: true },
 		{ href: '/admin/ai', label: 'AI key' },
+		{ href: '/admin/models', label: 'Models' },
 		{ href: '/admin/usage', label: 'Usage' },
 		{ href: '/admin/users', label: 'Users' }
 	] as const;

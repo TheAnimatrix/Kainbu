@@ -1,5 +1,5 @@
 export type AiModelId = string;
-export type AiThinkingLevel = 'none' | 'low' | 'medium' | 'high';
+export type AiThinkingLevel = 'none' | 'low' | 'medium' | 'high' | 'xhigh' | 'max';
 
 export interface AiThinkingConfig {
 	type: 'enabled';
@@ -138,6 +138,8 @@ export interface AiModelConfig {
 	id: AiModelId;
 	model: string;
 	thinking: AiThinkingConfig | null;
+	allowedThinkingLevels: AiThinkingLevel[];
+	defaultThinkingLevel: AiThinkingLevel;
 }
 
 export interface CitationAnnotation {

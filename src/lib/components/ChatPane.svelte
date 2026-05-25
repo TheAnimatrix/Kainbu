@@ -24,6 +24,7 @@
 	import BrandMark from '$lib/components/BrandMark.svelte';
 	import { createId } from '$lib/kainbu/id';
 	import { getTagToneClasses } from '$lib/kainbu/tags';
+	import { thinkingLevelLabel } from '$lib/kainbu/models';
 	import type {
 		AiModelConfig,
 		AiModelId,
@@ -72,6 +73,12 @@
 	export let onRejectProposal: (proposalId: string) => void;
 	export let onAnswerQuestion: (questionId: string, optionId?: string, text?: string) => void;
 	export let onCollapseSidebar: (() => void) | null = null;
+
+	$: activeModel = modelOptions.find((entry) => entry.id === modelId) ?? modelOptions[0] ?? null;
+	$: thinkingChoices = activeModel?.allowedThinkingLevels?.length
+		? activeModel.allowedThinkingLevels
+		: (['none'] as const);
+	$: showThinkingSelect = thinkingChoices.some((level) => level !== 'none');
 
 	let fileInput: HTMLInputElement | null = null;
 	let historyViewport: HTMLDivElement | null = null;
@@ -1442,16 +1449,21 @@
 							{/each}
 						</select>
 
-						<select
-							class="rounded-md bg-transparent px-2 py-1.5 text-xs text-app-subtext outline-none transition hover:bg-app-element hover:text-app-text cursor-pointer"
-							value={thinkingLevel}
-							on:change={(event) => onThinkingLevelChange((event.currentTarget as HTMLSelectElement).value as import('$lib/kainbu/types').AiThinkingLevel)}
-						>
-							<option value="none">No thinking</option>
-							<option value="low">Think low</option>
-							<option value="medium">Think medium</option>
-							<option value="high">Think high</option>
-						</select>
+						{#if showThinkingSelect}
+							<select
+								class="rounded-md bg-transparent px-2 py-1.5 text-xs text-app-subtext outline-none transition hover:bg-app-element hover:text-app-text cursor-pointer"
+								value={thinkingLevel}
+								on:change={(event) =>
+									onThinkingLevelChange(
+										(event.currentTarget as HTMLSelectElement)
+											.value as import('$lib/kainbu/types').AiThinkingLevel
+									)}
+							>
+								{#each thinkingChoices as level}
+									<option value={level}>{thinkingLevelLabel(level)}</option>
+								{/each}
+							</select>
+						{/if}
 					</div>
 
 					<div class={`flex shrink-0 items-center gap-1.5 ${isMobileChrome ? 'pb-0.5' : 'pb-1'}`}>

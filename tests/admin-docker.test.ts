@@ -182,6 +182,30 @@ describe('Local Docker — admin usage', () => {
 		const byUser = await authJson('/api/admin/usage/by-user?days=30', adminToken);
 		expect(byUser.response.status).toBe(200);
 		expect(Array.isArray(byUser.body.users)).toBe(true);
+
+		const byModel = await authJson('/api/admin/usage/by-model?days=30', adminToken);
+		expect(byModel.response.status).toBe(200);
+		expect(Array.isArray(byModel.body.models)).toBe(true);
+	});
+});
+
+describe('Local Docker — admin model settings', () => {
+	it('GET and PUT model catalog', async () => {
+		const get = await authJson('/api/admin/settings/models', adminToken);
+		expect(get.response.status).toBe(200);
+		expect(get.body.catalog?.models?.length).toBeGreaterThan(0);
+
+		const catalog = get.body.catalog;
+		const put = await authJson('/api/admin/settings/models', adminToken, {
+			method: 'PUT',
+			body: JSON.stringify({ catalog })
+		});
+		expect(put.response.status).toBe(200);
+		expect(put.body.catalog?.defaultModelId).toBe(catalog.defaultModelId);
+
+		const models = await fetch(`${API}/api/models`).then((res) => res.json());
+		expect(Array.isArray(models)).toBe(true);
+		expect(models.length).toBeGreaterThan(0);
 	});
 });
 

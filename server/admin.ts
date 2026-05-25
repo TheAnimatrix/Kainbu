@@ -9,6 +9,12 @@ import {
 	maskApiKey,
 	requireAppAdmin
 } from './adminAuth.js';
+import {
+	invalidateAiModelCatalogCache,
+	loadAiModelCatalog,
+	saveAiModelCatalog
+} from './ai-models.js';
+import { normalizeAiModelCatalog } from '../src/lib/kainbu/aiModelCatalog.js';
 import { invalidateOpenRouterKeyCache } from './openrouter-key.js';
 import { getEnv } from './env.js';
 
@@ -304,6 +310,105 @@ export const handleAdminPatchUser = async (c: Context) => {
 				disabled: updated.disabled === true
 			}
 		});
+	} catch (error) {
+		const { status, message } = adminError(error);
+		return c.json({ error: message }, status as 401 | 403 | 500);
+	}
+};
+
+export const handleAdminGetModelSettings = async (c: Context) => {
+	try {
+		await requireAppAdmin(c.req.header('Authorization'));
+		const catalog = await loadAiModelCatalog();
+		return c.json({ catalog });
+	} catch (error) {
+		const { status, message } = adminError(error);
+		return c.json({ error: message }, status as 401 | 403 | 500);
+	}
+};
+
+export const handleAdminPutModelSettings = async (c: Context) => {
+	try {
+		await requireAppAdmin(c.req.header('Authorization'));
+		const body = (await c.req.json()) as { catalog?: unknown };
+		if (!body.catalog || typeof body.catalog !== 'object') {
+			return c.json({ error: 'catalog is required' }, 400);
+		}
+
+		const catalog = await saveAiModelCatalog(normalizeAiModelCatalog(body.catalog));
+		invalidateAiModelCatalogCache();
+		await loadAiModelCatalog();
+
+		return c.json({ ok: true, catalog });
+	} catch (error) {
+		const { status, message } = adminError(error);
+		return c.json({ error: message }, status as 401 | 403 | 500);
+	}
+};
+
+export const handleAdminUsageByModel = async (c: Context) => {
+	try {
+		await requireAppAdmin(c.req.header('Authorization'));
+		const days = parseDays(c.req.query('days'));
+		const pb = await createAdminPb();
+		const sinceMs = Date.now() - days * 24 * 60 * 60 * 1000;
+		const events = (await pb.collection('ai_usage_events').getFullList()).filter((event) =>
+			isUsageEventInWindow(event, sinceMs)
+		);
+
+		const byModel = new Map<
+			string,
+			{
+				model: string;
+				requestCount: number;
+				promptTokens: number;
+				completionTokens: number;
+				cachedTokens: number;
+				costUsd: number;
+				costEventsWithValue: number;
+				lastActivity: string;
+			}
+		>();
+
+		for (const event of events) {
+			const model = typeof event.model === 'string' && event.model.trim() ? event.model.trim() : '(unknown)';
+			const entry =
+				byModel.get(model) ||
+				({
+					model,
+					requestCount: 0,
+					promptTokens: 0,
+					completionTokens: 0,
+					cachedTokens: 0,
+					costUsd: 0,
+					costEventsWithValue: 0,
+					lastActivity: ''
+				} as const);
+
+			const mutable = { ...entry };
+			mutable.requestCount += 1;
+			mutable.promptTokens += Number(event.prompt_tokens) || 0;
+			mutable.completionTokens += Number(event.completion_tokens) || 0;
+			mutable.cachedTokens += Number(event.cached_tokens) || 0;
+			if (event.cost_usd != null && Number.isFinite(Number(event.cost_usd))) {
+				mutable.costUsd += Number(event.cost_usd);
+				mutable.costEventsWithValue += 1;
+			}
+			const created = typeof event.created === 'string' ? event.created : '';
+			if (!mutable.lastActivity || created > mutable.lastActivity) {
+				mutable.lastActivity = created;
+			}
+			byModel.set(model, mutable);
+		}
+
+		const models = [...byModel.values()].sort(
+			(left, right) =>
+				right.costUsd - left.costUsd ||
+				right.requestCount - left.requestCount ||
+				right.lastActivity.localeCompare(left.lastActivity)
+		);
+
+		return c.json({ days, models });
 	} catch (error) {
 		const { status, message } = adminError(error);
 		return c.json({ error: message }, status as 401 | 403 | 500);

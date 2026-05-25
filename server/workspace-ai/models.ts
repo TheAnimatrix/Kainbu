@@ -1,8 +1,11 @@
-import {
-	applyThinkingLevel,
-	DEFAULT_AI_MODEL_CONFIGS
-} from '../../src/lib/kainbu/models.js';
+import { applyThinkingLevel } from '../../src/lib/kainbu/models.js';
 import type { AiModelConfig } from './types.js';
+import {
+	assertThinkingLevelAllowed,
+	getEnabledModelConfigs,
+	loadAiModelCatalog,
+	resolveModelConfigById
+} from '../ai-models.js';
 
 export { applyThinkingLevel };
 
@@ -17,22 +20,25 @@ export class WorkspaceAiRequestError extends Error {
 
 const cloneModelConfig = (config: AiModelConfig): AiModelConfig => ({
 	...config,
+	allowedThinkingLevels: [...config.allowedThinkingLevels],
 	thinking: config.thinking ? structuredClone(config.thinking) : null
 });
 
-export const getWorkspaceAiModels = () => DEFAULT_AI_MODEL_CONFIGS.map(cloneModelConfig);
+export const getWorkspaceAiModels = () => getEnabledModelConfigs().map(cloneModelConfig);
 
-export const getDefaultWorkspaceAiModel = () => cloneModelConfig(DEFAULT_AI_MODEL_CONFIGS[0]);
+export const getDefaultWorkspaceAiModel = () => {
+	const models = getWorkspaceAiModels();
+	return models[0] ? cloneModelConfig(models[0]) : null;
+};
 
 export const resolveWorkspaceAiModel = (modelId: unknown) => {
 	if (typeof modelId !== 'string' || !modelId.trim()) {
 		throw new WorkspaceAiRequestError(400, 'modelId is required.');
 	}
 
-	const normalizedModelId = modelId.trim();
-	const config = DEFAULT_AI_MODEL_CONFIGS.find((entry) => entry.id === normalizedModelId);
+	const config = resolveModelConfigById(modelId.trim());
 	if (!config) {
-		throw new WorkspaceAiRequestError(400, `Unknown modelId "${normalizedModelId}".`);
+		throw new WorkspaceAiRequestError(400, `Unknown modelId "${modelId.trim()}".`);
 	}
 
 	return cloneModelConfig(config);
@@ -56,5 +62,17 @@ export const validateWorkspaceAiRequest = (request: unknown) => {
 		throw new WorkspaceAiRequestError(400, 'history must be an array.');
 	}
 
-	resolveWorkspaceAiModel(candidate.modelId);
+	const model = resolveWorkspaceAiModel(candidate.modelId);
+	if (candidate.thinkingLevel !== undefined) {
+		try {
+			assertThinkingLevelAllowed(model, candidate.thinkingLevel);
+		} catch (error) {
+			throw new WorkspaceAiRequestError(
+				400,
+				error instanceof Error ? error.message : 'Invalid thinkingLevel.'
+			);
+		}
+	}
 };
+
+export const ensureModelCatalogLoaded = () => loadAiModelCatalog();
