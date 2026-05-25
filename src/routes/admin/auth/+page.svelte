@@ -50,7 +50,7 @@
 		error = '';
 		message = '';
 		try {
-			await updateAdminAuthEmailSettings({
+			const saved = await updateAdminAuthEmailSettings({
 				signupsEnabled: form.signupsEnabled,
 				mailProvider: form.mailProvider,
 				appUrl: form.appUrl,
@@ -64,8 +64,20 @@
 			});
 			resendApiKey = '';
 			smtpPassword = '';
-			message = 'Auth and email settings saved.';
-			await load();
+			form = {
+				signupsEnabled: saved.signupsEnabled,
+				emailConfigured: saved.emailConfigured,
+				emailVerificationEnabled: saved.emailVerificationEnabled,
+				mailProvider: saved.mailProvider,
+				resendKeyHint: saved.resendKeyHint,
+				appUrl: saved.appUrl,
+				fromName: saved.fromName,
+				fromEmail: saved.fromEmail,
+				smtp: saved.smtp
+			};
+			message = saved.emailVerificationEnabled
+				? 'Auth and email settings saved. Email verification is ON.'
+				: 'Auth and email settings saved.';
 		} catch (saveError) {
 			error = saveError instanceof Error ? saveError.message : 'Unable to save settings';
 		} finally {

@@ -166,7 +166,7 @@ export const updateAdminAuthEmailSettings = (settings: {
 		authMethod: 'PLAIN' | 'LOGIN';
 	};
 }) =>
-	adminFetch<{ ok: boolean } & AuthSettings>('/api/admin/settings/auth-email', {
+	adminFetch<{ ok: boolean } & AdminAuthEmailSettings>('/api/admin/settings/auth-email', {
 		method: 'PUT',
 		body: JSON.stringify(settings)
 	});

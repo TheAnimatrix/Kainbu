@@ -1,5 +1,6 @@
 import type { Context } from 'hono';
 import { randomBytes } from 'crypto';
+import type PocketBase from 'pocketbase';
 import { createAdminPb, mapPocketBaseError } from './pocketbase.js';
 import {
 	APP_SETTINGS_SINGLETON,
@@ -51,10 +52,82 @@ const adminError = (error: unknown) => {
 	return mapped;
 };
 
+const AUTH_EMAIL_FIELD_NAMES = ['signups_enabled', 'mail_provider', 'resend_api_key'] as const;
+
+let authEmailSchemaReady = false;
+let authEmailSchemaRepair: Promise<void> | null = null;
+
+const settingsText = (record: Record<string, unknown> | null | undefined, name: string) => {
+	const value = record?.[name];
+	return typeof value === 'string' ? value.trim() : '';
+};
+
+const settingsRecordAsData = (record: unknown): Record<string, unknown> | null => {
+	if (!record || typeof record !== 'object') return null;
+	return record as Record<string, unknown>;
+};
+
+/** Migrations may no-op on some PB builds; repair schema via Collections API. */
+const ensureAuthEmailSettingsFields = async (pb: PocketBase) => {
+	if (authEmailSchemaReady) return;
+	if (authEmailSchemaRepair) {
+		await authEmailSchemaRepair;
+		return;
+	}
+
+	authEmailSchemaRepair = (async () => {
+		let collection = await pb.collections.getOne('app_settings');
+		const existing = () => new Set(collection.fields.map((field) => field.name));
+		const added: string[] = [];
+
+		if (!existing().has('signups_enabled')) {
+			await pb.collections.update(collection.id, {
+				fields: [...collection.fields, { name: 'signups_enabled', type: 'bool', required: false }]
+			});
+			added.push('signups_enabled');
+			collection = await pb.collections.getOne('app_settings');
+		}
+
+		if (!existing().has('mail_provider')) {
+			await pb.collections.update(collection.id, {
+				fields: [
+					...collection.fields,
+					{ name: 'mail_provider', type: 'text', required: false, max: 16 }
+				]
+			});
+			added.push('mail_provider');
+			collection = await pb.collections.getOne('app_settings');
+		}
+
+		if (!existing().has('resend_api_key')) {
+			await pb.collections.update(collection.id, {
+				fields: [
+					...collection.fields,
+					{ name: 'resend_api_key', type: 'text', required: false, max: 512 }
+				]
+			});
+			added.push('resend_api_key');
+		}
+
+		if (added.length) {
+			console.log(`[admin] Added missing app_settings fields: ${added.join(', ')}`);
+		}
+		authEmailSchemaReady = true;
+	})();
+
+	try {
+		await authEmailSchemaRepair;
+	} finally {
+		authEmailSchemaRepair = null;
+	}
+};
+
 const getSettingsRecord = async () => {
 	const pb = await createAdminPb();
+	await ensureAuthEmailSettingsFields(pb);
 	const rows = await pb.collection('app_settings').getFullList({
-		filter: `singleton = "${APP_SETTINGS_SINGLETON}"`
+		filter: `singleton = "${APP_SETTINGS_SINGLETON}"`,
+		fields: ['singleton', ...AUTH_EMAIL_FIELD_NAMES, 'openrouter_api_key', 'ai_models_json'].join(',')
 	});
 	return rows[0] ?? null;
 };
@@ -64,11 +137,21 @@ const normalizeMailProvider = (value: unknown): 'off' | 'smtp' | 'resend' => {
 	return normalized === 'smtp' || normalized === 'resend' ? normalized : 'off';
 };
 
-const isMailConfiguredRecord = (record: Record<string, unknown> | null | undefined) => {
+const isMailConfiguredRecord = (
+	record: Record<string, unknown> | null | undefined,
+	smtp?: Record<string, unknown>
+) => {
 	const provider = normalizeMailProvider(record?.mail_provider);
-	if (provider === 'smtp') return true;
+	if (provider === 'off') return false;
 	if (provider === 'resend') {
-		return Boolean(typeof record?.resend_api_key === 'string' && record.resend_api_key.trim());
+		return Boolean(settingsText(record, 'resend_api_key'));
+	}
+	if (provider === 'smtp') {
+		return (
+			smtp?.enabled === true &&
+			typeof smtp.host === 'string' &&
+			smtp.host.trim().length > 0
+		);
 	}
 	return false;
 };
@@ -83,8 +166,11 @@ const updateUserEmailAuthRule = async (emailConfigured: boolean) => {
 	});
 };
 
-const publicAuthSettingsFromRecord = (record: Record<string, unknown> | null | undefined) => {
-	const emailConfigured = isMailConfiguredRecord(record);
+const publicAuthSettingsFromRecord = (
+	record: Record<string, unknown> | null | undefined,
+	smtp?: Record<string, unknown>
+) => {
+	const emailConfigured = isMailConfiguredRecord(record, smtp);
 	return {
 		signupsEnabled: toBool(record?.signups_enabled, true),
 		emailConfigured,
@@ -97,8 +183,9 @@ const randomPassword = () =>
 
 const upsertSettingsRecord = async (data: Record<string, unknown>) => {
 	const pb = await createAdminPb();
+	await ensureAuthEmailSettingsFields(pb);
 	const existing = await getSettingsRecord();
-	if (existing) {
+	if (existing?.id) {
 		return pb.collection('app_settings').update(existing.id, data);
 	}
 	return pb.collection('app_settings').create({
@@ -111,8 +198,11 @@ const upsertSettingsRecord = async (data: Record<string, unknown>) => {
 
 export const handleGetAuthSettings = async (c: Context) => {
 	try {
-		const record = await getSettingsRecord();
-		return c.json(publicAuthSettingsFromRecord(record));
+		const record = settingsRecordAsData(await getSettingsRecord());
+		const pb = await createAdminPb();
+		const pbSettings = await pb.settings.getAll();
+		const smtp = (pbSettings.smtp || {}) as Record<string, unknown>;
+		return c.json(publicAuthSettingsFromRecord(record, smtp));
 	} catch (error) {
 		const { status, message } = adminError(error);
 		return c.json({ error: message }, status as 500);
@@ -121,8 +211,11 @@ export const handleGetAuthSettings = async (c: Context) => {
 
 export const handleAuthSignup = async (c: Context) => {
 	try {
-		const record = await getSettingsRecord();
-		const settings = publicAuthSettingsFromRecord(record);
+		const record = settingsRecordAsData(await getSettingsRecord());
+		const pb = await createAdminPb();
+		const pbSettings = await pb.settings.getAll();
+		const smtp = (pbSettings.smtp || {}) as Record<string, unknown>;
+		const settings = publicAuthSettingsFromRecord(record, smtp);
 		if (!settings.signupsEnabled) {
 			return c.json({ error: 'Signups are disabled.' }, 403);
 		}
@@ -134,7 +227,6 @@ export const handleAuthSignup = async (c: Context) => {
 			return c.json({ error: 'Email and password are required.' }, 400);
 		}
 
-		const pb = await createAdminPb();
 		const user = await pb.collection('users').create({
 			email,
 			emailVisibility: true,
@@ -210,33 +302,40 @@ export const handleAdminPutAiSettings = async (c: Context) => {
 	}
 };
 
+const buildAdminAuthEmailPayload = (
+	record: Record<string, unknown> | null,
+	pbSettings: { meta?: unknown; smtp?: unknown }
+) => {
+	const smtp = (pbSettings.smtp || {}) as Record<string, unknown>;
+	const meta = (pbSettings.meta || {}) as Record<string, unknown>;
+	const provider = normalizeMailProvider(record?.mail_provider);
+	const resendKey = settingsText(record, 'resend_api_key');
+
+	return {
+		...publicAuthSettingsFromRecord(record, smtp),
+		mailProvider: provider,
+		resendKeyHint: provider === 'resend' && resendKey ? maskApiKey(resendKey) : '',
+		appUrl: typeof meta.appURL === 'string' ? meta.appURL : '',
+		fromName: typeof meta.senderName === 'string' ? meta.senderName : '',
+		fromEmail: typeof meta.senderAddress === 'string' ? meta.senderAddress : '',
+		smtp: {
+			host: typeof smtp.host === 'string' ? smtp.host : '',
+			port: Number(smtp.port) || 587,
+			username: typeof smtp.username === 'string' ? smtp.username : '',
+			passwordHint: typeof smtp.password === 'string' && smtp.password ? 'configured' : '',
+			tls: smtp.tls === true,
+			authMethod: typeof smtp.authMethod === 'string' && smtp.authMethod ? smtp.authMethod : 'PLAIN'
+		}
+	};
+};
+
 export const handleAdminGetAuthEmailSettings = async (c: Context) => {
 	try {
 		await requireAppAdmin(c.req.header('Authorization'));
-		const record = await getSettingsRecord();
+		const record = settingsRecordAsData(await getSettingsRecord());
 		const pb = await createAdminPb();
 		const pbSettings = await pb.settings.getAll();
-		const provider = normalizeMailProvider(record?.mail_provider);
-		const smtp = (pbSettings.smtp || {}) as Record<string, unknown>;
-		const meta = (pbSettings.meta || {}) as Record<string, unknown>;
-		const resendKey = typeof record?.resend_api_key === 'string' ? record.resend_api_key.trim() : '';
-
-		return c.json({
-			...publicAuthSettingsFromRecord(record),
-			mailProvider: provider,
-			resendKeyHint: provider === 'resend' && resendKey ? maskApiKey(resendKey) : '',
-			appUrl: typeof meta.appURL === 'string' ? meta.appURL : '',
-			fromName: typeof meta.senderName === 'string' ? meta.senderName : '',
-			fromEmail: typeof meta.senderAddress === 'string' ? meta.senderAddress : '',
-			smtp: {
-				host: typeof smtp.host === 'string' ? smtp.host : '',
-				port: Number(smtp.port) || 587,
-				username: typeof smtp.username === 'string' ? smtp.username : '',
-				passwordHint: typeof smtp.password === 'string' && smtp.password ? 'configured' : '',
-				tls: smtp.tls === true,
-				authMethod: typeof smtp.authMethod === 'string' && smtp.authMethod ? smtp.authMethod : 'PLAIN'
-			}
-		});
+		return c.json(buildAdminAuthEmailPayload(record, pbSettings));
 	} catch (error) {
 		const { status, message } = adminError(error);
 		return c.json({ error: message }, status as 401 | 403 | 500);
@@ -275,7 +374,7 @@ export const handleAdminPutAuthEmailSettings = async (c: Context) => {
 			return c.json({ error: 'SMTP host is required.' }, 400);
 		}
 
-		const existing = await getSettingsRecord();
+		const existing = settingsRecordAsData(await getSettingsRecord());
 		const patch: Record<string, unknown> = {
 			signups_enabled: typeof body.signupsEnabled === 'boolean' ? body.signupsEnabled : true,
 			mail_provider: provider
@@ -284,11 +383,11 @@ export const handleAdminPutAuthEmailSettings = async (c: Context) => {
 			const nextKey =
 				typeof body.resendApiKey === 'string' && body.resendApiKey.trim()
 					? body.resendApiKey.trim()
-					: typeof existing?.resend_api_key === 'string'
-						? existing.resend_api_key
-						: '';
+					: settingsText(existing, 'resend_api_key');
 			if (!nextKey) return c.json({ error: 'Resend API key is required.' }, 400);
 			patch.resend_api_key = nextKey;
+		} else {
+			patch.resend_api_key = '';
 		}
 
 		const pb = await createAdminPb();
@@ -341,10 +440,26 @@ export const handleAdminPutAuthEmailSettings = async (c: Context) => {
 			});
 		}
 
-		await upsertSettingsRecord(patch);
-		const updated = await getSettingsRecord();
-		await updateUserEmailAuthRule(isMailConfiguredRecord(updated));
-		return c.json({ ok: true, ...publicAuthSettingsFromRecord(updated) });
+		const saved = await upsertSettingsRecord(patch);
+		const updated =
+			settingsRecordAsData(saved) ?? settingsRecordAsData(await getSettingsRecord());
+		const pbSettingsAfter = await pb.settings.getAll();
+		const smtpAfter = (pbSettingsAfter.smtp || {}) as Record<string, unknown>;
+		const emailConfigured = isMailConfiguredRecord(updated, smtpAfter);
+		await updateUserEmailAuthRule(emailConfigured);
+		if (provider === 'resend' && !settingsText(updated, 'resend_api_key')) {
+			console.error(
+				'[admin] auth-email save: mail_provider=resend but resend_api_key missing after upsert'
+			);
+			return c.json(
+				{
+					error:
+						'Resend API key did not persist. Restart the pocketbase service so migrations can run, then save again.'
+				},
+				500
+			);
+		}
+		return c.json({ ok: true, ...buildAdminAuthEmailPayload(updated, pbSettingsAfter) });
 	} catch (error) {
 		const { status, message } = adminError(error);
 		return c.json({ error: message }, status as 400 | 401 | 403 | 500);
