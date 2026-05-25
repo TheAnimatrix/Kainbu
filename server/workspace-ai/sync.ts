@@ -309,6 +309,24 @@ const relationId = (value: unknown) => {
     return "";
 };
 
+/** Map PocketBase board record ids to client ids (matches client persistence). */
+export const buildBoardClientIdByPbId = (boardRecords: Array<Record<string, unknown>>) =>
+    new Map(
+        boardRecords.map((record) => [
+            String(record.id),
+            String(record.client_id || record.id),
+        ])
+    );
+
+export const resolveBoardClientIdForRecord = (
+    record: Record<string, unknown>,
+    boardClientIdByPbId: Map<string, string>
+) => {
+    const boardPbId = relationId(record.board);
+    if (!boardPbId) return null;
+    return boardClientIdByPbId.get(boardPbId) || null;
+};
+
 const iso = (value: unknown) =>
     typeof value === "string" && value.trim() ? value : new Date().toISOString();
 
@@ -442,11 +460,16 @@ const loadProjectWorkspaceState = async (
             (left, right) =>
                 left.position - right.position || left.created_at.localeCompare(right.created_at)
         );
+    const boardClientIdByPbId = buildBoardClientIdByPbId(boardRecords);
     const columns = columnRecords.map((record) =>
-        mapPbColumn(record, projectId, String(record.board || "") || null)
+        mapPbColumn(
+            record,
+            projectId,
+            resolveBoardClientIdForRecord(record, boardClientIdByPbId)
+        )
     );
     const tasks = taskRecords.map((record) =>
-        mapPbTask(record, projectId, String(record.board || "") || null)
+        mapPbTask(record, projectId, resolveBoardClientIdForRecord(record, boardClientIdByPbId))
     );
 
     if (!boards.length) {
