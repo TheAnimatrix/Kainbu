@@ -17,6 +17,20 @@ const parseDays = (value: string | undefined, fallback = 30) => {
 	return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
 };
 
+/** PocketBase returns autodate values as "YYYY-MM-DD HH:mm:ss.sssZ". */
+const parseCreatedMs = (value: unknown) => {
+	if (typeof value !== 'string' || !value.trim()) return NaN;
+	const normalized = value.includes('T') ? value : value.replace(' ', 'T');
+	return Date.parse(normalized);
+};
+
+const isUsageEventInWindow = (event: { created?: string }, sinceMs: number) => {
+	const created = parseCreatedMs(event.created);
+	// Rows created before the autodate migration have no created field — include them.
+	if (!Number.isFinite(created)) return true;
+	return created >= sinceMs;
+};
+
 const adminError = (error: unknown) => {
 	const mapped = mapPocketBaseError(error);
 	if (mapped.message.includes('Missing collection context')) {
@@ -107,10 +121,9 @@ export const handleAdminUsageSummary = async (c: Context) => {
 		const days = parseDays(c.req.query('days'));
 		const pb = await createAdminPb();
 		const sinceMs = Date.now() - days * 24 * 60 * 60 * 1000;
-		const events = (await pb.collection('ai_usage_events').getFullList()).filter((event) => {
-			const created = typeof event.created === 'string' ? Date.parse(event.created) : NaN;
-			return Number.isFinite(created) && created >= sinceMs;
-		});
+		const events = (await pb.collection('ai_usage_events').getFullList()).filter((event) =>
+			isUsageEventInWindow(event, sinceMs)
+		);
 
 		let promptTokens = 0;
 		let completionTokens = 0;
@@ -153,10 +166,7 @@ export const handleAdminUsageByUser = async (c: Context) => {
 			await pb.collection('ai_usage_events').getFullList({
 				expand: 'user'
 			})
-		).filter((event) => {
-			const created = typeof event.created === 'string' ? Date.parse(event.created) : NaN;
-			return Number.isFinite(created) && created >= sinceMs;
-		});
+		).filter((event) => isUsageEventInWindow(event, sinceMs));
 
 		const byUser = new Map<
 			string,
