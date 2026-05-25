@@ -1,6 +1,8 @@
 <script lang="ts">
 	import { onDestroy, onMount } from 'svelte';
 	import { fade } from 'svelte/transition';
+	import { page } from '$app/stores';
+	import { replaceState } from '$app/navigation';
 	type AuthChangeEvent =
 		| 'INITIAL_SESSION'
 		| 'SIGNED_IN'
@@ -115,6 +117,13 @@
 		upsertUserSettings
 	} from '$lib/kainbu/persistence';
 	import { BOARD_PRESENCE_INTERVAL_MS } from '$lib/kainbu/boardPresence';
+	import {
+		buildWorkspaceSearchParams,
+		buildWorkspaceShareUrl,
+		parseWorkspaceUrl,
+		workspaceSearchParamsEqual,
+		type WorkspaceUrlState
+	} from '$lib/kainbu/workspaceUrl';
 	import { getProjectMemberDisplayName, getProjectMemberSearchText } from '$lib/kainbu/members';
 	import {
 		getProjectPage,
@@ -277,6 +286,8 @@
 	const focusOnMount = (node: HTMLElement) => { node.focus(); };
 
 	let boardPresenceTimer: ReturnType<typeof setInterval> | null = null;
+	let workspaceUrlReady = false;
+	let suppressWorkspaceUrlSync = false;
 	const boardSyncTimeouts = new Map<string, ReturnType<typeof setTimeout>>();
 	const pendingBoardSyncs = new Map<
 		string,
@@ -374,6 +385,21 @@
 		previewProposal?.target === 'kanban' ? previewProposal.originalKanbanData : undefined;
 	$: timedTasks = buildTimedTasks(projects);
 	$: visibleWorkspaceTab = isMobile ? mobileTab : desktopWorkspaceTab;
+	$: workspaceUrlState = parseWorkspaceUrl($page.url.searchParams);
+	$: workspaceShareUrl = buildWorkspaceShareUrl({
+		projectId: currentProjectId || undefined,
+		boardId: currentBoardId || undefined,
+		pageId: visibleWorkspaceTab === 'scratchpad' ? currentPageId : undefined,
+		view: visibleWorkspaceTab
+	});
+	$: presenceProjectId = workspaceUrlState.projectId || currentProjectId || '';
+	$: presenceBoardId =
+		workspaceUrlState.view === 'kanban' && workspaceUrlState.boardId
+			? workspaceUrlState.boardId
+			: currentBoardId;
+	$: if (workspaceUrlReady && user && projects.length) {
+		syncWorkspaceUrl();
+	}
 	$: projectRailActiveSurface =
 		visibleWorkspaceTab === 'scratchpad'
 			? 'page'
@@ -1567,35 +1593,40 @@
 		}
 	};
 
-	const isBoardWorkspaceVisible = () =>
-		Boolean(currentProject && visibleWorkspaceTab === 'kanban');
+	const isBoardWorkspaceVisible = () => {
+		const view = workspaceUrlState.view ?? visibleWorkspaceTab;
+		return Boolean(presenceProjectId && view === 'kanban');
+	};
 
 	const pingBoardPresence = async () => {
-		if (!user || !currentProject || document.visibilityState === 'hidden') return;
+		const activeUser = user;
+		if (!activeUser || document.visibilityState === 'hidden') return;
+
+		const projectId = presenceProjectId;
+		if (!projectId) return;
 
 		if (!isBoardWorkspaceVisible()) {
 			try {
-				await reportBoardPresence(currentProject.id, null);
+				await reportBoardPresence(projectId, null);
 			} catch (error) {
 				console.error(error);
 			}
 			return;
 		}
 
-		const boardId = currentProject.activeBoardId;
+		const boardId = presenceBoardId;
 		if (!boardId) return;
 
 		try {
-			await reportBoardPresence(currentProject.id, boardId);
+			await reportBoardPresence(projectId, boardId);
 			const presenceAt = Date.now();
-			const projectId = currentProject.id;
 			projects = projects.map((entry) =>
 				entry.id !== projectId
 					? entry
 					: {
 							...entry,
 							members: entry.members.map((member) =>
-								member.userId === user.id
+								member.userId === activeUser.id
 									? { ...member, viewingBoardId: boardId, presenceAt }
 									: member
 							)
@@ -1607,8 +1638,8 @@
 	};
 
 	$: boardPresenceKey =
-		user && currentProject?.id
-			? `${currentProject.id}::${currentProject.activeBoardId}::${isMobile ? mobileTab : desktopWorkspaceTab}`
+		user && presenceProjectId && isBoardWorkspaceVisible() && presenceBoardId
+			? `${presenceProjectId}::${presenceBoardId}`
 			: '';
 
 	$: if (boardPresenceKey) {
@@ -1801,6 +1832,7 @@
 			if (loadVersion === workspaceLoadVersion) {
 				workspaceHydrating = false;
 				profileLoaded = true;
+				hydrateWorkspaceFromUrl();
 			}
 		}
 	};
@@ -1958,6 +1990,66 @@
 		}
 
 		desktopWorkspaceTab = tab;
+	};
+
+	const getWorkspaceUrlStateFromApp = (): WorkspaceUrlState => ({
+		projectId: currentProjectId || undefined,
+		boardId: currentBoardId || undefined,
+		pageId: visibleWorkspaceTab === 'scratchpad' ? currentPageId : undefined,
+		view: visibleWorkspaceTab
+	});
+
+	const syncWorkspaceUrl = () => {
+		if (suppressWorkspaceUrlSync || typeof window === 'undefined' || !user || !workspaceUrlReady) {
+			return;
+		}
+
+		const nextParams = buildWorkspaceSearchParams(getWorkspaceUrlStateFromApp());
+		if (workspaceSearchParamsEqual($page.url.searchParams, nextParams)) return;
+
+		const pathname = $page.url.pathname || '/';
+		replaceState(`${pathname}?${nextParams.toString()}`, {});
+	};
+
+	const applyWorkspaceUrlState = (parsed: WorkspaceUrlState) => {
+		if (!parsed.projectId && !parsed.view && !parsed.boardId && !parsed.pageId) return;
+
+		if (parsed.view) {
+			if (isMobile) mobileTab = parsed.view;
+			else desktopWorkspaceTab = parsed.view;
+		}
+
+		if (!parsed.projectId) return;
+
+		const project = projects.find((entry) => entry.id === parsed.projectId);
+		if (!project) return;
+
+		let updater: ((entry: Project) => Project) | undefined;
+		if (parsed.view === 'kanban' && parsed.boardId) {
+			if (project.boards.some((board) => board.id === parsed.boardId)) {
+				updater = (entry) => setProjectActiveBoard(entry, parsed.boardId!);
+			}
+		} else if (parsed.view === 'scratchpad' && parsed.pageId) {
+			if (project.pages.some((page) => page.id === parsed.pageId)) {
+				updater = (entry) => setProjectActivePage(entry, parsed.pageId!);
+			}
+		}
+
+		suppressWorkspaceUrlSync = true;
+		selectProject(parsed.projectId, updater);
+		suppressWorkspaceUrlSync = false;
+	};
+
+	const hydrateWorkspaceFromUrl = () => {
+		if (typeof window === 'undefined') return;
+
+		const parsed = parseWorkspaceUrl($page.url.searchParams);
+		if (parsed.projectId || parsed.view || parsed.boardId || parsed.pageId) {
+			applyWorkspaceUrlState(parsed);
+		}
+
+		workspaceUrlReady = true;
+		syncWorkspaceUrl();
 	};
 
 	const clearProjectSyncState = (projectId: string) => {
@@ -3564,14 +3656,39 @@
 
 		try {
 			const importedProjects = await parseProjectsImport(file, currentUser.id);
-			const createdProjects: Project[] = [];
+			const createdProjectIds: string[] = [];
 
 			for (const importedProject of importedProjects) {
 				const createdProject = await runSyncAction(
-					() => createProjectRemote(currentUser.id, importedProject.name, importedProject),
+					() =>
+						createProjectRemote(currentUser.id, importedProject.name, importedProject, {
+							skipWorkspaceFetch: true
+						}),
 					`Unable to restore "${importedProject.name}" right now.`
 				);
-				createdProjects.push(createdProject);
+				createdProjectIds.push(createdProject.id);
+			}
+
+			const workspace = await fetchWorkspace(currentUser.id, { fresh: true });
+			const createdProjects = createdProjectIds
+				.map((projectId) => workspace.projects.find((project) => project.id === projectId))
+				.filter((project): project is Project => Boolean(project));
+
+			if (createdProjects.length !== createdProjectIds.length) {
+				throw new Error(
+					'Restore finished but some projects are missing from the workspace reload. Please refresh and try again.'
+				);
+			}
+
+			for (let index = 0; index < importedProjects.length; index += 1) {
+				const importedProject = importedProjects[index];
+				const restored = createdProjects.find((project) => project.id === createdProjectIds[index]);
+				if (!restored) continue;
+				if (restored.boards.length !== importedProject.boards.length) {
+					throw new Error(
+						`Restore for "${importedProject.name}" is incomplete (${restored.boards.length}/${importedProject.boards.length} boards). Please retry.`
+					);
+				}
 			}
 
 			if (createdProjects.length) {
@@ -3755,6 +3872,12 @@
 			return;
 		}
 
+		const handlePopState = () => {
+			suppressWorkspaceUrlSync = true;
+			applyWorkspaceUrlState(parseWorkspaceUrl($page.url.searchParams));
+			suppressWorkspaceUrlSync = false;
+		};
+
 		const handleVisibilityChange = () => {
 			if (document.visibilityState === 'visible') {
 				recoverWorkspaceIfNeeded();
@@ -3763,8 +3886,10 @@
 
 		stopVisibilityListener = () => {
 			document.removeEventListener('visibilitychange', handleVisibilityChange);
+			window.removeEventListener('popstate', handlePopState);
 		};
 		document.addEventListener('visibilitychange', handleVisibilityChange);
+		window.addEventListener('popstate', handlePopState);
 
 		stopAuthListener = pocketbase.authStore.onChange((_token, model) => {
 			const nextUser = toAuthUser(model);
@@ -4119,6 +4244,7 @@
 													projectId={currentProject.id}
 													activeBoardId={currentProject.activeBoardId}
 													currentUserId={user?.id || ''}
+													shareUrl={workspaceShareUrl}
 													data={kanbanData}
 													comparisonData={kanbanComparisonData}
 													{highlightedTaskIds}
@@ -4290,6 +4416,7 @@
 													projectId={currentProject.id}
 													activeBoardId={currentProject.activeBoardId}
 													currentUserId={user?.id || ''}
+													shareUrl={workspaceShareUrl}
 													data={kanbanData}
 													comparisonData={kanbanComparisonData}
 													{highlightedTaskIds}

@@ -1102,9 +1102,19 @@ const loadWorkspaceFromRemote = async (userId: string) => {
 	};
 };
 
-export const fetchWorkspace = async (userId: string) => {
-	const inflight = workspaceFetchByUser.get(userId);
-	if (inflight) return inflight;
+export const fetchWorkspace = async (
+	userId: string,
+	options?: {
+		/** Bypass in-flight dedupe so callers see writes that finished just before this fetch. */
+		fresh?: boolean;
+	}
+) => {
+	if (options?.fresh) {
+		workspaceFetchByUser.delete(userId);
+	} else {
+		const inflight = workspaceFetchByUser.get(userId);
+		if (inflight) return inflight;
+	}
 
 	const promise = loadWorkspaceFromRemote(userId).finally(() => {
 		if (workspaceFetchByUser.get(userId) === promise) {
@@ -1118,15 +1128,24 @@ export const fetchWorkspace = async (userId: string) => {
 export const createProject = async (
 	userId: string,
 	name = 'New Project',
-	seedProject?: Partial<Project>
+	seedProject?: Partial<Project>,
+	options?: {
+		/** Skip the post-create workspace reload (batch restore does one fresh fetch at the end). */
+		skipWorkspaceFetch?: boolean;
+	}
 ) => {
-	const seed = {
-		...normalizeProjectStructure(EMPTY_PROJECT(userId, name)),
-		...(seedProject || {}),
-		name: seedProject?.name || name,
+	const seedBase = normalizeProjectStructure(EMPTY_PROJECT(userId, name));
+	const seedInput = seedProject || {};
+	const seed = normalizeProjectStructure({
+		...seedBase,
+		...seedInput,
+		id: seedInput.id || seedBase.id,
+		name: seedInput.name || name,
 		ownerUserId: userId,
-		accessRole: 'owner' as const
-	};
+		accessRole: 'owner' as const,
+		boards: seedInput.boards?.length ? seedInput.boards : seedBase.boards,
+		pages: seedInput.pages?.length ? seedInput.pages : seedBase.pages
+	});
 	const normalizedSeed = normalizeProjectStructure(seed as Project);
 
 	const pb = getPb();
@@ -1190,9 +1209,20 @@ export const createProject = async (
 		normalizedSeed.aiSessions,
 		normalizedSeed.activeAiSessionId
 	);
-	await touchProjectLastOpened(normalizedSeed.id);
+	try {
+		await touchProjectLastOpened(normalizedSeed.id);
+	} catch (error) {
+		console.error('[kainbu] touchProjectLastOpened failed after createProject', {
+			projectId: normalizedSeed.id,
+			error
+		});
+	}
 
-	const workspace = await fetchWorkspace(userId);
+	if (options?.skipWorkspaceFetch) {
+		return normalizedSeed;
+	}
+
+	const workspace = await fetchWorkspace(userId, { fresh: true });
 	return workspace.projects.find((project) => project.id === normalizedSeed.id) || normalizedSeed;
 };
 
@@ -1432,12 +1462,39 @@ export const touchProjectLastOpened = async (projectId: string) => {
 };
 
 export const reportBoardPresence = async (projectId: string, boardId: string | null) => {
-	await invokeWorkspaceApi('/api/workspace/boards/presence', {
-		body: {
-			projectId,
-			boardId
+	const now = new Date().toISOString();
+	const normalizedBoardId = boardId?.trim() || '';
+
+	try {
+		await invokeWorkspaceApi('/api/workspace/boards/presence', {
+			body: {
+				projectId,
+				boardId: normalizedBoardId || null
+			}
+		});
+		return;
+	} catch (apiError) {
+		const pb = getPb();
+		const userId = pb.authStore.model?.id;
+		if (!userId) throw apiError;
+
+		try {
+			const membership = await pb.collection('project_memberships').getFirstListItem(
+				`user = "${pbEscapeFilter(userId)}" && project.client_id = "${pbEscapeFilter(projectId)}"`
+			);
+			await pb.collection('project_memberships').update(membership.id, {
+				last_opened_at: now,
+				viewing_board_client_id: normalizedBoardId,
+				presence_at: normalizedBoardId ? now : ''
+			});
+		} catch (directError) {
+			console.error('[kainbu] board presence API and direct PocketBase update failed', {
+				apiError,
+				directError
+			});
+			throw apiError;
 		}
-	});
+	}
 };
 
 export const setProjectPinned = async (projectId: string, pinned: boolean) => {
