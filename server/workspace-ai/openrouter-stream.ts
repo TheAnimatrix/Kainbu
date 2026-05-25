@@ -3,7 +3,7 @@ import {
     WORKSPACE_AI_PROMPT_CACHE_ENABLED,
     WORKSPACE_AI_STREAM_DELTA_THROTTLE_MS,
 } from "./constants.js";
-import { getEnv } from "../env.js";
+import { getOpenRouterApiKey } from "../openrouter-key.js";
 import { OpenRouterTools } from "./tools.js";
 
 export type OpenRouterMessage = Record<string, unknown>;
@@ -27,6 +27,7 @@ export type OpenRouterUsage = {
     promptTokens?: number;
     completionTokens?: number;
     cachedTokens?: number;
+    costUsd?: number;
 };
 
 const extractDeltaText = (delta: Record<string, unknown>) => {
@@ -60,6 +61,13 @@ export const extractUsageFromResponse = (response: unknown): OpenRouterUsage => 
             ? (record.prompt_tokens_details as Record<string, unknown>)
             : {};
 
+    const costRaw =
+        record.cost ??
+        record.total_cost ??
+        (record.cost_details && typeof record.cost_details === "object"
+            ? (record.cost_details as Record<string, unknown>).total
+            : undefined);
+
     return {
         promptTokens: typeof record.prompt_tokens === "number" ? record.prompt_tokens : undefined,
         completionTokens:
@@ -70,6 +78,7 @@ export const extractUsageFromResponse = (response: unknown): OpenRouterUsage => 
                 : typeof record.cache_read_input_tokens === "number"
                   ? record.cache_read_input_tokens
                   : undefined,
+        costUsd: typeof costRaw === "number" ? costRaw : undefined,
     };
 };
 
@@ -128,7 +137,7 @@ export const fetchCompletionJson = async (
     modelConfig: { model: string; thinking: unknown },
     options: { promptCache?: boolean } = {}
 ): Promise<{ response: unknown; usage: OpenRouterUsage }> => {
-    const apiKey = getEnv("OPENROUTER_API_KEY", "");
+    const apiKey = await getOpenRouterApiKey();
     if (!apiKey) throw new Error("Missing OPENROUTER_API_KEY");
 
     const body = buildRequestBody(messages, modelConfig, {
@@ -159,7 +168,7 @@ export const fetchCompletionStream = async (
     handlers: StreamDeltaHandlers = {},
     options: { promptCache?: boolean } = {}
 ): Promise<StreamedCompletion> => {
-    const apiKey = getEnv("OPENROUTER_API_KEY", "");
+    const apiKey = await getOpenRouterApiKey();
     if (!apiKey) throw new Error("Missing OPENROUTER_API_KEY");
 
     const body = buildRequestBody(messages, modelConfig, {

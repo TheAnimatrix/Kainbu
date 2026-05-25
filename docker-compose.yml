@@ -32,6 +32,7 @@ services:
       POCKETBASE_ADMIN_EMAIL: ${POCKETBASE_ADMIN_EMAIL:-admin@kainbu.local}
       POCKETBASE_ADMIN_PASSWORD: ${POCKETBASE_ADMIN_PASSWORD:-kainbu-admin-change-me}
       OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+      KAINBU_ADMIN_EMAILS: ${KAINBU_ADMIN_EMAILS:-admin-e2e@kainbu.test}
       KAINBU_PUBLIC_URL: ${KAINBU_PUBLIC_URL:-http://localhost:3000}
       HOST: 0.0.0.0
       PORT: '8788'

@@ -13,7 +13,9 @@ const config = {
 				config.include.push('../global.d.ts');
 			}
 		},
-		adapter: adapter()
+		adapter: adapter({
+			fallback: 'index.html'
+		})
 	}
 };
 

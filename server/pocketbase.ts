@@ -69,6 +69,10 @@ export const getAuthenticatedUserId = async (authorization: string | undefined) 
 		throw new Error('Unauthorized');
 	}
 
+	if (model.disabled === true) {
+		throw new Error('Unauthorized');
+	}
+
 	return model.id;
 };
 
@@ -76,5 +80,8 @@ export const getAuthenticatedUser = async (authorization: string | undefined) =>
 	const userId = await getAuthenticatedUserId(authorization);
 	const pb = createUserPb(authorization?.startsWith('Bearer ') ? authorization.slice(7).trim() : undefined);
 	const record = await pb.collection('users').getOne(userId);
+	if (record.disabled === true) {
+		throw new Error('Unauthorized');
+	}
 	return record;
 };

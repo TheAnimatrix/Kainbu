@@ -19,15 +19,20 @@ docker compose -f docker-compose.yml -f docker-compose.local.yml up --build
 
 3. Open the app at [http://localhost:3000](http://localhost:3000). PocketBase admin: [http://localhost:8090/_/](http://localhost:8090/_/) (or [http://localhost:3000/pb/_/](http://localhost:3000/pb/_/) via nginx).
 
-4. Verify signup, username, board create, and API auth:
+4. Verify signup, username, board create, API auth, and admin panel:
 
 ```bash
 npm run test:local-docker
+npm run test:admin-docker
 ```
+
+Set `KAINBU_ADMIN_EMAILS` in `.env` (default in compose: `admin-e2e@kainbu.test`). Sign in with that email, then open [http://localhost:3000/admin](http://localhost:3000/admin) or use **Settings → Open admin**.
 
 Fresh database (wipes data): `docker compose -f docker-compose.yml -f docker-compose.local.yml down -v` then `up --build` again.
 
 **Dokploy:** see [deploy/DOKPLOY.md](deploy/DOKPLOY.md) — use `docker-compose.yml` only (no host port bindings).
+
+**Cursor agent skills:** [`.cursor/skills/README.md`](.cursor/skills/README.md) — Dokploy deploy, testing, release checklist, PocketBase debugging.
 
 **PocketBase URLs in Docker**
 
@@ -44,7 +49,7 @@ Services:
 | Service | Port | Role |
 |---------|------|------|
 | `web` | 3000 | Static UI (nginx) |
-| `api` | 8788 | Hono API (AI, workspace mutations, CLI auth) |
+| `api` | 8789 (host, local override) / 8788 (in Docker network) | Hono API (AI, workspace mutations, CLI auth) |
 | `pocketbase` | 8090 | Auth, database, file storage, realtime |
 
 Schema is applied from [`pocketbase/pb_migrations/`](pocketbase/pb_migrations/) on PocketBase startup.
@@ -77,7 +82,8 @@ kainbu login
 | `VITE_POCKETBASE_URL` | Optional browser PocketBase URL (Docker default: same-origin `/pb`) |
 | `POCKETBASE_URL` | Server PocketBase URL (`http://pocketbase:8090` in compose) |
 | `POCKETBASE_ADMIN_EMAIL` / `POCKETBASE_ADMIN_PASSWORD` | API admin access to PocketBase |
-| `OPENROUTER_API_KEY` | Workspace AI routes |
+| `OPENROUTER_API_KEY` | Workspace AI routes (fallback if not set in admin UI) |
+| `KAINBU_ADMIN_EMAILS` | Comma-separated emails with in-app admin access (`/admin`) |
 | `KAINBU_PUBLIC_URL` | CLI device-login links |
 
 ## Android (optional)

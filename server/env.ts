@@ -6,6 +6,24 @@ import { fileURLToPath } from 'node:url';
 const serverDir = path.dirname(fileURLToPath(import.meta.url));
 const projectRoot = path.resolve(serverDir, '..');
 
+const preserveDockerEnv = () => {
+	const snapshot = {
+		KAINBU_ADMIN_EMAILS: process.env.KAINBU_ADMIN_EMAILS,
+		KAINBU_PUBLIC_URL: process.env.KAINBU_PUBLIC_URL,
+		OPENROUTER_API_KEY: process.env.OPENROUTER_API_KEY,
+		POCKETBASE_URL: process.env.POCKETBASE_URL
+	};
+	return () => {
+		for (const [key, value] of Object.entries(snapshot)) {
+			if (value !== undefined && value !== '') {
+				process.env[key] = value;
+			}
+		}
+	};
+};
+
+const restoreDockerEnv = preserveDockerEnv();
+
 const envPaths = [...new Set([
 	path.resolve(process.cwd(), '.env'),
 	path.resolve(process.cwd(), '.env.local'),
@@ -15,11 +33,13 @@ const envPaths = [...new Set([
 	path.resolve(serverDir, '.env.local')
 ])];
 
-const loadedEnvFiles = envPaths.filter((envPath) => existsSync(envPath));
+export const loadedEnvFiles = envPaths.filter((envPath) => existsSync(envPath));
 
+// Preserve platform/Docker-provided env; only fill in missing keys from files.
 for (const envPath of loadedEnvFiles) {
-	loadEnv({ path: envPath, override: true, quiet: true });
+	loadEnv({ path: envPath, override: false, quiet: true });
 }
+restoreDockerEnv();
 
 const normalizeEnvValue = (value: string | undefined, fallback = '') =>
 	(value || fallback)

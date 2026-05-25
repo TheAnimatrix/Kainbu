@@ -27,6 +27,8 @@ import {
     fetchCompletionStream,
     type OpenRouterMessage,
 } from "./openrouter-stream.js";
+import { getAuthenticatedUserId } from "../pocketbase.js";
+import { recordAiUsageEvent } from "../ai-usage.js";
 import {
     createToolRunCounters,
     executeWorkspaceTool,
@@ -133,6 +135,7 @@ export const handleWorkspaceAiRequest = async (
     validateWorkspaceAiRequest(req);
     const requestId = randomUUID();
     const startedAt = Date.now();
+    const userId = await getAuthenticatedUserId(auth);
     const log = (message: string, data?: unknown) => {
         if (data !== undefined) {
             console.log(`[WorkspaceAI][${requestId}] ${message}`, data);
@@ -236,6 +239,14 @@ export const handleWorkspaceAiRequest = async (
             });
             if (usage.cachedTokens) lastCacheUsage = usage.cachedTokens;
             log("OpenRouter usage", { turn: turns, ...usage });
+            void recordAiUsageEvent({
+                userId,
+                projectClientId: req.projectId,
+                model: modelConfig.model,
+                requestId,
+                usage,
+                source: "workspace-ai",
+            });
 
             const choice = getCompletionChoice(response);
             const message = getCompletionMessage(choice);

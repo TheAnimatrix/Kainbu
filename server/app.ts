@@ -1,9 +1,23 @@
+import { randomUUID } from 'crypto';
 import { cors } from 'hono/cors';
 import { Hono, type Context } from 'hono';
 import type { AiWorkspaceRequest, AiWorkspaceStreamEvent } from '../src/lib/kainbu/types.js';
 import type { BackgroundTheme } from '../src/lib/kainbu/types.js';
 import { DEFAULT_AI_MODEL_CONFIGS } from '../src/lib/kainbu/models.js';
 import { getEnv } from './env.js';
+import { getOpenRouterApiKey } from './openrouter-key.js';
+import { extractUsageFromResponse } from './workspace-ai/openrouter-stream.js';
+import { recordAiUsageEvent } from './ai-usage.js';
+import { getAuthenticatedUserId } from './pocketbase.js';
+import {
+	handleAdminGetAiSettings,
+	handleAdminListUsers,
+	handleAdminMe,
+	handleAdminPatchUser,
+	handleAdminPutAiSettings,
+	handleAdminUsageByUser,
+	handleAdminUsageSummary
+} from './admin.js';
 import { getWorkspaceAiModels, handleWorkspaceAiRequest } from './workspace-ai.js';
 import {
 	handleCliDeviceApprove,
@@ -71,7 +85,7 @@ app.use(
 	cors({
 		origin: '*',
 		allowHeaders: ['Authorization', 'Content-Type'],
-		allowMethods: ['GET', 'POST', 'OPTIONS']
+		allowMethods: ['GET', 'POST', 'PUT', 'PATCH', 'OPTIONS']
 	})
 );
 
@@ -88,8 +102,12 @@ const handleWorkspaceMutationError = (c: Context, error: unknown) => {
 
 const methodNotAllowed = (c: Context) => c.json(methodNotAllowedPayload, 405);
 
-const generateSessionTitle = async (userMessage: string, assistantReply: string) => {
-	const apiKey = getEnv('OPENROUTER_API_KEY', '');
+const generateSessionTitle = async (
+	userMessage: string,
+	assistantReply: string,
+	options: { userId?: string; requestId?: string } = {}
+) => {
+	const apiKey = await getOpenRouterApiKey();
 	if (!apiKey) throw new Error('Missing OPENROUTER_API_KEY');
 
 	const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
@@ -117,18 +135,30 @@ const generateSessionTitle = async (userMessage: string, assistantReply: string)
 		throw new Error(`OpenRouter error: ${await response.text()}`);
 	}
 
-	const data = (await response.json()) as {
+	const data = await response.json();
+	if (options.userId) {
+		void recordAiUsageEvent({
+			userId: options.userId,
+			model: UTILITY_AI_MODEL,
+			requestId: options.requestId,
+			usage: extractUsageFromResponse(data),
+			source: 'title-gen'
+		});
+	}
+
+	const parsed = data as {
 		choices?: Array<{ message?: { content?: string } }>;
 	};
-	return normalizeUtilityModelText(data.choices?.[0]?.message?.content || '');
+	return normalizeUtilityModelText(parsed.choices?.[0]?.message?.content || '');
 };
 
 const generateTaskTitle = async (
 	title: string,
 	description: string,
-	columnTitle: string
+	columnTitle: string,
+	options: { userId?: string; requestId?: string } = {}
 ) => {
-	const apiKey = getEnv('OPENROUTER_API_KEY', '');
+	const apiKey = await getOpenRouterApiKey();
 	if (!apiKey) throw new Error('Missing OPENROUTER_API_KEY');
 
 	const contextLines = [`Current title: ${title}`];
@@ -157,10 +187,21 @@ const generateTaskTitle = async (
 		throw new Error(`OpenRouter error: ${await response.text()}`);
 	}
 
-	const data = (await response.json()) as {
+	const data = await response.json();
+	if (options.userId) {
+		void recordAiUsageEvent({
+			userId: options.userId,
+			model: UTILITY_AI_MODEL,
+			requestId: options.requestId,
+			usage: extractUsageFromResponse(data),
+			source: 'title-gen'
+		});
+	}
+
+	const parsed = data as {
 		choices?: Array<{ message?: { content?: string } }>;
 	};
-	return normalizeUtilityModelText(data.choices?.[0]?.message?.content || '');
+	return normalizeUtilityModelText(parsed.choices?.[0]?.message?.content || '');
 };
 
 app.post('/api/workspace-ai', async (c) => {
@@ -251,7 +292,11 @@ app.post('/api/workspace-ai/session-title', async (c) => {
 			return c.json({ error: 'userMessage is required' }, 400);
 		}
 
-		const title = await generateSessionTitle(userMessage, assistantReply);
+		const userId = await getAuthenticatedUserId(c.req.header('Authorization'));
+		const title = await generateSessionTitle(userMessage, assistantReply, {
+			userId,
+			requestId: randomUUID()
+		});
 		if (!title || title.length > 60) {
 			return c.json({ title: '' });
 		}
@@ -283,7 +328,11 @@ app.post('/api/workspace-ai/task-title', async (c) => {
 			return c.json({ error: 'title is required' }, 400);
 		}
 
-		const rewritten = await generateTaskTitle(title, description, columnTitle);
+		const userId = await getAuthenticatedUserId(c.req.header('Authorization'));
+		const rewritten = await generateTaskTitle(title, description, columnTitle, {
+			userId,
+			requestId: randomUUID()
+		});
 		if (!rewritten) {
 			return c.json({ error: 'AI did not return a rewritten title.' }, 502);
 		}
@@ -434,6 +483,14 @@ app.post('/api/workspace/members/leave', async (c) => {
 		return handleWorkspaceMutationError(c, error);
 	}
 });
+
+app.get('/api/admin/me', handleAdminMe);
+app.get('/api/admin/settings/ai', handleAdminGetAiSettings);
+app.put('/api/admin/settings/ai', handleAdminPutAiSettings);
+app.get('/api/admin/usage/summary', handleAdminUsageSummary);
+app.get('/api/admin/usage/by-user', handleAdminUsageByUser);
+app.get('/api/admin/users', handleAdminListUsers);
+app.patch('/api/admin/users/:id', handleAdminPatchUser);
 
 app.post('/api/cli/device/start', handleCliDeviceStart);
 app.post('/api/cli/device/poll', handleCliDevicePoll);

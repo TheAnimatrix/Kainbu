@@ -1,5 +1,7 @@
 # Kainbu on Dokploy
 
+**Agents:** use the project skill [`.cursor/skills/kainbu-dokploy/SKILL.md`](../.cursor/skills/kainbu-dokploy/SKILL.md) (workflows, env pitfalls, prod tests). Human operators can stay in this file.
+
 ## Why host port 3000 must not be published
 
 Dokploy’s panel uses **host port 3000**. Do **not** map `3000:80` (or any host port) on the `web` service. Traefik reaches containers on the internal Docker network.

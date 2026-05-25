@@ -1,6 +1,8 @@
 <script lang="ts">
+	import { onMount } from 'svelte';
 	import { Check, ImageUp, RefreshCcw, Trash2 } from 'lucide-svelte';
 	import AccountIdentityForm from '$lib/components/AccountIdentityForm.svelte';
+	import { fetchAdminMe } from '$lib/kainbu/adminApi';
 	import {
 		BACKGROUND_GRADIENT_OPTIONS,
 		BACKGROUND_SOLID_OPTIONS,
@@ -40,6 +42,16 @@
 
 	let personalUploadInput: HTMLInputElement | null = null;
 	let boardUploadInput: HTMLInputElement | null = null;
+	let showAdminLink = false;
+
+	onMount(async () => {
+		try {
+			const me = await fetchAdminMe();
+			showAdminLink = me.isAdmin;
+		} catch {
+			showAdminLink = false;
+		}
+	});
 
 	const gradientTheme = (id: string): BackgroundTheme => ({
 		kind: 'gradient',
@@ -98,6 +110,20 @@
 
 		{#if section === 'account'}
 			<div class="grid gap-5">
+				{#if showAdminLink}
+					<div class="flex items-center justify-between gap-3 border border-app-border/40 bg-app-surface/30 px-3 py-2">
+						<div>
+							<p class="text-xs font-medium text-app-text">Admin panel</p>
+							<p class="text-xs text-app-subtext">Manage users, AI key, and usage.</p>
+						</div>
+						<a
+							href="/admin"
+							class="rounded-md bg-app-primary px-3 py-1.5 text-xs font-medium text-white hover:bg-app-primary-hover"
+						>
+							Open admin
+						</a>
+					</div>
+				{/if}
 				<div>
 					<AccountIdentityForm
 						heading="Username"
