@@ -39,8 +39,13 @@ export const syncAdminFlag = async (record: RecordModel): Promise<RecordModel> =
 		return record;
 	}
 
-	const pb = await createAdminPb();
-	return pb.collection('users').update(record.id, { is_admin: true });
+	try {
+		const pb = await createAdminPb();
+		return await pb.collection('users').update(record.id, { is_admin: true });
+	} catch {
+		// Parallel admin requests may race on the same update; allowlist still grants access.
+		return record;
+	}
 };
 
 export const requireAppAdmin = async (authorization: string | undefined): Promise<RecordModel> => {

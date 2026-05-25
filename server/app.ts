@@ -492,6 +492,12 @@ app.get('/api/admin/usage/by-user', handleAdminUsageByUser);
 app.get('/api/admin/users', handleAdminListUsers);
 app.patch('/api/admin/users/:id', handleAdminPatchUser);
 
+app.onError((error, c) => {
+	console.error('[api] unhandled error', error);
+	const { status, message } = toWorkspaceApiError(error);
+	return c.json({ error: message }, status as 400 | 401 | 403 | 404 | 409 | 500);
+});
+
 app.post('/api/cli/device/start', handleCliDeviceStart);
 app.post('/api/cli/device/poll', handleCliDevicePoll);
 app.post('/api/cli/device/exchange', handleCliDeviceExchange);

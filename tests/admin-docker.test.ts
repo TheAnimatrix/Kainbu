@@ -104,6 +104,25 @@ describe('Local Docker — admin auth', () => {
 	});
 });
 
+describe('Local Docker — admin concurrency', () => {
+	it('parallel overview requests all return 200', async () => {
+		const paths = [
+			'/api/admin/usage/summary?days=30',
+			'/api/admin/users?page=1',
+			'/api/admin/settings/ai'
+		];
+
+		for (let round = 0; round < 5; round += 1) {
+			const results = await Promise.all(
+				paths.map((path) => authJson(path, adminToken))
+			);
+			for (const { response } of results) {
+				expect(response.status).toBe(200);
+			}
+		}
+	});
+});
+
 describe('Local Docker — admin AI settings', () => {
 	it('PUT then GET masks stored API key', async () => {
 		const put = await authJson('/api/admin/settings/ai', adminToken, {
