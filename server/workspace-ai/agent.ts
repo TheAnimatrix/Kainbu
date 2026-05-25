@@ -27,6 +27,7 @@ import {
     fetchCompletionStream,
     type OpenRouterMessage,
 } from "./openrouter-stream.js";
+import { buildHistoryMessages } from "./history-messages.js";
 import { getAuthenticatedUserId } from "../pocketbase.js";
 import { recordAiUsageEvent } from "../ai-usage.js";
 import {
@@ -209,12 +210,8 @@ export const handleWorkspaceAiRequest = async (
     });
 
     const queuedCardsContext = buildQueuedTaskCardsContext(req.scope);
-    const lastUserIndex = [...req.history].map((m, i) => ({ m, i })).reverse().find((entry) => entry.m.role === "user")?.i;
-    const historyMessages: OpenRouterMessage[] = req.history.map((m, index) => {
-        if (m.role !== "user" || !queuedCardsContext || index !== lastUserIndex) {
-            return { role: m.role, content: m.text };
-        }
-        return { role: m.role, content: `${m.text}\n\n${queuedCardsContext}`.trim() };
+    const historyMessages = buildHistoryMessages(req.history, {
+        ...(queuedCardsContext ? { queuedCardsContext } : {}),
     });
 
     let messages: OpenRouterMessage[] = [
@@ -257,6 +254,7 @@ export const handleWorkspaceAiRequest = async (
             if (toolCalls.length > 0) {
                 messages.push(message);
                 const toolNames: string[] = [];
+                const toolLimitHints: string[] = [];
 
                 for (const call of toolCalls) {
                     const name =
@@ -307,6 +305,19 @@ export const handleWorkspaceAiRequest = async (
                         truncate(result, 180)
                     );
 
+                    try {
+                        const parsed = JSON.parse(result) as { hint?: string; ok?: boolean };
+                        if (
+                            parsed.hint &&
+                            (parsed.ok === false ||
+                                /next tool round|split|continue/i.test(parsed.hint))
+                        ) {
+                            toolLimitHints.push(`${name}: ${parsed.hint}`);
+                        }
+                    } catch {
+                        // ignore non-JSON tool results
+                    }
+
                     messages.push({
                         role: "tool",
                         tool_call_id: call.id,
@@ -317,10 +328,13 @@ export const handleWorkspaceAiRequest = async (
                 const reasoningNote = accumulatedReasoning
                     ? ` Reasoning snapshot: ${accumulatedReasoning.slice(0, 200)}`
                     : "";
+                const continueNote = toolLimitHints.length
+                    ? ` Continue in the next tool round: ${toolLimitHints.join(" ")}`
+                    : "";
                 appendInternalTurnNote(
                     messages,
                     turns,
-                    `Completed tools: ${toolNames.join(", ") || "none"}.${reasoningNote}`
+                    `Completed tools: ${toolNames.join(", ") || "none"}.${continueNote}${reasoningNote}`
                 );
                 accumulatedReasoning = "";
                 continue;

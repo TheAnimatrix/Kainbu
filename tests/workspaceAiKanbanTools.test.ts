@@ -3,13 +3,18 @@ import os from 'os';
 import path from 'path';
 import { describe, expect, it } from 'vitest';
 import {
+	addColumn,
 	addTasks,
 	buildBoardRefIndex,
+	bulkUpdateTasks,
 	deleteTasks,
+	listBoardColumns,
 	listBoardTasks,
 	resolveColumnRef,
 	resolveTaskRef,
-	updateTask
+	updateColumn,
+	updateTask,
+	validateToneColor
 } from '../server/workspace-ai/kanban-ops';
 import {
 	buildStaticSystemPrompt,
@@ -260,7 +265,120 @@ describe('workspace AI kanban tools', () => {
 	it('static prompt is stable and mentions privacy rules', () => {
 		const prompt = buildStaticSystemPrompt();
 		expect(prompt).toContain('Never show refs or UUIDs');
+		expect(prompt).toContain('bulk_update_tasks');
+		expect(prompt).toContain('tone:blue');
 		expect(prompt).not.toMatch(/[0-9a-f]{8}-[0-9a-f]{4}/);
+	});
+
+	it('validateToneColor accepts tone values and rejects unknown', () => {
+		expect(validateToneColor('tone:red').ok).toBe(true);
+		expect(validateToneColor('purple').ok).toBe(false);
+		expect(validateToneColor(null, { allowClear: true }).ok).toBe(true);
+	});
+
+	it('update_task sets checkbox and color', async () => {
+		const workspace = await makeWorkspace(sampleKanban);
+		const result = await updateTask(workspace, 'T1', {
+			hasCheckbox: true,
+			checked: true,
+			color: 'tone:blue'
+		});
+		expect(result.ok).toBe(true);
+		const task = workspace.board.kanbanData[0].tasks.find((entry) => entry.id === 'task-1');
+		expect(task?.hasCheckbox).toBe(true);
+		expect(task?.checked).toBe(true);
+		expect(task?.color).toBe('tone:blue');
+	});
+
+	it('bulk_update_tasks updates multiple tasks', async () => {
+		const workspace = await makeWorkspace(sampleKanban);
+		const result = await bulkUpdateTasks(workspace, [
+			{ taskRef: 'T1', hasCheckbox: true },
+			{ taskRef: 'T2', color: 'tone:green' }
+		]);
+		expect(result.ok).toBe(true);
+		if (!result.ok) return;
+		expect(result.updatedCount).toBe(2);
+		const t1 = workspace.board.kanbanData[0].tasks.find((entry) => entry.id === 'task-1');
+		const t2 = workspace.board.kanbanData[0].tasks.find((entry) => entry.id === 'task-2');
+		expect(t1?.hasCheckbox).toBe(true);
+		expect(t2?.color).toBe('tone:green');
+	});
+
+	it('add_column appends and returns columnRef', async () => {
+		const workspace = await makeWorkspace(sampleKanban);
+		const result = await addColumn(workspace, 'Review', { color: 'tone:indigo' });
+		expect(result.ok).toBe(true);
+		if (!result.ok) return;
+		expect(workspace.board.kanbanData).toHaveLength(3);
+		expect(workspace.board.kanbanData[2].title).toBe('Review');
+		expect(workspace.board.kanbanData[2].color).toBe('tone:indigo');
+		expect(result.columnRef).toBe('C3');
+	});
+
+	it('update_column changes title and clears color', async () => {
+		const kanban: KanbanData = [
+			{
+				id: 'col-1',
+				title: 'Old',
+				width: 268,
+				color: 'tone:red',
+				tasks: []
+			}
+		];
+		const workspace = await makeWorkspace(kanban);
+		const result = await updateColumn(workspace, 'C1', { title: 'Renamed', color: null });
+		expect(result.ok).toBe(true);
+		expect(workspace.board.kanbanData[0].title).toBe('Renamed');
+		expect(workspace.board.kanbanData[0].color).toBeUndefined();
+	});
+
+	it('add_tasks with tasks[] drafts sets metadata on create', async () => {
+		const workspace = await makeWorkspace(sampleKanban);
+		const result = await addTasks(workspace, 'C1', [], undefined, [
+			{ title: 'Check me', hasCheckbox: true, color: 'tone:amber' },
+			{ title: 'Plain' }
+		]);
+		expect(result.ok).toBe(true);
+		const added = workspace.board.kanbanData[0].tasks.slice(-2);
+		expect(added[0].title).toBe('Check me');
+		expect(added[0].hasCheckbox).toBe(true);
+		expect(added[0].color).toBe('tone:amber');
+		expect(added[1].title).toBe('Plain');
+	});
+
+	it('list tools expose color and checkbox state', () => {
+		const kanban: KanbanData = [
+			{
+				id: 'col-1',
+				title: 'Todo',
+				width: 268,
+				color: 'tone:blue',
+				tasks: [
+					{
+						id: 'task-1',
+						title: 'One',
+						description: 'Details',
+						tags: [],
+						hasCheckbox: true,
+						checked: true,
+						color: 'tone:red'
+					}
+				]
+			}
+		];
+		const refs = buildBoardRefIndex(kanban, 'Main');
+		const columns = listBoardColumns(kanban, refs);
+		const tasks = listBoardTasks(kanban, refs, 'C1');
+		expect(columns.ok).toBe(true);
+		if (!columns.ok) return;
+		expect(columns.columns?.[0]?.color).toBe('tone:blue');
+		expect(tasks.ok).toBe(true);
+		if (!tasks.ok) return;
+		expect(tasks.tasks?.[0]?.color).toBe('tone:red');
+		expect(tasks.tasks?.[0]?.hasCheckbox).toBe(true);
+		expect(tasks.tasks?.[0]?.checked).toBe(true);
+		expect(tasks.tasks?.[0]?.description).toBe('Details');
 	});
 });
 

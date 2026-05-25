@@ -5,14 +5,127 @@ import {
     purgeTaskLinks,
     removeTaskReferenceFromMarkdown,
 } from "../../src/lib/kainbu/taskLinks.js";
+import { TAG_COLORS } from "../../src/lib/kainbu/constants.js";
 import {
     WORKSPACE_AI_ADD_TASKS_MAX_TITLES,
     WORKSPACE_AI_BOARD_LIST_TASKS_DEFAULT_LIMIT,
+    WORKSPACE_AI_BULK_UPDATE_TASKS_MAX,
     WORKSPACE_AI_DELETE_TASKS_MAX_REFS,
     WORKSPACE_AI_UPDATE_TASK_MAX_CHARS,
 } from "./constants.js";
 import type { MaterializedWorkspace } from "./sync.js";
 import { serializeKanbanDocument } from "./sync.js";
+
+const DEFAULT_COLUMN_WIDTH = 268;
+
+const VALID_TONE_COLORS = new Set<string>(TAG_COLORS.map((entry) => entry.value));
+
+export type TaskUpdateFields = {
+    title?: string;
+    description?: string;
+    color?: string | null;
+    hasCheckbox?: boolean;
+    checked?: boolean;
+};
+
+export type TaskDraft = {
+    title: string;
+    description?: string;
+    color?: string;
+    hasCheckbox?: boolean;
+    checked?: boolean;
+};
+
+export const validateToneColor = (
+    value: unknown,
+    options?: { allowClear?: boolean }
+): { ok: true; color?: string } | { ok: false; error: string } => {
+    if (value === null || value === undefined) {
+        return options?.allowClear ? { ok: true, color: undefined } : { ok: false, error: "Color is required." };
+    }
+    if (value === "") {
+        return options?.allowClear ? { ok: true, color: undefined } : { ok: false, error: "Color is required." };
+    }
+    const trimmed = trimString(value);
+    if (!trimmed) {
+        return options?.allowClear ? { ok: true, color: undefined } : { ok: false, error: "Color is required." };
+    }
+    if (!VALID_TONE_COLORS.has(trimmed)) {
+        return {
+            ok: false,
+            error: `Invalid color "${trimmed}". Use tone:red, tone:orange, tone:amber, tone:green, tone:emerald, tone:teal, tone:cyan, tone:blue, tone:indigo, tone:violet, tone:purple, tone:fuchsia, tone:pink, or tone:rose.`,
+        };
+    }
+    return { ok: true, color: trimmed };
+};
+
+export const parseTaskUpdateFields = (
+    raw: Record<string, unknown>
+): { ok: true; fields: TaskUpdateFields } | { ok: false; error: string } => {
+    const fields: TaskUpdateFields = {};
+
+    if (typeof raw.title === "string") fields.title = raw.title;
+    if (typeof raw.description === "string") fields.description = raw.description;
+    if ("color" in raw) {
+        if (raw.color === null || raw.color === "") {
+            fields.color = null;
+        } else {
+            const colorResult = validateToneColor(raw.color);
+            if (!colorResult.ok) return colorResult;
+            fields.color = colorResult.color;
+        }
+    }
+    if (typeof raw.hasCheckbox === "boolean") fields.hasCheckbox = raw.hasCheckbox;
+    if (typeof raw.checked === "boolean") fields.checked = raw.checked;
+
+    if (
+        fields.title === undefined &&
+        fields.description === undefined &&
+        fields.color === undefined &&
+        fields.hasCheckbox === undefined &&
+        fields.checked === undefined
+    ) {
+        return { ok: false, error: "Provide at least one field to update." };
+    }
+
+    return { ok: true, fields };
+};
+
+const applyTaskUpdateFields = (task: Task, fields: TaskUpdateFields): Task => {
+    let next: Task = { ...task };
+
+    if (fields.title !== undefined) next.title = trimString(fields.title);
+    if (fields.description !== undefined) next.description = String(fields.description);
+
+    if (fields.color !== undefined) {
+        if (fields.color === null) {
+            const { color: _removed, ...withoutColor } = next;
+            next = withoutColor as Task;
+        } else {
+            next = { ...next, color: fields.color };
+        }
+    }
+
+    if (fields.hasCheckbox !== undefined) {
+        if (fields.hasCheckbox) {
+            next = { ...next, hasCheckbox: true };
+        } else {
+            const { hasCheckbox: _hc, checked: _c, ...withoutCheckbox } = next;
+            next = withoutCheckbox as Task;
+        }
+    }
+
+    if (fields.checked !== undefined) {
+        if (fields.checked) {
+            next = { ...next, hasCheckbox: true, checked: true };
+        } else {
+            const { checked: _c, ...withoutChecked } = next;
+            next = withoutChecked as Task;
+        }
+    }
+
+    return next;
+};
 
 export type ToolResultPayload =
     | {
@@ -20,8 +133,22 @@ export type ToolResultPayload =
           taskIds?: string[];
           taskRefs?: string[];
           message?: string;
-          columns?: Array<{ ref: string; title: string; taskCount: number }>;
-          tasks?: Array<{ ref: string; title: string; description?: string }>;
+          columnRef?: string;
+          columns?: Array<{
+              ref: string;
+              title: string;
+              taskCount: number;
+              color?: string;
+          }>;
+          tasks?: Array<{
+              ref: string;
+              title: string;
+              description?: string;
+              color?: string;
+              hasCheckbox?: boolean;
+              checked?: boolean;
+          }>;
+          updatedCount?: number;
           hasMore?: boolean;
           nextOffset?: number;
       }
@@ -145,6 +272,7 @@ export const listBoardColumns = (kanban: KanbanData, refs: BoardRefMap): ToolRes
         ref: refs.columnIdToRef.get(column.id) || column.id,
         title: column.title,
         taskCount: column.tasks.length,
+        ...(column.color ? { color: column.color } : {}),
     })),
 });
 
@@ -185,6 +313,9 @@ export const listBoardTasks = (
             ref: refs.taskIdToRef.get(task.id) || task.id,
             title: task.title,
             ...(task.description ? { description: task.description } : {}),
+            ...(task.color ? { color: task.color } : {}),
+            ...(task.hasCheckbox ? { hasCheckbox: true } : {}),
+            ...(task.checked ? { checked: true } : {}),
         })),
         hasMore,
         ...(hasMore ? { nextOffset: safeOffset + slice.length } : {}),
@@ -263,11 +394,71 @@ const stripRemovedTaskFromBoard = (kanban: KanbanData, removedTaskId: string): K
     }));
 };
 
+export const parseTaskDraftsFromArgs = (
+    args: Record<string, unknown>
+): { ok: true; drafts?: TaskDraft[] } | { ok: false; error: string } => {
+    if (!Array.isArray(args.tasks) || args.tasks.length === 0) {
+        return { ok: true, drafts: undefined };
+    }
+
+    const drafts: TaskDraft[] = [];
+    for (const entry of args.tasks) {
+        if (!entry || typeof entry !== "object") continue;
+        const raw = entry as Record<string, unknown>;
+        const title = trimString(raw.title);
+        if (!title) return { ok: false, error: "Each task in tasks[] needs a non-empty title." };
+
+        const draft: TaskDraft = { title };
+        if (typeof raw.description === "string") draft.description = raw.description;
+        if (raw.color !== undefined) {
+            const colorResult = validateToneColor(raw.color);
+            if (!colorResult.ok) return colorResult;
+            draft.color = colorResult.color;
+        }
+        if (typeof raw.hasCheckbox === "boolean") draft.hasCheckbox = raw.hasCheckbox;
+        if (typeof raw.checked === "boolean") draft.checked = raw.checked;
+        drafts.push(draft);
+    }
+
+    if (!drafts.length) {
+        return { ok: false, error: "tasks array must contain at least one valid entry." };
+    }
+
+    return { ok: true, drafts };
+};
+
+const buildTaskFromDraft = (draft: TaskDraft, id: string): Task | { error: string } => {
+    const title = trimString(draft.title);
+    if (!title) return { error: "Each task needs a non-empty title." };
+
+    if (draft.color !== undefined) {
+        const colorResult = validateToneColor(draft.color);
+        if (!colorResult.ok) return { error: colorResult.error };
+    }
+
+    const task: Task = {
+        id,
+        title,
+        description: typeof draft.description === "string" ? draft.description : "",
+        tags: [],
+    };
+
+    if (draft.color) task.color = draft.color;
+    if (draft.hasCheckbox) task.hasCheckbox = true;
+    if (draft.checked) {
+        task.hasCheckbox = true;
+        task.checked = true;
+    }
+
+    return task;
+};
+
 export const addTasks = async (
     workspace: MaterializedWorkspace,
     columnRef: string,
     titles: string[],
-    scope?: AiScopeHint
+    scope?: AiScopeHint,
+    drafts?: TaskDraft[]
 ): Promise<ToolResultPayload> => {
     const refs = workspace.boardRefs;
     const columnId = resolveColumnRef(refs, columnRef);
@@ -296,47 +487,67 @@ export const addTasks = async (
     });
     if (boundCheck) return boundCheck;
 
-    const normalizedTitles = titles
-        .map((title) => trimString(title))
-        .filter(Boolean)
-        .slice(0, WORKSPACE_AI_ADD_TASKS_MAX_TITLES);
+    const useDrafts = drafts && drafts.length > 0;
+    const itemCount = useDrafts ? drafts.length : titles.length;
 
-    if (!normalizedTitles.length) {
-        return { ok: false, error: "Provide at least one non-empty task title." };
-    }
-
-    if (titles.length > WORKSPACE_AI_ADD_TASKS_MAX_TITLES) {
+    if (itemCount > WORKSPACE_AI_ADD_TASKS_MAX_TITLES) {
         return {
             ok: false,
-            error: `Max ${WORKSPACE_AI_ADD_TASKS_MAX_TITLES} titles per add_tasks call.`,
-            hint: "Split into multiple calls or ask the user to send fewer tasks.",
+            error: `Max ${WORKSPACE_AI_ADD_TASKS_MAX_TITLES} tasks per add_tasks call.`,
+            hint: "Call add_tasks again in the next tool round to add more tasks.",
         };
     }
 
     const newTaskIds: string[] = [];
     const newTaskRefs: string[] = [];
     let nextTaskNum = refs.taskRefToId.size;
+    const builtTasks: Task[] = [];
 
-    const nextKanban = kanban.map((entry) => {
-        if (entry.id !== columnId) return entry;
-        const newTasks: Task[] = normalizedTitles.map((title) => {
+    if (useDrafts) {
+        for (const draft of drafts!.slice(0, WORKSPACE_AI_ADD_TASKS_MAX_TITLES)) {
             const id = randomUUID();
-            newTaskIds.push(id);
-            nextTaskNum += 1;
-            const taskRef = `T${nextTaskNum}`;
-            newTaskRefs.push(taskRef);
-            refs.taskRefToId.set(taskRef, id);
-            refs.taskIdToRef.set(id, taskRef);
-            return {
-                id,
+            const built = buildTaskFromDraft(draft, id);
+            if ("error" in built) return { ok: false, error: built.error };
+            builtTasks.push(built);
+        }
+    } else {
+        const normalizedTitles = titles
+            .map((title) => trimString(title))
+            .filter(Boolean)
+            .slice(0, WORKSPACE_AI_ADD_TASKS_MAX_TITLES);
+
+        if (!normalizedTitles.length) {
+            return { ok: false, error: "Provide at least one non-empty task title or tasks array." };
+        }
+
+        for (const title of normalizedTitles) {
+            builtTasks.push({
+                id: randomUUID(),
                 title,
                 description: "",
                 tags: [],
-            };
-        });
+            });
+        }
+    }
+
+    if (!builtTasks.length) {
+        return { ok: false, error: "Provide at least one non-empty task title or tasks array." };
+    }
+
+    for (const task of builtTasks) {
+        newTaskIds.push(task.id);
+        nextTaskNum += 1;
+        const taskRef = `T${nextTaskNum}`;
+        newTaskRefs.push(taskRef);
+        refs.taskRefToId.set(taskRef, task.id);
+        refs.taskIdToRef.set(task.id, taskRef);
+    }
+
+    const nextKanban = kanban.map((entry) => {
+        if (entry.id !== columnId) return entry;
         return {
             ...entry,
-            tasks: [...entry.tasks, ...newTasks],
+            tasks: [...entry.tasks, ...builtTasks],
         };
     });
 
@@ -355,7 +566,7 @@ export const addTasks = async (
 export const updateTask = async (
     workspace: MaterializedWorkspace,
     taskRef: string,
-    fields: { title?: string; description?: string },
+    fields: TaskUpdateFields,
     scope?: AiScopeHint
 ): Promise<ToolResultPayload> => {
     const refs = workspace.boardRefs;
@@ -386,15 +597,20 @@ export const updateTask = async (
     });
     if (boundCheck) return boundCheck;
 
-    const nextTitle = fields.title !== undefined ? trimString(fields.title) : located.task.title;
-    const nextDescription =
-        fields.description !== undefined ? String(fields.description) : located.task.description || "";
+    if (fields.color !== undefined && fields.color !== null) {
+        const colorResult = validateToneColor(fields.color);
+        if (!colorResult.ok) return colorResult;
+        fields = { ...fields, color: colorResult.color };
+    }
 
-    if (!nextTitle) {
+    const updatedTask = applyTaskUpdateFields(located.task, fields);
+
+    if (!updatedTask.title) {
         return { ok: false, error: "Task title cannot be empty." };
     }
 
-    const combinedLength = nextTitle.length + nextDescription.length;
+    const combinedLength =
+        updatedTask.title.length + (updatedTask.description || "").length;
     if (combinedLength > WORKSPACE_AI_UPDATE_TASK_MAX_CHARS) {
         return {
             ok: false,
@@ -407,13 +623,7 @@ export const updateTask = async (
         return {
             ...column,
             tasks: column.tasks.map((task) =>
-                task.id === taskId
-                    ? {
-                          ...task,
-                          title: nextTitle,
-                          description: nextDescription,
-                      }
-                    : task
+                task.id === taskId ? updatedTask : task
             ),
         };
     });
@@ -423,7 +633,298 @@ export const updateTask = async (
     refreshBoardRefs(workspace);
     workspace.board.editCallCount += 1;
 
-    return { ok: true, message: `Updated task "${nextTitle}".` };
+    return { ok: true, message: `Updated task "${updatedTask.title}".` };
+};
+
+export const bulkUpdateTasks = async (
+    workspace: MaterializedWorkspace,
+    updates: Array<{ taskRef: string } & TaskUpdateFields>,
+    scope?: AiScopeHint
+): Promise<ToolResultPayload> => {
+    const refs = workspace.boardRefs;
+    const kanban = workspace.board.kanbanData;
+
+    if (!updates.length) {
+        return { ok: false, error: "Provide at least one update entry." };
+    }
+
+    if (updates.length > WORKSPACE_AI_BULK_UPDATE_TASKS_MAX) {
+        return {
+            ok: false,
+            error: `Max ${WORKSPACE_AI_BULK_UPDATE_TASKS_MAX} updates per bulk_update_tasks call.`,
+            hint: "Call bulk_update_tasks again in the next tool round for remaining tasks.",
+        };
+    }
+
+    const resolved: Array<{
+        taskRef: string;
+        taskId: string;
+        columnId: string;
+        fields: TaskUpdateFields;
+        title: string;
+    }> = [];
+    const unknownRefs: string[] = [];
+    const fieldErrors: string[] = [];
+
+    for (const entry of updates) {
+        const taskRef = trimString(entry.taskRef);
+        if (!taskRef) continue;
+
+        const parsed = parseTaskUpdateFields(entry as Record<string, unknown>);
+        if (!parsed.ok) {
+            fieldErrors.push(`${taskRef}: ${parsed.error}`);
+            continue;
+        }
+
+        const taskId = resolveTaskRef(refs, taskRef);
+        if (!taskId) {
+            unknownRefs.push(taskRef);
+            continue;
+        }
+
+        const located = findTask(kanban, taskId);
+        if (!located) {
+            unknownRefs.push(taskRef);
+            continue;
+        }
+
+        const boundCheck = assertBoundTargetForBoardMutation(scope, refs, kanban, {
+            taskIds: [taskId],
+            columnIds: [located.column.id],
+        });
+        if (boundCheck) return boundCheck;
+
+        resolved.push({
+            taskRef,
+            taskId,
+            columnId: located.column.id,
+            fields: parsed.fields,
+            title: located.task.title,
+        });
+    }
+
+    if (fieldErrors.length && !resolved.length) {
+        return { ok: false, error: fieldErrors.join("; ") };
+    }
+
+    if (!resolved.length) {
+        return {
+            ok: false,
+            error: "No matching tasks found for the given updates.",
+            taskRefs: [...refs.taskRefToId.keys()].slice(0, 50),
+            ...(unknownRefs.length ? { hint: `Unknown refs: ${unknownRefs.join(", ")}` } : {}),
+        };
+    }
+
+    let nextKanban = kanban;
+    const updatedRefs: string[] = [];
+
+    for (const entry of resolved) {
+        if (entry.fields.color !== undefined && entry.fields.color !== null) {
+            const colorResult = validateToneColor(entry.fields.color);
+            if (!colorResult.ok) {
+                fieldErrors.push(`${entry.taskRef}: ${colorResult.error}`);
+                continue;
+            }
+            entry.fields = { ...entry.fields, color: colorResult.color };
+        }
+
+        const located = findTask(nextKanban, entry.taskId);
+        if (!located) continue;
+
+        const updatedTask = applyTaskUpdateFields(located.task, entry.fields);
+        if (!updatedTask.title) {
+            fieldErrors.push(`${entry.taskRef}: Task title cannot be empty.`);
+            continue;
+        }
+
+        const combinedLength =
+            updatedTask.title.length + (updatedTask.description || "").length;
+        if (combinedLength > WORKSPACE_AI_UPDATE_TASK_MAX_CHARS) {
+            fieldErrors.push(
+                `${entry.taskRef}: Title and description combined must be under ${WORKSPACE_AI_UPDATE_TASK_MAX_CHARS} characters.`
+            );
+            continue;
+        }
+
+        nextKanban = nextKanban.map((column) => {
+            if (column.id !== entry.columnId) return column;
+            return {
+                ...column,
+                tasks: column.tasks.map((task) =>
+                    task.id === entry.taskId ? updatedTask : task
+                ),
+            };
+        });
+        updatedRefs.push(entry.taskRef);
+    }
+
+    if (!updatedRefs.length) {
+        return {
+            ok: false,
+            error: fieldErrors.join("; ") || "No tasks were updated.",
+        };
+    }
+
+    workspace.board.mutationCount += updatedRefs.length;
+    await persistBoardKanbanData(workspace, nextKanban);
+    refreshBoardRefs(workspace);
+    workspace.board.editCallCount += 1;
+
+    const hints: string[] = [];
+    if (unknownRefs.length) hints.push(`Skipped unknown refs: ${unknownRefs.join(", ")}`);
+    if (fieldErrors.length) hints.push(fieldErrors.join("; "));
+
+    return {
+        ok: true,
+        taskRefs: updatedRefs,
+        updatedCount: updatedRefs.length,
+        message: `Updated ${updatedRefs.length} task(s).`,
+        ...(hints.length ? { hint: hints.join(" ") } : {}),
+    };
+};
+
+export const addColumn = async (
+    workspace: MaterializedWorkspace,
+    title: string,
+    options?: { color?: string; afterColumnRef?: string },
+    scope?: AiScopeHint
+): Promise<ToolResultPayload> => {
+    const refs = workspace.boardRefs;
+    const kanban = workspace.board.kanbanData;
+    const nextTitle = trimString(title);
+
+    if (!nextTitle) {
+        return { ok: false, error: "Column title cannot be empty." };
+    }
+
+    let columnColor: string | undefined;
+    if (options?.color !== undefined) {
+        const colorResult = validateToneColor(options.color);
+        if (!colorResult.ok) return colorResult;
+        columnColor = colorResult.color;
+    }
+
+    const newColumnId = randomUUID();
+    const newColumn = {
+        id: newColumnId,
+        title: nextTitle,
+        width: DEFAULT_COLUMN_WIDTH,
+        tasks: [] as Task[],
+        ...(columnColor ? { color: columnColor } : {}),
+    };
+
+    let insertIndex = kanban.length;
+    if (options?.afterColumnRef) {
+        const afterId = resolveColumnRef(refs, options.afterColumnRef);
+        if (!afterId) {
+            return {
+                ok: false,
+                error: `Unknown column ref "${options.afterColumnRef}".`,
+                columnRefs: [...refs.columnRefToId.keys()],
+            };
+        }
+        const afterIndex = kanban.findIndex((column) => column.id === afterId);
+        if (afterIndex !== -1) insertIndex = afterIndex + 1;
+    }
+
+    const bound = scope?.boundTarget;
+    if (bound?.locked && bound.kind === "task") {
+        return {
+            ok: false,
+            error: "Cannot add columns while scoped to a single task.",
+            hint: "Ask the user to widen scope for board structure changes.",
+        };
+    }
+
+    const nextKanban = [...kanban];
+    nextKanban.splice(insertIndex, 0, newColumn);
+
+    workspace.board.mutationCount += 1;
+    await persistBoardKanbanData(workspace, nextKanban);
+    refreshBoardRefs(workspace);
+    workspace.board.editCallCount += 1;
+
+    const columnRef = workspace.boardRefs.columnIdToRef.get(newColumnId) || newColumnId;
+
+    return {
+        ok: true,
+        columnRef,
+        message: `Added column "${nextTitle}".`,
+    };
+};
+
+export const updateColumn = async (
+    workspace: MaterializedWorkspace,
+    columnRef: string,
+    fields: { title?: string; color?: string | null },
+    scope?: AiScopeHint
+): Promise<ToolResultPayload> => {
+    const refs = workspace.boardRefs;
+    const kanban = workspace.board.kanbanData;
+    const columnId = resolveColumnRef(refs, columnRef);
+
+    if (!columnId) {
+        return {
+            ok: false,
+            error: `Unknown column ref "${columnRef}".`,
+            columnRefs: [...refs.columnRefToId.keys()],
+        };
+    }
+
+    const column = findColumn(kanban, columnId);
+    if (!column) {
+        return {
+            ok: false,
+            error: `Column not found for ref "${columnRef}".`,
+            columnRefs: [...refs.columnRefToId.keys()],
+        };
+    }
+
+    const boundCheck = assertBoundTargetForBoardMutation(scope, refs, kanban, {
+        columnIds: [columnId],
+    });
+    if (boundCheck) return boundCheck;
+
+    if (fields.title === undefined && fields.color === undefined) {
+        return { ok: false, error: "Provide at least one field to update (title or color)." };
+    }
+
+    const nextTitle = fields.title !== undefined ? trimString(fields.title) : column.title;
+    if (!nextTitle) {
+        return { ok: false, error: "Column title cannot be empty." };
+    }
+
+    let nextColor: string | undefined | null = column.color;
+    if (fields.color !== undefined) {
+        if (fields.color === null || fields.color === "") {
+            nextColor = null;
+        } else {
+            const colorResult = validateToneColor(fields.color);
+            if (!colorResult.ok) return colorResult;
+            nextColor = colorResult.color;
+        }
+    }
+
+    const nextKanban = kanban.map((entry) => {
+        if (entry.id !== columnId) return entry;
+        const updated = { ...entry, title: nextTitle };
+        if (nextColor === null) {
+            const { color: _c, ...withoutColor } = updated;
+            return withoutColor;
+        }
+        if (nextColor) {
+            return { ...updated, color: nextColor };
+        }
+        return updated;
+    });
+
+    workspace.board.mutationCount += 1;
+    await persistBoardKanbanData(workspace, nextKanban);
+    refreshBoardRefs(workspace);
+    workspace.board.editCallCount += 1;
+
+    return { ok: true, message: `Updated column "${nextTitle}".` };
 };
 
 export const deleteTasks = async (
@@ -446,7 +947,7 @@ export const deleteTasks = async (
         return {
             ok: false,
             error: `Max ${WORKSPACE_AI_DELETE_TASKS_MAX_REFS} taskRefs per delete_tasks call.`,
-            hint: "Split into multiple calls or ask the user to send fewer tasks.",
+            hint: "Call delete_tasks again in the next tool round for remaining tasks.",
         };
     }
 

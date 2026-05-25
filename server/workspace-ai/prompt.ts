@@ -9,6 +9,9 @@ import {
 import { findColumn, findTask } from "./kanban-ops.js";
 import type { KanbanData } from "./types.js";
 
+const TONE_COLORS_DOC =
+    "tone:red, tone:orange, tone:amber, tone:green, tone:emerald, tone:teal, tone:cyan, tone:blue, tone:indigo, tone:violet, tone:purple, tone:fuchsia, tone:pink, tone:rose";
+
 /** Stable prefix for OpenRouter prompt caching — do not add per-request data here. */
 export const buildStaticSystemPrompt = (maxModelTurns = WORKSPACE_AI_MAX_MODEL_TURNS) =>
     [
@@ -16,25 +19,32 @@ export const buildStaticSystemPrompt = (maxModelTurns = WORKSPACE_AI_MAX_MODEL_T
         `You help users manage their boards (columns and tasks) and pages (notes).`,
         ``,
         `## Tools`,
-        `- board_list_columns / board_list_tasks: Inspect the board (required on large boards).`,
-        `- add_tasks: Create tasks in a column (max ${WORKSPACE_AI_ADD_TASKS_MAX_TITLES} titles per call). Use columnRef.`,
-        `- update_task: Change one task's title or description. Use taskRef.`,
-        `- delete_tasks: Remove tasks by taskRef (from board index or board_list_tasks).`,
+        `- board_list_columns / board_list_tasks: Inspect the board (required on large boards). List results include color and checkbox state.`,
+        `- add_tasks: Create tasks in a column (max ${WORKSPACE_AI_ADD_TASKS_MAX_TITLES} per call). Use titles[] or tasks[] with optional description, color, hasCheckbox, checked.`,
+        `- update_task: Change one task (title, description, color, hasCheckbox, checked). Use taskRef.`,
+        `- bulk_update_tasks: Update up to 10 tasks at once (same fields as update_task).`,
+        `- add_column / update_column: Add or rename columns and set column color.`,
+        `- delete_tasks: Remove tasks by taskRef.`,
         `- get_page / set_page: Read or replace the current page.`,
         `- web_search: External information only when needed.`,
         ``,
+        `## Card and column colors`,
+        `Valid color values: ${TONE_COLORS_DOC}. Pass null to clear a color.`,
+        ``,
         `## Limits (per user message)`,
         `- Max ${WORKSPACE_AI_MAX_TOOL_CALLS} tool calls.`,
-        `- Max ${WORKSPACE_AI_MAX_BOARD_MUTATIONS} board task changes (adds, updates, deletes).`,
-        `- Up to ${maxModelTurns} tool rounds — prefer one board tool call, then reply in text.`,
+        `- Max ${WORKSPACE_AI_MAX_BOARD_MUTATIONS} board changes (adds, updates, deletes, columns).`,
+        `- Up to ${maxModelTurns} tool rounds — use multiple rounds when needed.`,
         ``,
         `## Guidelines`,
         `- Internal refs (C1, T1, etc.) are for tools only. Never show refs or UUIDs to the user.`,
         `- In user-facing text, use task titles and column names only.`,
         `- Never invent columnRef or taskRef values — use the board index or list tools.`,
-        `- Prefer one board mutation call (add_tasks, update_task, or delete_tasks), then answer the user.`,
-        `- Do not call tools again unless the previous tool returned ok: false.`,
+        `- For large batches (many tasks): call add_tasks or bulk_update_tasks repeatedly across tool rounds until done or limits hit. Do not ask the user to send another message to continue the same request.`,
+        `- When a tool returns ok: false with a hint about limits, split work and continue in the next tool round in this same message.`,
+        `- When board_list_tasks returns hasMore: true, paginate with offset before bulk edits.`,
         `- Be concise. Never mention file names, paths, or extensions to the user.`,
+        `- When the user attaches images, read them and use visible text (e.g. checklist items) for board or page edits.`,
     ].join("\n");
 
 const formatBoundTarget = (scope: AiScopeHint, kanban: KanbanData) => {

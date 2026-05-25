@@ -1,10 +1,48 @@
 import {
     WORKSPACE_AI_ADD_TASKS_MAX_TITLES,
+    WORKSPACE_AI_BULK_UPDATE_TASKS_MAX,
     WORKSPACE_AI_DELETE_TASKS_MAX_REFS,
     WORKSPACE_AI_WEB_SEARCH_MAX_TOKENS,
     WORKSPACE_AI_WEB_SEARCH_MODEL,
 } from "./constants.js";
 import { getEnv } from "../env.js";
+
+const TONE_COLOR_ENUM = [
+    "tone:red",
+    "tone:orange",
+    "tone:amber",
+    "tone:green",
+    "tone:emerald",
+    "tone:teal",
+    "tone:cyan",
+    "tone:blue",
+    "tone:indigo",
+    "tone:violet",
+    "tone:purple",
+    "tone:fuchsia",
+    "tone:pink",
+    "tone:rose",
+] as const;
+
+const taskUpdateProperties = {
+    title: { type: "string" },
+    description: { type: "string" },
+    color: {
+        type: ["string", "null"],
+        enum: [...TONE_COLOR_ENUM, null],
+        description: "Card color tone, or null to clear",
+    },
+    hasCheckbox: { type: "boolean", description: "Show checkbox on card" },
+    checked: { type: "boolean", description: "Checkbox checked state (implies hasCheckbox)" },
+};
+
+const taskDraftProperties = {
+    title: { type: "string" },
+    description: { type: "string" },
+    color: { type: "string", enum: [...TONE_COLOR_ENUM] },
+    hasCheckbox: { type: "boolean" },
+    checked: { type: "boolean" },
+};
 
 export const webSearch = async (query: string): Promise<string> => {
     const apiKey = getEnv("OPENROUTER_API_KEY", "");
@@ -63,7 +101,8 @@ export const OpenRouterTools = [
         type: "function",
         function: {
             name: "board_list_columns",
-            description: "List all columns on the current board with refs (C1, C2, …) and task counts.",
+            description:
+                "List all columns on the current board with refs (C1, C2, …), task counts, and colors.",
             parameters: { type: "object", properties: {} },
         },
     },
@@ -72,7 +111,7 @@ export const OpenRouterTools = [
         function: {
             name: "board_list_tasks",
             description:
-                "List tasks in one column. Use columnRef from board_list_columns or the board index.",
+                "List tasks in one column with refs, colors, and checkbox state. Use columnRef from board_list_columns or the board index. Paginate with offset when hasMore is true.",
             parameters: {
                 type: "object",
                 properties: {
@@ -88,7 +127,7 @@ export const OpenRouterTools = [
         type: "function",
         function: {
             name: "add_tasks",
-            description: `Add new tasks to a column. Use columnRef from the board index or board_list_columns. Max ${WORKSPACE_AI_ADD_TASKS_MAX_TITLES} titles per call.`,
+            description: `Add new tasks to a column. Max ${WORKSPACE_AI_ADD_TASKS_MAX_TITLES} per call. Use titles for simple creates, or tasks for per-task description/checkbox/color. Call again in later tool rounds if more tasks are needed.`,
             parameters: {
                 type: "object",
                 properties: {
@@ -96,10 +135,19 @@ export const OpenRouterTools = [
                     titles: {
                         type: "array",
                         items: { type: "string" },
-                        description: "Task titles to create",
+                        description: "Simple task titles (ignored if tasks is provided)",
+                    },
+                    tasks: {
+                        type: "array",
+                        items: {
+                            type: "object",
+                            properties: taskDraftProperties,
+                            required: ["title"],
+                        },
+                        description: "Rich task drafts with optional description, color, checkbox",
                     },
                 },
-                required: ["columnRef", "titles"],
+                required: ["columnRef"],
             },
         },
     },
@@ -108,15 +156,77 @@ export const OpenRouterTools = [
         function: {
             name: "update_task",
             description:
-                "Update one existing task by taskRef from the board index or board_list_tasks.",
+                "Update one task by taskRef: title, description, color (tone:* or null to clear), hasCheckbox, checked.",
             parameters: {
                 type: "object",
                 properties: {
                     taskRef: { type: "string", description: "Task ref e.g. T1" },
-                    title: { type: "string" },
-                    description: { type: "string" },
+                    ...taskUpdateProperties,
                 },
                 required: ["taskRef"],
+            },
+        },
+    },
+    {
+        type: "function",
+        function: {
+            name: "bulk_update_tasks",
+            description: `Update up to ${WORKSPACE_AI_BULK_UPDATE_TASKS_MAX} tasks in one call (title, description, color, hasCheckbox, checked). Use for batch checkbox/color changes.`,
+            parameters: {
+                type: "object",
+                properties: {
+                    updates: {
+                        type: "array",
+                        items: {
+                            type: "object",
+                            properties: {
+                                taskRef: { type: "string" },
+                                ...taskUpdateProperties,
+                            },
+                            required: ["taskRef"],
+                        },
+                    },
+                },
+                required: ["updates"],
+            },
+        },
+    },
+    {
+        type: "function",
+        function: {
+            name: "add_column",
+            description:
+                "Add a new column to the board. Optional color (tone:*) and afterColumnRef to insert after an existing column.",
+            parameters: {
+                type: "object",
+                properties: {
+                    title: { type: "string", description: "Column title" },
+                    color: { type: "string", enum: [...TONE_COLOR_ENUM] },
+                    afterColumnRef: {
+                        type: "string",
+                        description: "Insert after this column ref; omit to append at end",
+                    },
+                },
+                required: ["title"],
+            },
+        },
+    },
+    {
+        type: "function",
+        function: {
+            name: "update_column",
+            description: "Update a column title and/or color (tone:* or null to clear).",
+            parameters: {
+                type: "object",
+                properties: {
+                    columnRef: { type: "string", description: "Column ref e.g. C1" },
+                    title: { type: "string" },
+                    color: {
+                        type: ["string", "null"],
+                        enum: [...TONE_COLOR_ENUM, null],
+                    },
+                },
+                required: ["columnRef"],
             },
         },
     },
