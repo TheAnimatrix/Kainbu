@@ -198,8 +198,10 @@ export const generateSessionTitle = async (
 export const fetchWorkspaceAiModels = async () => {
 	const response = await fetch(resolveWorkspaceApiUrl(WORKSPACE_AI_MODELS_PATH), {
 		method: 'GET',
+		cache: 'no-store',
 		headers: {
-			Accept: 'application/json'
+			Accept: 'application/json',
+			'Cache-Control': 'no-cache'
 		}
 	});
 

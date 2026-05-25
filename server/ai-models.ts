@@ -33,9 +33,13 @@ const loadCatalogFromSettings = async (): Promise<AiModelCatalog | null> => {
 	}
 };
 
-export const loadAiModelCatalog = async (): Promise<AiModelCatalog> => {
+export const loadAiModelCatalog = async (options?: { fresh?: boolean }): Promise<AiModelCatalog> => {
 	const now = Date.now();
-	if (cachedCatalog && now - cacheLoadedAt < CACHE_TTL_MS) {
+	if (
+		!options?.fresh &&
+		cachedCatalog &&
+		now - cacheLoadedAt < CACHE_TTL_MS
+	) {
 		return cachedCatalog;
 	}
 

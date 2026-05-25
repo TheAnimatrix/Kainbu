@@ -1856,7 +1856,15 @@
 		try {
 			const nextModels = await fetchWorkspaceAiModels();
 			if (!nextModels.length) return;
+			const previousModelIds = new Set(aiModels.map((model) => model.id));
+			const nextModelIds = new Set(nextModels.map((model) => model.id));
+			const catalogChanged =
+				previousModelIds.size !== nextModelIds.size ||
+				[...nextModelIds].some((id) => !previousModelIds.has(id));
 			aiModels = nextModels;
+			if (catalogChanged) {
+				lastSyncedAiThinkingModelId = '';
+			}
 			if (projects.length || user) {
 				applyWorkspaceState({
 					nextProjects: projects,
@@ -1869,6 +1877,17 @@
 			console.error(error);
 		}
 	};
+
+	let lastChatModelsRefreshKey = '';
+	$: if (visibleWorkspaceTab === 'chat') {
+		const refreshKey = `${currentProjectId}:${visibleWorkspaceTab}`;
+		if (refreshKey !== lastChatModelsRefreshKey) {
+			lastChatModelsRefreshKey = refreshKey;
+			void loadAiModels();
+		}
+	} else {
+		lastChatModelsRefreshKey = '';
+	}
 
 	const refreshWorkspaceFromRemote = async (currentUser: AuthUser) => {
 		if (workspaceRefreshPromise) return workspaceRefreshPromise;
@@ -3902,6 +3921,7 @@
 
 		const handleVisibilityChange = () => {
 			if (document.visibilityState === 'visible') {
+				void loadAiModels();
 				recoverWorkspaceIfNeeded();
 			}
 		};

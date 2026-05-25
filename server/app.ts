@@ -98,7 +98,8 @@ app.get('/api', (c) => c.json(apiRootPayload));
 app.get('/api/', (c) => c.json(apiRootPayload));
 app.get('/api/health', (c) => c.json(healthPayload));
 app.get('/api/models', async (c) => {
-	await loadAiModelCatalog();
+	await loadAiModelCatalog({ fresh: true });
+	c.header('Cache-Control', 'no-store');
 	return c.json(getWorkspaceAiModels());
 });
 
