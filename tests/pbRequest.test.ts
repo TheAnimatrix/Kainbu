@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { ClientResponseError } from 'pocketbase';
-import { isPocketBaseAbort } from '../src/lib/kainbu/pbRequest';
+import { isPocketBaseAbort, shouldIgnorePocketBaseError } from '../src/lib/kainbu/pbRequest';
 
 describe('isPocketBaseAbort', () => {
 	it('detects autocancelled PocketBase requests', () => {
@@ -10,5 +10,10 @@ describe('isPocketBaseAbort', () => {
 
 	it('ignores other errors', () => {
 		expect(isPocketBaseAbort(new Error('nope'))).toBe(false);
+	});
+
+	it('detects autocancelled message text', () => {
+		expect(isPocketBaseAbort(new Error('The request was autocancelled.'))).toBe(true);
+		expect(shouldIgnorePocketBaseError(new Error('The request was autocancelled.'))).toBe(true);
 	});
 });

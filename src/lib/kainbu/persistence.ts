@@ -1559,6 +1559,7 @@ export const upsertUserSettings = async (userId: string, settings: UserSettings)
 export const subscribeToWorkspaceChanges = (_userId: string, onChange: () => void) => {
 	const pb = getPb();
 	let debounceTimer: ReturnType<typeof setTimeout> | undefined;
+	let disposed = false;
 	const debounced = () => {
 		if (debounceTimer) clearTimeout(debounceTimer);
 		debounceTimer = setTimeout(() => onChange(), 250);
@@ -1577,14 +1578,21 @@ export const subscribeToWorkspaceChanges = (_userId: string, onChange: () => voi
 	];
 
 	const unsubscribers: Array<() => void> = [];
-	void Promise.all(
-		collections.map(async (collection) => {
-			const unsubscribe = await pb.collection(collection).subscribe('*', debounced);
-			unsubscribers.push(unsubscribe);
-		})
-	);
+	void (async () => {
+		for (const collection of collections) {
+			if (disposed) return;
+			try {
+				const unsubscribe = await pb.collection(collection).subscribe('*', debounced);
+				unsubscribers.push(unsubscribe);
+			} catch (error) {
+				console.warn(`[kainbu] realtime subscribe failed for ${collection}`, error);
+			}
+			await new Promise((resolve) => setTimeout(resolve, 40));
+		}
+	})();
 
 	return () => {
+		disposed = true;
 		if (debounceTimer) clearTimeout(debounceTimer);
 		for (const unsubscribe of unsubscribers) {
 			unsubscribe();

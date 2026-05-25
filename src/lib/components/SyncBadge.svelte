@@ -4,6 +4,8 @@
 
 	export let status: SyncStatus = 'idle';
 	export let compact = false;
+	/** Optional detail for compact mode (e.g. hover on sync error dot). */
+	export let hint = '';
 
 	const config = {
 		idle: {
@@ -45,7 +47,7 @@
 	<span
 		class={`inline-flex h-2.5 w-2.5 rounded-full ${active.dotClass}`}
 		aria-label={active.label}
-		title={active.label}
+		title={hint || active.label}
 	></span>
 {:else}
 	<span

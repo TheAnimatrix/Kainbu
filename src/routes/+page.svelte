@@ -157,7 +157,7 @@
 	} from '$lib/kainbu/types';
 	import { isPocketBaseConfigured, pocketbase } from '$lib/pocketbaseClient';
 	import { formatPocketBaseError } from '$lib/pocketbaseErrors';
-	import { isPocketBaseAbort } from '$lib/kainbu/pbRequest';
+	import { shouldIgnorePocketBaseError } from '$lib/kainbu/pbRequest';
 
 	const toAuthUser = (model: { id: string; email?: string } | null): AuthUser | null =>
 		model ? { id: model.id, email: model.email } : null;
@@ -227,6 +227,7 @@
 	let localSnapshotTimeout: ReturnType<typeof setTimeout> | null = null;
 	let authStateReloadTimeout: ReturnType<typeof setTimeout> | null = null;
 	let remoteRefreshTimeout: ReturnType<typeof setTimeout> | null = null;
+	let workspaceRefreshPromise: Promise<void> | null = null;
 	let stopAuthListener: (() => void) | null = null;
 	let stopVisibilityListener: (() => void) | null = null;
 	let stopWorkspaceSubscription: (() => void) | null = null;
@@ -266,7 +267,7 @@
 	const CHAT_SYNC_DEBOUNCE_MS = 520;
 	const AI_HISTORY_WINDOW = 12;
 	const SETTINGS_SYNC_DEBOUNCE_MS = 350;
-	const REMOTE_REFRESH_DEBOUNCE_MS = 160;
+	const REMOTE_REFRESH_DEBOUNCE_MS = 500;
 	const SYNC_FEEDBACK_MS = 1400;
 	const USERNAME_CHECK_DEBOUNCE_MS = 260;
 	const USERNAME_REGEX = /^[a-z0-9_]{3,32}$/;
@@ -1197,6 +1198,7 @@
 	};
 
 	const setSyncError = (message: string) => {
+		if (/autocancell?ed/i.test(message)) return;
 		syncErrorMessage = message;
 		refreshSyncStatus();
 	};
@@ -1328,6 +1330,9 @@
 			refreshSyncStatus(true);
 			return result;
 		} catch (error) {
+			if (shouldIgnorePocketBaseError(error)) {
+				throw error;
+			}
 			console.error(error);
 			setSyncError(error instanceof Error ? error.message : fallbackMessage);
 			throw error;
@@ -1703,9 +1708,11 @@
 
 			syncUsernameDraftFromProfile(resolveProfileAfterFetch(currentUser, profileResult));
 		} catch (error) {
-			if (isPocketBaseAbort(error)) return;
+			if (shouldIgnorePocketBaseError(error)) return;
 			console.error(error);
-			workspaceError = error instanceof Error ? error.message : 'Unable to load your workspace.';
+			const message = error instanceof Error ? error.message : 'Unable to load your workspace.';
+			if (/autocancell?ed/i.test(message)) return;
+			workspaceError = message;
 		} finally {
 			if (loadVersion === workspaceLoadVersion) {
 				workspaceHydrating = false;
@@ -1744,18 +1751,28 @@
 	};
 
 	const refreshWorkspaceFromRemote = async (currentUser: AuthUser) => {
-		try {
-			const workspace = await fetchWorkspace(currentUser.id);
-			applyWorkspaceState({
-				nextProjects: mergeRemoteProjects(projects, workspace.projects),
-				nextIncomingInvites: workspace.incomingInvites,
-				preferredProjectId: currentProjectId
-			});
-		} catch (error) {
-			if (isPocketBaseAbort(error)) return;
-			console.error(error);
-			setSyncError(error instanceof Error ? error.message : 'Unable to refresh workspace changes.');
-		}
+		if (workspaceRefreshPromise) return workspaceRefreshPromise;
+
+		workspaceRefreshPromise = (async () => {
+			try {
+				const workspace = await fetchWorkspace(currentUser.id);
+				applyWorkspaceState({
+					nextProjects: mergeRemoteProjects(projects, workspace.projects),
+					nextIncomingInvites: workspace.incomingInvites,
+					preferredProjectId: currentProjectId
+				});
+			} catch (error) {
+				if (shouldIgnorePocketBaseError(error)) return;
+				console.error(error);
+				setSyncError(
+					error instanceof Error ? error.message : 'Unable to refresh workspace changes.'
+				);
+			}
+		})().finally(() => {
+			workspaceRefreshPromise = null;
+		});
+
+		return workspaceRefreshPromise;
 	};
 
 	const scheduleRemoteRefresh = () => {
@@ -1778,8 +1795,12 @@
 		if (authStateReloadTimeout) clearTimeout(authStateReloadTimeout);
 		authStateReloadTimeout = setTimeout(() => {
 			authStateReloadTimeout = null;
-			startWorkspaceSubscription(nextUser);
-			void bootstrapWorkspace(nextUser);
+			stopWorkspaceSubscription?.();
+			stopWorkspaceSubscription = null;
+			void bootstrapWorkspace(nextUser).finally(() => {
+				if (user?.id !== nextUser.id) return;
+				startWorkspaceSubscription(nextUser);
+			});
 		}, 0);
 	};
 
@@ -3922,7 +3943,11 @@
 								</div>
 							{/if}
 
-							<SyncBadge status={syncStatus} compact={true} />
+							<SyncBadge
+								status={syncStatus}
+								compact={true}
+								hint={syncErrorMessage || undefined}
+							/>
 
 							{#if isMobile}
 								<button
@@ -3936,14 +3961,14 @@
 						</div>
 					</header>
 
-					{#if workspaceError || syncErrorMessage || isRestoring}
+					{#if workspaceError || isRestoring}
 						<div class="space-y-2 px-3 pt-2 lg:px-4">
 							{#if workspaceError}
 								<div class="rounded-lg border border-rose-500/25 bg-rose-500/10 px-4 py-3">
 									<div class="flex flex-wrap items-center justify-between gap-3">
 										<div>
 											<p class="text-sm font-semibold text-rose-100">
-												Workspace refresh needs attention
+												Workspace load needs attention
 											</p>
 											<p class="mt-1 text-sm text-rose-100/80">{workspaceError}</p>
 										</div>
@@ -3955,14 +3980,6 @@
 											Retry
 										</button>
 									</div>
-								</div>
-							{/if}
-
-							{#if syncErrorMessage}
-								<div
-									class="rounded-lg border border-amber-500/25 bg-amber-500/10 px-4 py-3 text-sm text-amber-100"
-								>
-									{syncErrorMessage}
 								</div>
 							{/if}
 

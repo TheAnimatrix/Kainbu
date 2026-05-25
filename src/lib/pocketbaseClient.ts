@@ -16,6 +16,8 @@ const POCKETBASE_URL = resolvePocketBaseUrl();
 export const pocketbase = new PocketBase(POCKETBASE_URL);
 
 if (typeof window !== 'undefined') {
+	// Workspace loads many collections in parallel; default autocancel causes false "refresh failed" errors.
+	pocketbase.autoCancellation(false);
 	pocketbase.authStore.onChange(() => {
 		// authStore persists automatically when using LocalAuthStore (default in browser)
 	});
