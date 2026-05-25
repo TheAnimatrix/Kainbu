@@ -1549,7 +1549,12 @@ export const updateProjectBackground = async (
 };
 
 export const createProjectInvite = async (projectId: string, inviteeEmail: string) => {
-	return invokeWorkspaceApi<{ ok: boolean; emailSent?: boolean }>('/api/workspace/invites/create', {
+	return invokeWorkspaceApi<{
+		ok: boolean;
+		emailSent?: boolean;
+		emailConfigured?: boolean;
+		emailError?: string;
+	}>('/api/workspace/invites/create', {
 		body: {
 			projectId,
 			inviteeEmail

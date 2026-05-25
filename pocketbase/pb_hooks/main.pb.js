@@ -74,7 +74,21 @@ onMailerSend((e) => {
 	});
 
 	if (response.statusCode < 200 || response.statusCode >= 300) {
-		throw new Error(`Resend email failed (${response.statusCode})`);
+		let detail = '';
+		try {
+			const parsed = JSON.parse(response.raw || '{}');
+			detail =
+				typeof parsed.message === 'string'
+					? parsed.message
+					: typeof parsed.error === 'string'
+						? parsed.error
+						: '';
+		} catch (_) {}
+		throw new Error(
+			detail
+				? `Resend email failed (${response.statusCode}): ${detail}`
+				: `Resend email failed (${response.statusCode})`
+		);
 	}
 });
 
@@ -83,7 +97,8 @@ onRecordAfterCreateSuccess((e) => {
 		const settings = loadAppSettings(e.app);
 		const provider = mailProvider(settings);
 		if (provider === 'off') return;
-		if (provider === 'resend' && !getText(settings, 'resend_api_key')) return;
+		// Resend invite mail is sent from the API server after create (clearer errors to UI).
+		if (provider === 'resend') return;
 		if (provider === 'smtp' && !e.app.settings().smtp.enabled) return;
 
 		const inviteeEmail = getText(e.record, 'invitee_email');

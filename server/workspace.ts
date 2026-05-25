@@ -1,6 +1,7 @@
 import type PocketBase from 'pocketbase';
 import type { BackgroundTheme } from '../src/lib/kainbu/types.js';
 import { formatPocketBaseError } from '../src/lib/pocketbaseErrors.js';
+import { sendProjectInviteEmail } from './mailDelivery.js';
 import { createAdminPb, getAuthenticatedUserId } from './pocketbase.js';
 import { ClientResponseError } from 'pocketbase';
 import {
@@ -235,31 +236,6 @@ const getProfileByEmail = async (admin: PocketBase, inviteeEmail: string) => {
 		return { user_id: String(data.id), email: String(data.email || normalizedEmail) };
 	} catch {
 		return null;
-	}
-};
-
-const isInviteEmailDeliveryConfigured = async (admin: PocketBase) => {
-	try {
-		const rows = await admin.collection('app_settings').getFullList({
-			filter: 'singleton = "main"',
-			fields: 'mail_provider,resend_api_key'
-		});
-		const record = rows[0];
-		const provider =
-			typeof record?.mail_provider === 'string' ? record.mail_provider.trim().toLowerCase() : 'off';
-		if (provider === 'resend') {
-			return Boolean(
-				typeof record?.resend_api_key === 'string' && record.resend_api_key.trim().length > 0
-			);
-		}
-		if (provider === 'smtp') {
-			const settings = await admin.settings.getAll();
-			const smtp = (settings.smtp || {}) as Record<string, unknown>;
-			return smtp.enabled === true;
-		}
-		return false;
-	} catch {
-		return false;
 	}
 };
 
@@ -500,8 +476,13 @@ export const handleWorkspaceCreateInviteRequest = async (
 		});
 	}
 
-	const emailSent = await isInviteEmailDeliveryConfigured(admin);
-	return { ok: true, emailSent };
+	const mailResult = await sendProjectInviteEmail(admin, inviteeEmail, project.name);
+	return {
+		ok: true,
+		emailSent: mailResult.sent,
+		emailConfigured: mailResult.configured,
+		emailError: mailResult.error
+	};
 };
 
 export const handleWorkspaceRespondInviteRequest = async (

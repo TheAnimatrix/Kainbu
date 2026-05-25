@@ -3911,12 +3911,17 @@
 				() => createProjectInvite(projectId, inviteeEmail),
 				'Unable to send that invite right now.'
 			);
+			const inviteMessage = result?.emailSent
+				? `Invite sent to ${inviteeEmail}.`
+				: result?.emailError
+					? `Invite saved for ${inviteeEmail}. Email failed: ${result.emailError}`
+					: result?.emailConfigured
+						? `Invite saved for ${inviteeEmail}. Email delivery was not confirmed (SMTP).`
+						: `Invite saved for ${inviteeEmail} (email not configured).`;
 			inviteFeedback = {
 				projectId,
-				kind: 'success',
-				message: result?.emailSent
-					? `Invite sent to ${inviteeEmail}.`
-					: `Invite saved for ${inviteeEmail} (email not configured).`
+				kind: result?.emailSent || !result?.emailError ? 'success' : 'error',
+				message: inviteMessage
 			};
 			if (user) {
 				await refreshWorkspaceFromRemote(user);
