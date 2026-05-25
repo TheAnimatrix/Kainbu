@@ -127,7 +127,13 @@ const getSettingsRecord = async () => {
 	await ensureAuthEmailSettingsFields(pb);
 	const rows = await pb.collection('app_settings').getFullList({
 		filter: `singleton = "${APP_SETTINGS_SINGLETON}"`,
-		fields: ['singleton', ...AUTH_EMAIL_FIELD_NAMES, 'openrouter_api_key', 'ai_models_json'].join(',')
+		fields: [
+			'id',
+			'singleton',
+			...AUTH_EMAIL_FIELD_NAMES,
+			'openrouter_api_key',
+			'ai_models_json'
+		].join(',')
 	});
 	return rows[0] ?? null;
 };
@@ -181,12 +187,28 @@ const publicAuthSettingsFromRecord = (
 const randomPassword = () =>
 	`${randomBytes(18).toString('base64url')}A1!`.slice(0, 24);
 
+const resolveSettingsRecordId = async (pb: PocketBase) => {
+	const existing = await getSettingsRecord();
+	if (typeof existing?.id === 'string' && existing.id) {
+		return existing.id;
+	}
+	try {
+		const row = await pb.collection('app_settings').getFirstListItem(
+			`singleton = "${APP_SETTINGS_SINGLETON}"`,
+			{ fields: 'id' }
+		);
+		return typeof row?.id === 'string' ? row.id : '';
+	} catch {
+		return '';
+	}
+};
+
 const upsertSettingsRecord = async (data: Record<string, unknown>) => {
 	const pb = await createAdminPb();
 	await ensureAuthEmailSettingsFields(pb);
-	const existing = await getSettingsRecord();
-	if (existing?.id) {
-		return pb.collection('app_settings').update(existing.id, data);
+	const recordId = await resolveSettingsRecordId(pb);
+	if (recordId) {
+		return pb.collection('app_settings').update(recordId, data);
 	}
 	return pb.collection('app_settings').create({
 		singleton: APP_SETTINGS_SINGLETON,
