@@ -31,6 +31,7 @@
 		"test:deploy": "vitest run tests/deploy.test.ts",
 		"test:local-docker": "vitest run tests/local-docker.test.ts",
 		"test:admin-docker": "vitest run tests/admin-docker.test.ts",
+		"test:admin-prod": "node scripts/test-admin-prod.mjs",
 		"test:docker": "vitest run tests/local-docker.test.ts tests/admin-docker.test.ts",
 		"cli:build": "npm run build --workspace=kainbu",
 		"cli:link": "npm run build --workspace=kainbu && npm link --workspace=kainbu",

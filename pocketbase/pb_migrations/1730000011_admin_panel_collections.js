@@ -1,5 +1,9 @@
 /// <reference path="../pb_data/types.d.ts" />
 
+/**
+ * Idempotent repair for admin panel schema when 1730000010 did not complete
+ * (e.g. failed index on `created` in an earlier revision).
+ */
 migrate(
 	(app) => {
 		const users = app.findCollectionByNameOrId('users');
@@ -19,15 +23,14 @@ migrate(
 			'@request.auth.is_admin = true || @request.auth.id = id';
 		users.viewRule =
 			'@request.auth.is_admin = true || @request.auth.id = id';
-		users.updateRule = '@request.auth.id = id';
-		users.deleteRule = '@request.auth.id = id';
 
 		app.save(users);
 
+		let appSettings;
 		try {
-			app.findCollectionByNameOrId('app_settings');
+			appSettings = app.findCollectionByNameOrId('app_settings');
 		} catch {
-			const appSettings = new Collection({
+			appSettings = new Collection({
 				name: 'app_settings',
 				type: 'base',
 				listRule: null,
@@ -93,28 +96,5 @@ migrate(
 			app.save(aiUsageEvents);
 		}
 	},
-	(app) => {
-		for (const name of ['ai_usage_events', 'app_settings']) {
-			try {
-				const collection = app.findCollectionByNameOrId(name);
-				app.delete(collection);
-			} catch (_) {
-				// already removed
-			}
-		}
-
-		const users = app.findCollectionByNameOrId('users');
-		try {
-			const isAdmin = users.fields.getByName('is_admin');
-			if (isAdmin) users.fields.removeById(isAdmin.id);
-		} catch (_) {}
-		try {
-			const disabled = users.fields.getByName('disabled');
-			if (disabled) users.fields.removeById(disabled.id);
-		} catch (_) {}
-
-		users.listRule = '@request.auth.id != ""';
-		users.viewRule = '@request.auth.id != ""';
-		app.save(users);
-	}
+	() => {}
 );

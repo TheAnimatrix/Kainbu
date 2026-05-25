@@ -20,6 +20,7 @@ This repo’s `docker-compose.yml` has **no host `ports`**. Use `docker-compose.
 4. **Environment** — paste from [`dokploy.env.example`](./dokploy.env.example), set:
    - `POCKETBASE_ADMIN_PASSWORD`
    - `OPENROUTER_API_KEY`
+   - `KAINBU_ADMIN_EMAILS` — comma-separated emails for in-app admin (`/admin`); e.g. `you@example.com`
    - `KAINBU_PUBLIC_URL=https://kainbu.avarnic.com` (your real URL)
    - Leave `VITE_POCKETBASE_URL` **unset** (browser uses `/pb` via nginx).
 5. **Domains** — attach `https://kainbu.avarnic.com` (or your host) to service **`web`**, **container port `80`**.

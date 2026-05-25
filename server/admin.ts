@@ -19,6 +19,13 @@ const parseDays = (value: string | undefined, fallback = 30) => {
 
 const adminError = (error: unknown) => {
 	const message = error instanceof Error ? error.message : 'Unknown error';
+	if (message.includes('Missing collection context')) {
+		return {
+			status: 503,
+			message:
+				'Admin PocketBase collections are missing. Restart the pocketbase service so migrations can run.'
+		};
+	}
 	const status =
 		error && typeof error === 'object' && 'status' in error && typeof error.status === 'number'
 			? error.status
