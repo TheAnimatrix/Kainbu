@@ -109,28 +109,26 @@ await api('/api/workspace/invites/create', ownerToken, {
 console.log('OK email-only invite created');
 
 const guestPb = pb();
-await guestPb.collection('users').create({
-	email: guestEmail,
-	password,
-	passwordConfirm: password,
-	username: `gst${Date.now().toString(36).slice(-6)}`
+const signupRes = await fetch(`${API}/api/auth/signup`, {
+	method: 'POST',
+	headers: { 'Content-Type': 'application/json' },
+	body: JSON.stringify({ email: guestEmail, password })
 });
+if (signupRes.ok) {
+	console.log('OK guest signup via API');
+} else {
+	await guestPb.collection('users').create({
+		email: guestEmail,
+		password,
+		passwordConfirm: password,
+		username: `gst${Date.now().toString(36).slice(-6)}`
+	});
+	console.log('OK guest signup via PB (API signup unavailable)');
+}
 const guestAuth = await guestPb.collection('users').authWithPassword(guestEmail, password);
 const guestId = guestAuth.record.id;
 const guestToken = guestAuth.token;
 const guestClient = pb(guestToken);
-
-const adminPb = pb();
-await adminPb.admins.authWithPassword(
-	process.env.POCKETBASE_ADMIN_EMAIL || 'admin@kainbu.local',
-	process.env.POCKETBASE_ADMIN_PASSWORD || 'kainbu-admin-change-me'
-);
-const unlinked = await adminPb.collection('project_invites').getFullList({
-	filter: `invitee_email = "${guestEmail}" && status = "pending" && invitee = ""`
-});
-for (const row of unlinked) {
-	await adminPb.collection('project_invites').update(row.id, { invitee: guestId });
-}
 
 const guestInvites = await guestClient.collection('project_invites').getFullList({
 	filter: `(invitee = "${guestId}" || invitee_email = "${guestEmail}") && status = "pending"`,
