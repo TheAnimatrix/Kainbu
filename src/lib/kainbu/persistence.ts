@@ -759,6 +759,9 @@ const workspaceFetchByUser = new Map<
 
 const loadWorkspaceFromRemote = async (userId: string) => {
 	const pb = getPb();
+	const authEmail = String(pb.authStore.model?.email || '')
+		.trim()
+		.toLowerCase();
 
 	const ownMembershipRecords = await pb.collection('project_memberships').getFullList({
 		filter: `user = "${pbEscapeFilter(userId)}"`,
@@ -855,7 +858,9 @@ const loadWorkspaceFromRemote = async (userId: string) => {
 				})
 			: Promise.resolve([]),
 		pb.collection('project_invites').getFullList({
-			filter: `invitee = "${pbEscapeFilter(userId)}" && status = "pending"`,
+			filter: authEmail
+				? `(invitee = "${pbEscapeFilter(userId)}" || invitee_email = "${pbEscapeFilter(authEmail)}") && status = "pending"`
+				: `invitee = "${pbEscapeFilter(userId)}" && status = "pending"`,
 			expand: 'project',
 			...pbNoAutoCancel
 		})
@@ -1544,7 +1549,7 @@ export const updateProjectBackground = async (
 };
 
 export const createProjectInvite = async (projectId: string, inviteeEmail: string) => {
-	await invokeWorkspaceApi('/api/workspace/invites/create', {
+	return invokeWorkspaceApi<{ ok: boolean; emailSent?: boolean }>('/api/workspace/invites/create', {
 		body: {
 			projectId,
 			inviteeEmail

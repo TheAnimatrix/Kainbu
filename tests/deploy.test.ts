@@ -181,6 +181,38 @@ describe.runIf(hasAuth)('Invalid request body (authed)', () => {
 	});
 });
 
+describe.runIf(hasAuth && hasProject)('POST /api/workspace/invites/create', () => {
+	it('allows inviting an email with no user account', async () => {
+		const inviteeEmail = `nobody-${Date.now()}@example.test`;
+		const res = await fetch(`${BASE}/api/workspace/invites/create`, {
+			method: 'POST',
+			headers: authHeaders(),
+			body: JSON.stringify({ projectId: PROJECT_ID, inviteeEmail })
+		});
+		const body = (await res.json()) as { ok?: boolean; error?: string };
+		expect(res.status).toBe(200);
+		expect(body.ok).toBe(true);
+		expect(body.error).not.toMatch(/Only existing accounts/i);
+	});
+
+	it('re-inviting the same pending email updates without error', async () => {
+		const inviteeEmail = `reinvite-${Date.now()}@example.test`;
+		const payload = { projectId: PROJECT_ID, inviteeEmail };
+		const first = await fetch(`${BASE}/api/workspace/invites/create`, {
+			method: 'POST',
+			headers: authHeaders(),
+			body: JSON.stringify(payload)
+		});
+		const second = await fetch(`${BASE}/api/workspace/invites/create`, {
+			method: 'POST',
+			headers: authHeaders(),
+			body: JSON.stringify(payload)
+		});
+		expect(first.status).toBe(200);
+		expect(second.status).toBe(200);
+	});
+});
+
 // ─── Workspace AI (non-streaming) ────────────────────────────────────
 
 describe.runIf(hasAuth && hasProject)('POST /api/workspace-ai', () => {

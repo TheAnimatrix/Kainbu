@@ -21,6 +21,11 @@
 	export let projects: Project[] = [];
 	export let currentProjectId = '';
 	export let incomingInvites: ProjectInvite[] = [];
+	export let inviteFeedback: {
+		projectId: string;
+		kind: 'success' | 'error';
+		message: string;
+	} | null = null;
 	export let timedTasks: DashboardTimedTask[] = [];
 	export let onCreateProject: () => void;
 	export let onOpenProject: (projectId: string) => void;
@@ -84,11 +89,14 @@
 		const email = inviteDrafts[projectId]?.trim();
 		if (!email) return;
 		onInvite(projectId, email);
-		inviteDrafts = {
-			...inviteDrafts,
-			[projectId]: ''
-		};
 	};
+
+	$: if (inviteFeedback?.kind === 'success' && inviteFeedback.projectId) {
+		const projectId = inviteFeedback.projectId;
+		if (inviteDrafts[projectId]) {
+			inviteDrafts = { ...inviteDrafts, [projectId]: '' };
+		}
+	}
 
 	const setInviteDraft = (projectId: string, value: string) => {
 		inviteDrafts = {
@@ -337,6 +345,13 @@
 													Send
 												</button>
 											</div>
+											{#if inviteFeedback?.projectId === project.id}
+												<p
+													class={`mt-1.5 text-xs ${inviteFeedback.kind === 'success' ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-500'}`}
+												>
+													{inviteFeedback.message}
+												</p>
+											{/if}
 										{/if}
 									</article>
 								{:else}
@@ -547,6 +562,13 @@
 												Send
 											</button>
 										</div>
+										{#if inviteFeedback?.projectId === project.id}
+											<p
+												class={`mt-1.5 text-xs ${inviteFeedback.kind === 'success' ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-500'}`}
+											>
+												{inviteFeedback.message}
+											</p>
+										{/if}
 									{/if}
 								</article>
 							{/each}

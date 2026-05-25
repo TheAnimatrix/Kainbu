@@ -221,6 +221,8 @@
 	let emailConfigured = false;
 	let workspaceError = '';
 	let syncErrorMessage = '';
+	let inviteFeedback: { projectId: string; kind: 'success' | 'error'; message: string } | null =
+		null;
 	let syncStatus: SyncStatus = 'idle';
 	let pendingProposals: PendingProposal[] = [];
 	let proposalApplyErrors: Record<string, string> = {};
@@ -3902,16 +3904,31 @@
 
 		if (!project || project.accessRole !== 'owner' || !inviteeEmail) return;
 
+		inviteFeedback = null;
+
 		try {
-			await runSyncAction(
+			const result = await runSyncAction(
 				() => createProjectInvite(projectId, inviteeEmail),
 				'Unable to send that invite right now.'
 			);
+			inviteFeedback = {
+				projectId,
+				kind: 'success',
+				message: result?.emailSent
+					? `Invite sent to ${inviteeEmail}.`
+					: `Invite saved for ${inviteeEmail} (email not configured).`
+			};
 			if (user) {
 				await refreshWorkspaceFromRemote(user);
 			}
 		} catch (error) {
 			console.error(error);
+			inviteFeedback = {
+				projectId,
+				kind: 'error',
+				message:
+					error instanceof Error ? error.message : 'Unable to send that invite right now.'
+			};
 		}
 	};
 
@@ -4423,6 +4440,7 @@
 											{projects}
 											{currentProjectId}
 											{incomingInvites}
+											{inviteFeedback}
 											{timedTasks}
 											onCreateProject={handleCreateProject}
 											onOpenProject={openProjectWorkspace}
@@ -4595,6 +4613,7 @@
 											{projects}
 											{currentProjectId}
 											{incomingInvites}
+											{inviteFeedback}
 											{timedTasks}
 											onCreateProject={handleCreateProject}
 											onOpenProject={openProjectWorkspace}

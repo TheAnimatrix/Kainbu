@@ -79,36 +79,42 @@ onMailerSend((e) => {
 });
 
 onRecordAfterCreateSuccess((e) => {
-	const settings = loadAppSettings(e.app);
-	const provider = mailProvider(settings);
-	if (provider === 'off') return;
-	if (provider === 'resend' && !getText(settings, 'resend_api_key')) return;
-	if (provider === 'smtp' && !e.app.settings().smtp.enabled) return;
-
-	const inviteeEmail = getText(e.record, 'invitee_email');
-	const projectId = getText(e.record, 'project');
-	if (!inviteeEmail || !projectId) return;
-
-	let projectName = 'a Kainbu workspace';
 	try {
-		const project = e.app.findRecordById('projects', projectId);
-		projectName = getText(project, 'name') || projectName;
-	} catch (_) {}
+		const settings = loadAppSettings(e.app);
+		const provider = mailProvider(settings);
+		if (provider === 'off') return;
+		if (provider === 'resend' && !getText(settings, 'resend_api_key')) return;
+		if (provider === 'smtp' && !e.app.settings().smtp.enabled) return;
 
-	const appUrl = (e.app.settings().meta.appURL || '').replace(/\/+$/, '');
-	const link = appUrl || '/';
-	const subject = `You were invited to ${projectName}`;
-	const html = `<p>You were invited to join <strong>${htmlEscape(projectName)}</strong> on Kainbu.</p><p><a href="${htmlEscape(link)}">Open Kainbu</a> and sign in with this email address to accept the invite.</p>`;
+		const inviteeEmail = getText(e.record, 'invitee_email');
+		const projectId = getText(e.record, 'project');
+		if (!inviteeEmail || !projectId) return;
 
-	const message = new MailerMessage({
-		from: {
-			address: e.app.settings().meta.senderAddress,
-			name: e.app.settings().meta.senderName
-		},
-		to: [{ address: inviteeEmail }],
-		subject,
-		html,
-		text: `You were invited to join ${projectName} on Kainbu. Open ${link} and sign in with this email address to accept the invite.`
-	});
-	e.app.newMailClient().send(message);
+		let projectName = 'a Kainbu workspace';
+		try {
+			const project = e.app.findRecordById('projects', projectId);
+			projectName = getText(project, 'name') || projectName;
+		} catch (_) {}
+
+		const appUrl = (e.app.settings().meta.appURL || '').replace(/\/+$/, '');
+		const link = appUrl || '/';
+		const subject = `You were invited to ${projectName}`;
+		const html = `<p>You were invited to join <strong>${htmlEscape(projectName)}</strong> on Kainbu.</p><p><a href="${htmlEscape(link)}">Open Kainbu</a> and sign in with this email address to accept the invite.</p>`;
+
+		const message = new MailerMessage({
+			from: {
+				address: e.app.settings().meta.senderAddress,
+				name: e.app.settings().meta.senderName
+			},
+			to: [{ address: inviteeEmail }],
+			subject,
+			html,
+			text: `You were invited to join ${projectName} on Kainbu. Open ${link} and sign in with this email address to accept the invite.`
+		});
+		e.app.newMailClient().send(message);
+	} catch (err) {
+		e.app.logger().error(
+			`project_invites invite email failed: ${err instanceof Error ? err.message : String(err)}`
+		);
+	}
 }, 'project_invites');

@@ -100,4 +100,55 @@ const joined = memberships.some(
 );
 if (!joined) throw new Error('Member was not added to project_memberships');
 console.log('OK membership created');
+
+const guestEmail = `guest-${Date.now()}@kainbu.test`;
+await api('/api/workspace/invites/create', ownerToken, {
+	projectId: projectClientId,
+	inviteeEmail: guestEmail
+});
+console.log('OK email-only invite created');
+
+const guestPb = pb();
+await guestPb.collection('users').create({
+	email: guestEmail,
+	password,
+	passwordConfirm: password,
+	username: `gst${Date.now().toString(36).slice(-6)}`
+});
+const guestAuth = await guestPb.collection('users').authWithPassword(guestEmail, password);
+const guestId = guestAuth.record.id;
+const guestToken = guestAuth.token;
+const guestClient = pb(guestToken);
+
+const adminPb = pb();
+await adminPb.admins.authWithPassword(
+	process.env.POCKETBASE_ADMIN_EMAIL || 'admin@kainbu.local',
+	process.env.POCKETBASE_ADMIN_PASSWORD || 'kainbu-admin-change-me'
+);
+const unlinked = await adminPb.collection('project_invites').getFullList({
+	filter: `invitee_email = "${guestEmail}" && status = "pending" && invitee = ""`
+});
+for (const row of unlinked) {
+	await adminPb.collection('project_invites').update(row.id, { invitee: guestId });
+}
+
+const guestInvites = await guestClient.collection('project_invites').getFullList({
+	filter: `(invitee = "${guestId}" || invitee_email = "${guestEmail}") && status = "pending"`,
+	expand: 'project'
+});
+if (!guestInvites.length) throw new Error('No pending email-only invite for guest');
+const guestInviteId = guestInvites[0].id;
+await api('/api/workspace/invites/respond', guestToken, { inviteId: guestInviteId, accept: true });
+console.log('OK email-only invite accepted after signup');
+
+const guestMemberships = await guestClient.collection('project_memberships').getFullList({
+	filter: `user = "${guestId}"`,
+	expand: 'project'
+});
+const guestJoined = guestMemberships.some(
+	(m) => m.expand?.project?.client_id === projectClientId || m.project === project.id
+);
+if (!guestJoined) throw new Error('Guest was not added to project_memberships after email-only invite');
+console.log('OK guest membership created');
+
 console.log('done');

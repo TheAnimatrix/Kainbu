@@ -1,5 +1,6 @@
 import type PocketBase from 'pocketbase';
 import type { BackgroundTheme } from '../src/lib/kainbu/types.js';
+import { formatPocketBaseError } from '../src/lib/pocketbaseErrors.js';
 import { createAdminPb, getAuthenticatedUserId } from './pocketbase.js';
 import { ClientResponseError } from 'pocketbase';
 import {
@@ -237,6 +238,62 @@ const getProfileByEmail = async (admin: PocketBase, inviteeEmail: string) => {
 	}
 };
 
+const isInviteEmailDeliveryConfigured = async (admin: PocketBase) => {
+	try {
+		const rows = await admin.collection('app_settings').getFullList({
+			filter: 'singleton = "main"',
+			fields: 'mail_provider,resend_api_key'
+		});
+		const record = rows[0];
+		const provider =
+			typeof record?.mail_provider === 'string' ? record.mail_provider.trim().toLowerCase() : 'off';
+		if (provider === 'resend') {
+			return Boolean(
+				typeof record?.resend_api_key === 'string' && record.resend_api_key.trim().length > 0
+			);
+		}
+		if (provider === 'smtp') {
+			const settings = await admin.settings.getAll();
+			const smtp = (settings.smtp || {}) as Record<string, unknown>;
+			return smtp.enabled === true;
+		}
+		return false;
+	} catch {
+		return false;
+	}
+};
+
+export const linkPendingInvitesByEmail = async (
+	admin: PocketBase,
+	email: string,
+	userId: string
+) => {
+	const normalizedEmail = email.trim().toLowerCase();
+	if (!normalizedEmail || !userId) return;
+
+	let invites: { id: string }[] = [];
+	try {
+		invites = await admin.collection('project_invites').getFullList({
+			filter: `invitee_email = "${pbEscapeFilter(normalizedEmail)}" && status = "pending" && invitee = ""`
+		});
+	} catch {
+		return;
+	}
+
+	for (const invite of invites) {
+		await admin.collection('project_invites').update(invite.id, { invitee: userId });
+	}
+};
+
+const inviteeCanRespond = (
+	invite: { invitee_user_id: string; invitee_email: string },
+	userId: string,
+	authEmail: string
+) => {
+	if (invite.invitee_user_id && invite.invitee_user_id === userId) return true;
+	return !invite.invitee_user_id && invite.invitee_email.toLowerCase() === authEmail;
+};
+
 const jsonProjectScratchpadResult = (row: {
 	scratchpad_data: string;
 	scratchpad_rev: number;
@@ -262,7 +319,7 @@ export const toWorkspaceApiError = (error: unknown) => {
 			message:
 				status === 404
 					? 'The requested resource was not found.'
-					: error.message || 'PocketBase request failed.'
+					: formatPocketBaseError(error, 'PocketBase request failed.')
 		};
 	}
 
@@ -410,41 +467,41 @@ export const handleWorkspaceCreateInviteRequest = async (
 	const project = await ensureOwnerProject(admin, projectId, userId);
 	const profile = await getProfileByEmail(admin, inviteeEmail);
 
-	if (!profile?.user_id || !profile.email) {
-		throw new WorkspaceApiError(400, 'Only existing accounts can be invited.');
-	}
-
-	if (profile.user_id === project.user_id) {
+	if (profile?.user_id === project.user_id) {
 		throw new WorkspaceApiError(400, 'You are already on this board.');
 	}
 
-	const membership = await getMembership(admin, projectId, profile.user_id);
-	if (membership) {
-		throw new WorkspaceApiError(400, 'That user is already a collaborator.');
+	if (profile?.user_id) {
+		const membership = await getMembership(admin, projectId, profile.user_id);
+		if (membership) {
+			throw new WorkspaceApiError(400, 'That user is already a collaborator.');
+		}
 	}
 
 	const projectPbId = await getProjectPbId(admin, projectId);
+	const invitePayload: Record<string, unknown> = {
+		invitee_email: inviteeEmail,
+		invited_by: userId,
+		status: 'pending'
+	};
+	if (profile?.user_id) {
+		invitePayload.invitee = profile.user_id;
+	}
+
 	try {
 		const existing = await admin.collection('project_invites').getFirstListItem(
-			`${projectRelationFilter(projectPbId)} && invitee = "${pbEscapeFilter(profile.user_id)}"`
+			`${projectRelationFilter(projectPbId)} && invitee_email = "${pbEscapeFilter(inviteeEmail)}" && status = "pending"`
 		);
-		await admin.collection('project_invites').update(existing.id, {
-			invitee_email: profile.email,
-			invited_by: userId,
-			status: 'pending',
-			responded_at: ''
-		});
+		await admin.collection('project_invites').update(existing.id, invitePayload);
 	} catch {
 		await admin.collection('project_invites').create({
 			project: projectPbId,
-			invitee: profile.user_id,
-			invitee_email: profile.email,
-			invited_by: userId,
-			status: 'pending'
+			...invitePayload
 		});
 	}
 
-	return { ok: true };
+	const emailSent = await isInviteEmailDeliveryConfigured(admin);
+	return { ok: true, emailSent };
 };
 
 export const handleWorkspaceRespondInviteRequest = async (
@@ -456,8 +513,12 @@ export const handleWorkspaceRespondInviteRequest = async (
 	const inviteId = requireString(body.inviteId, 'inviteId');
 	const accept = requireBoolean(body.accept, 'accept');
 	const invite = await getInviteOrThrow(admin, inviteId);
+	const authUser = await admin.collection('users').getOne(userId);
+	const authEmail = String(authUser.email || '')
+		.trim()
+		.toLowerCase();
 
-	if (invite.invitee_user_id !== userId) {
+	if (!inviteeCanRespond(invite, userId, authEmail)) {
 		throw new WorkspaceApiError(403, 'You can only respond to your own invite.');
 	}
 
@@ -466,14 +527,19 @@ export const handleWorkspaceRespondInviteRequest = async (
 	}
 
 	const respondedAt = new Date().toISOString();
-	await admin.collection('project_invites').update(inviteId, {
+	const inviteUpdate: Record<string, unknown> = {
 		status: accept ? 'accepted' : 'rejected',
 		responded_at: respondedAt
-	});
+	};
+	if (!invite.invitee_user_id) {
+		inviteUpdate.invitee = userId;
+	}
+	await admin.collection('project_invites').update(inviteId, inviteUpdate);
 
 	if (accept) {
 		const projectPbId = invite.project_pb_id;
-		const existingMembership = await getMembership(admin, invite.project_id, invite.invitee_user_id);
+		const memberUserId = invite.invitee_user_id || userId;
+		const existingMembership = await getMembership(admin, invite.project_id, memberUserId);
 		const now = new Date().toISOString();
 		if (existingMembership) {
 			await admin.collection('project_memberships').update(existingMembership.id, {
@@ -482,7 +548,7 @@ export const handleWorkspaceRespondInviteRequest = async (
 		} else {
 			await admin.collection('project_memberships').create({
 				project: projectPbId,
-				user: invite.invitee_user_id,
+				user: memberUserId,
 				role: 'member',
 				joined_at: now,
 				last_opened_at: now

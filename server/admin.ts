@@ -2,6 +2,7 @@ import type { Context } from 'hono';
 import { randomBytes } from 'crypto';
 import type PocketBase from 'pocketbase';
 import { createAdminPb, mapPocketBaseError } from './pocketbase.js';
+import { linkPendingInvitesByEmail } from './workspace.js';
 import {
 	APP_SETTINGS_SINGLETON,
 	getAdminAllowlistEmails,
@@ -293,6 +294,8 @@ export const handleAuthSignup = async (c: Context) => {
 			password,
 			passwordConfirm: password
 		});
+
+		await linkPendingInvitesByEmail(pb, email, String(user.id));
 
 		if (settings.emailVerificationEnabled) {
 			await pb.collection('users').requestVerification(email);
