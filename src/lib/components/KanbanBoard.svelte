@@ -1316,7 +1316,7 @@
 			!linkViewAnchorId && effectiveHighlightedTaskIds.includes(task.id);
 
 		let result =
-			'group relative overflow-hidden rounded-lg p-2 shadow-sm transition duration-200 hover:-translate-y-0.5 hover:shadow-lg';
+			'group relative shrink-0 overflow-hidden rounded-lg p-2 shadow-sm transition duration-200 hover:-translate-y-0.5 hover:shadow-lg';
 
 		if (task._status === 'added') result += ' border border-emerald-500/40 bg-emerald-500/10';
 		else if (task._status === 'removed')
