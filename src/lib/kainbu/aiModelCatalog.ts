@@ -1,4 +1,21 @@
-import type { AiModelConfig, AiThinkingConfig, AiThinkingLevel } from '$lib/kainbu/types';
+import type {
+	AiModelConfig,
+	AiModelProvider,
+	AiThinkingConfig,
+	AiThinkingLevel
+} from '$lib/kainbu/types';
+
+export const AI_MODEL_PROVIDERS = ['openrouter', 'vercel'] as const satisfies readonly AiModelProvider[];
+
+export const DEFAULT_AI_MODEL_PROVIDER: AiModelProvider = 'openrouter';
+
+export const AI_MODEL_PROVIDER_LABELS: Record<AiModelProvider, string> = {
+	openrouter: 'OpenRouter',
+	vercel: 'Vercel AI Gateway'
+};
+
+export const normalizeAiModelProvider = (value: unknown): AiModelProvider =>
+	value === 'vercel' || value === 'openrouter' ? value : DEFAULT_AI_MODEL_PROVIDER;
 
 const LEGACY_MODEL_CONFIGS = [
 	{ id: 'gemini 3 flash', model: 'google/gemini-3-flash-preview:nitro' },
@@ -19,7 +36,9 @@ export type CatalogThinkingLevel = (typeof ALL_THINKING_LEVELS)[number];
 
 export type AiModelCatalogEntry = {
 	id: string;
+	/** Provider-specific model slug (e.g. `anthropic/claude-sonnet-4.6`). */
 	openrouterModel: string;
+	provider: AiModelProvider;
 	enabled: boolean;
 	thinkingLevels: AiThinkingLevel[];
 	defaultThinkingLevel: AiThinkingLevel;
@@ -40,6 +59,7 @@ const LEGACY_TO_CATALOG = (): AiModelCatalogEntry[] =>
 		return {
 			id: config.id,
 			openrouterModel: config.model,
+			provider: DEFAULT_AI_MODEL_PROVIDER,
 			enabled: true,
 			thinkingLevels: levels,
 			defaultThinkingLevel: supportsThinking ? 'medium' : 'none',
@@ -87,6 +107,7 @@ export const normalizeCatalogEntry = (
 	return {
 		id,
 		openrouterModel,
+		provider: normalizeAiModelProvider(entry.provider),
 		enabled: entry.enabled !== false,
 		thinkingLevels,
 		defaultThinkingLevel,
@@ -134,6 +155,7 @@ export const catalogEntryToModelConfig = (entry: AiModelCatalogEntry): AiModelCo
 	return {
 		id: entry.id,
 		model: entry.openrouterModel,
+		provider: entry.provider,
 		thinking,
 		allowedThinkingLevels,
 		defaultThinkingLevel
@@ -146,6 +168,7 @@ export const catalogToModelConfigs = (catalog: AiModelCatalog): AiModelConfig[] 
 export const newCatalogEntry = (catalog: AiModelCatalog): AiModelCatalogEntry => ({
 	id: '',
 	openrouterModel: '',
+	provider: DEFAULT_AI_MODEL_PROVIDER,
 	enabled: true,
 	thinkingLevels: ['none'],
 	defaultThinkingLevel: 'none',

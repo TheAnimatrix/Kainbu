@@ -11,6 +11,7 @@ const preserveDockerEnv = () => {
 		KAINBU_ADMIN_EMAILS: process.env.KAINBU_ADMIN_EMAILS,
 		KAINBU_PUBLIC_URL: process.env.KAINBU_PUBLIC_URL,
 		OPENROUTER_API_KEY: process.env.OPENROUTER_API_KEY,
+		AI_GATEWAY_API_KEY: process.env.AI_GATEWAY_API_KEY,
 		POCKETBASE_URL: process.env.POCKETBASE_URL
 	};
 	return () => {

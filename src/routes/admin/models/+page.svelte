@@ -6,11 +6,13 @@
 		type AdminModelCatalog
 	} from '$lib/kainbu/adminApi';
 	import {
+		AI_MODEL_PROVIDERS,
+		AI_MODEL_PROVIDER_LABELS,
 		ALL_THINKING_LEVELS,
 		newCatalogEntry,
 		type AiModelCatalogEntry
 	} from '$lib/kainbu/aiModelCatalog';
-	import type { AiThinkingLevel } from '$lib/kainbu/types';
+	import type { AiModelProvider, AiThinkingLevel } from '$lib/kainbu/types';
 	import { thinkingLevelLabel } from '$lib/kainbu/models';
 
 	let loading = true;
@@ -214,7 +216,7 @@
 								</div>
 							</div>
 
-							<div class="grid gap-2 sm:grid-cols-2">
+							<div class="grid gap-2 sm:grid-cols-3">
 								<label class="flex flex-col gap-1 text-xs text-app-subtext">
 									Display id
 									<input
@@ -227,10 +229,28 @@
 									/>
 								</label>
 								<label class="flex flex-col gap-1 text-xs text-app-subtext">
-									OpenRouter model id
+									Provider
+									<select
+										class="rounded-md border border-app-border/40 bg-app-bg px-2 py-1.5 text-sm text-app-text"
+										value={entry.provider}
+										on:change={(event) =>
+											updateEntry(entry, {
+												provider: (event.currentTarget as HTMLSelectElement).value as AiModelProvider
+											})}
+									>
+										{#each AI_MODEL_PROVIDERS as provider}
+											<option value={provider}>{AI_MODEL_PROVIDER_LABELS[provider]}</option>
+										{/each}
+									</select>
+								</label>
+								<label class="flex flex-col gap-1 text-xs text-app-subtext">
+									Model id
 									<input
 										class="rounded-md border border-app-border/40 bg-app-bg px-2 py-1.5 text-sm text-app-text"
 										value={entry.openrouterModel}
+										placeholder={entry.provider === 'vercel'
+											? 'anthropic/claude-sonnet-4.6'
+											: 'google/gemini-3-flash-preview'}
 										on:input={(event) =>
 											updateEntry(entry, {
 												openrouterModel: (event.currentTarget as HTMLInputElement).value

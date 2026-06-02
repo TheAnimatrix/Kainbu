@@ -134,9 +134,13 @@ export interface MessageMetadata {
 	tokens?: number;
 }
 
+/** AI backend a model is routed through. */
+export type AiModelProvider = 'openrouter' | 'vercel';
+
 export interface AiModelConfig {
 	id: AiModelId;
 	model: string;
+	provider: AiModelProvider;
 	thinking: AiThinkingConfig | null;
 	allowedThinkingLevels: AiThinkingLevel[];
 	defaultThinkingLevel: AiThinkingLevel;

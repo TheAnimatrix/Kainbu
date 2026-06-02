@@ -19,7 +19,7 @@ import {
 	saveAiModelCatalog
 } from './ai-models.js';
 import { normalizeAiModelCatalog } from '../src/lib/kainbu/aiModelCatalog.js';
-import { invalidateOpenRouterKeyCache } from './openrouter-key.js';
+import { invalidateProviderKeyCache } from './openrouter-key.js';
 import { repairUsersCollectionApiRules } from './usersCollectionRules.js';
 import { getEnv } from './env.js';
 
@@ -109,6 +109,17 @@ const ensureAuthEmailSettingsFields = async (pb: PocketBase) => {
 				]
 			});
 			added.push('resend_api_key');
+			collection = await pb.collections.getOne('app_settings');
+		}
+
+		if (!existing().has('ai_gateway_api_key')) {
+			await pb.collections.update(collection.id, {
+				fields: [
+					...collection.fields,
+					{ name: 'ai_gateway_api_key', type: 'text', required: false, max: 512 }
+				]
+			});
+			added.push('ai_gateway_api_key');
 		}
 
 		if (added.length) {
@@ -134,6 +145,7 @@ const getSettingsRecord = async () => {
 			'singleton',
 			...AUTH_EMAIL_FIELD_NAMES,
 			'openrouter_api_key',
+			'ai_gateway_api_key',
 			'ai_models_json'
 		].join(',')
 	});
@@ -322,18 +334,45 @@ export const handleAdminMe = async (c: Context) => {
 	}
 };
 
+type AiKeyProvider = {
+	field: 'openrouter_api_key' | 'ai_gateway_api_key';
+	envVar: string;
+};
+
+const AI_KEY_PROVIDERS: Record<'openrouter' | 'vercel', AiKeyProvider> = {
+	openrouter: { field: 'openrouter_api_key', envVar: 'OPENROUTER_API_KEY' },
+	vercel: { field: 'ai_gateway_api_key', envVar: 'AI_GATEWAY_API_KEY' }
+};
+
+const buildAiKeyStatus = (
+	record: Record<string, unknown> | null | undefined,
+	provider: AiKeyProvider
+) => {
+	const stored = settingsText(record, provider.field);
+	const envKey = getEnv(provider.envVar, '');
+	const effective = stored || envKey;
+	return {
+		configured: Boolean(effective),
+		source: (stored ? 'database' : envKey ? 'environment' : 'none') as
+			| 'database'
+			| 'environment'
+			| 'none',
+		keyHint: effective ? maskApiKey(effective) : ''
+	};
+};
+
 export const handleAdminGetAiSettings = async (c: Context) => {
 	try {
 		await requireAppAdmin(c.req.header('Authorization'));
-		const record = await getSettingsRecord();
-		const stored =
-			typeof record?.openrouter_api_key === 'string' ? record.openrouter_api_key.trim() : '';
-		const envKey = getEnv('OPENROUTER_API_KEY', '');
-		const effective = stored || envKey;
+		const record = settingsRecordAsData(await getSettingsRecord());
+		const openrouter = buildAiKeyStatus(record, AI_KEY_PROVIDERS.openrouter);
 		return c.json({
-			configured: Boolean(effective),
-			source: stored ? 'database' : envKey ? 'environment' : 'none',
-			keyHint: effective ? maskApiKey(effective) : ''
+			// Top-level fields kept for backward compatibility (OpenRouter).
+			...openrouter,
+			providers: {
+				openrouter,
+				vercel: buildAiKeyStatus(record, AI_KEY_PROVIDERS.vercel)
+			}
 		});
 	} catch (error) {
 		const { status, message } = adminError(error);
@@ -344,19 +383,42 @@ export const handleAdminGetAiSettings = async (c: Context) => {
 export const handleAdminPutAiSettings = async (c: Context) => {
 	try {
 		await requireAppAdmin(c.req.header('Authorization'));
-		const body = (await c.req.json()) as { apiKey?: string };
-		const apiKey = typeof body.apiKey === 'string' ? body.apiKey.trim() : '';
-		if (!apiKey) {
-			return c.json({ error: 'apiKey is required' }, 400);
+		const body = (await c.req.json()) as {
+			apiKey?: string;
+			openrouterApiKey?: string;
+			aiGatewayApiKey?: string;
+		};
+
+		const openrouterKey =
+			typeof body.openrouterApiKey === 'string'
+				? body.openrouterApiKey.trim()
+				: typeof body.apiKey === 'string'
+					? body.apiKey.trim()
+					: '';
+		const aiGatewayKey =
+			typeof body.aiGatewayApiKey === 'string' ? body.aiGatewayApiKey.trim() : '';
+
+		if (!openrouterKey && !aiGatewayKey) {
+			return c.json({ error: 'Provide at least one API key to save.' }, 400);
 		}
 
-		await upsertSettingsRecord({ openrouter_api_key: apiKey });
-		invalidateOpenRouterKeyCache();
+		const patch: Record<string, unknown> = {};
+		if (openrouterKey) patch.openrouter_api_key = openrouterKey;
+		if (aiGatewayKey) patch.ai_gateway_api_key = aiGatewayKey;
 
+		await upsertSettingsRecord(patch);
+		if (openrouterKey) invalidateProviderKeyCache('openrouter');
+		if (aiGatewayKey) invalidateProviderKeyCache('vercel');
+
+		const record = settingsRecordAsData(await getSettingsRecord());
+		const openrouter = buildAiKeyStatus(record, AI_KEY_PROVIDERS.openrouter);
 		return c.json({
 			ok: true,
-			configured: true,
-			keyHint: maskApiKey(apiKey)
+			...openrouter,
+			providers: {
+				openrouter,
+				vercel: buildAiKeyStatus(record, AI_KEY_PROVIDERS.vercel)
+			}
 		});
 	} catch (error) {
 		const { status, message } = adminError(error);

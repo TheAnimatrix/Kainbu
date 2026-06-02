@@ -39,10 +39,17 @@ export type AdminMe = {
 	userId: string;
 };
 
-export type AdminAiSettings = {
+export type AdminAiKeyStatus = {
 	configured: boolean;
 	source: 'database' | 'environment' | 'none';
 	keyHint: string;
+};
+
+export type AdminAiSettings = AdminAiKeyStatus & {
+	providers: {
+		openrouter: AdminAiKeyStatus;
+		vercel: AdminAiKeyStatus;
+	};
 };
 
 export type AuthSettings = {
@@ -118,10 +125,13 @@ export const fetchAdminMe = () => adminFetch<AdminMe>('/api/admin/me');
 
 export const fetchAdminAiSettings = () => adminFetch<AdminAiSettings>('/api/admin/settings/ai');
 
-export const updateAdminAiSettings = (apiKey: string) =>
-	adminFetch<{ ok: boolean; configured: boolean; keyHint: string }>('/api/admin/settings/ai', {
+export const updateAdminAiSettings = (keys: {
+	openrouterApiKey?: string;
+	aiGatewayApiKey?: string;
+}) =>
+	adminFetch<{ ok: boolean } & AdminAiSettings>('/api/admin/settings/ai', {
 		method: 'PUT',
-		body: JSON.stringify({ apiKey })
+		body: JSON.stringify(keys)
 	});
 
 export const fetchAuthSettings = async () => {

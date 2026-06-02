@@ -3,10 +3,67 @@ import {
     WORKSPACE_AI_PROMPT_CACHE_ENABLED,
     WORKSPACE_AI_STREAM_DELTA_THROTTLE_MS,
 } from "./constants.js";
-import { getOpenRouterApiKey } from "../openrouter-key.js";
+import { getProviderApiKey } from "../openrouter-key.js";
 import { OpenRouterTools } from "./tools.js";
+import type { AiModelProvider } from "../../src/lib/kainbu/types.js";
 
 export type OpenRouterMessage = Record<string, unknown>;
+
+type ProviderModelConfig = { model: string; thinking: unknown; provider?: AiModelProvider };
+
+type ProviderRequestTarget = {
+    endpoint: string;
+    headers: Record<string, string>;
+};
+
+const PROVIDER_ENDPOINTS: Record<AiModelProvider, string> = {
+    openrouter: "https://openrouter.ai/api/v1/chat/completions",
+    vercel: "https://ai-gateway.vercel.sh/v1/chat/completions",
+};
+
+const resolveProvider = (modelConfig: ProviderModelConfig): AiModelProvider =>
+    modelConfig.provider === "vercel" ? "vercel" : "openrouter";
+
+/** Resolve the chat-completions endpoint, key, and headers for a model's provider. */
+const resolveProviderTarget = async (
+    provider: AiModelProvider
+): Promise<ProviderRequestTarget> => {
+    const apiKey = await getProviderApiKey(provider);
+    if (!apiKey) {
+        throw new Error(
+            provider === "vercel"
+                ? "Missing AI_GATEWAY_API_KEY"
+                : "Missing OPENROUTER_API_KEY"
+        );
+    }
+
+    const headers: Record<string, string> = {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${apiKey}`,
+    };
+    // OpenRouter attributes traffic via these headers; the Vercel Gateway ignores them.
+    if (provider === "openrouter") {
+        headers["HTTP-Referer"] = "https://kainbu.test";
+        headers["X-Title"] = "Kainbu";
+    }
+
+    return { endpoint: PROVIDER_ENDPOINTS[provider], headers };
+};
+
+/**
+ * Both OpenRouter and the Vercel AI Gateway accept a `reasoning` object on the
+ * OpenAI-compatible endpoint, but the Gateway expects `{ enabled, max_tokens }`
+ * rather than OpenRouter's `{ type, budget_tokens, level }` shape.
+ */
+const buildReasoningBody = (thinking: unknown, provider: AiModelProvider) => {
+    if (!thinking || typeof thinking !== "object") return undefined;
+    if (provider !== "vercel") return thinking;
+
+    const config = thinking as Record<string, unknown>;
+    const budget =
+        typeof config.budget_tokens === "number" ? config.budget_tokens : undefined;
+    return budget ? { enabled: true, max_tokens: budget } : { enabled: true };
+};
 
 export type StreamDeltaHandlers = {
     onContentDelta?: (text: string, accumulated: string) => void;
@@ -112,17 +169,19 @@ export const prepareMessagesForOpenRouter = (
 
 const buildRequestBody = (
     messages: OpenRouterMessage[],
-    modelConfig: { model: string; thinking: unknown },
+    modelConfig: ProviderModelConfig,
     options: { stream: boolean; useTools: boolean; promptCache?: boolean }
 ) => {
+    const provider = resolveProvider(modelConfig);
     const body: Record<string, unknown> = {
         model: modelConfig.model,
         max_tokens: WORKSPACE_AI_MAX_TOKENS,
         messages: prepareMessagesForOpenRouter(messages, { promptCache: options.promptCache }),
         stream: options.stream,
     };
-    if (modelConfig.thinking) {
-        body.reasoning = modelConfig.thinking;
+    const reasoning = buildReasoningBody(modelConfig.thinking, provider);
+    if (reasoning) {
+        body.reasoning = reasoning;
     }
     if (options.useTools) {
         body.tools = OpenRouterTools;
@@ -134,11 +193,11 @@ const buildRequestBody = (
 export const fetchCompletionJson = async (
     messages: OpenRouterMessage[],
     useTools: boolean,
-    modelConfig: { model: string; thinking: unknown },
+    modelConfig: ProviderModelConfig,
     options: { promptCache?: boolean } = {}
 ): Promise<{ response: unknown; usage: OpenRouterUsage }> => {
-    const apiKey = await getOpenRouterApiKey();
-    if (!apiKey) throw new Error("Missing OPENROUTER_API_KEY");
+    const provider = resolveProvider(modelConfig);
+    const target = await resolveProviderTarget(provider);
 
     const body = buildRequestBody(messages, modelConfig, {
         stream: false,
@@ -146,30 +205,25 @@ export const fetchCompletionJson = async (
         promptCache: options.promptCache,
     });
 
-    const res = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+    const res = await fetch(target.endpoint, {
         method: "POST",
-        headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${apiKey}`,
-            "HTTP-Referer": "https://kainbu.test",
-            "X-Title": "Kainbu",
-        },
+        headers: target.headers,
         body: JSON.stringify(body),
     });
 
-    if (!res.ok) throw new Error("OpenRouter error: " + (await res.text()));
+    if (!res.ok) throw new Error(`AI provider error (${provider}): ` + (await res.text()));
     const response = await res.json();
     return { response, usage: extractUsageFromResponse(response) };
 };
 
 export const fetchCompletionStream = async (
     messages: OpenRouterMessage[],
-    modelConfig: { model: string; thinking: unknown },
+    modelConfig: ProviderModelConfig,
     handlers: StreamDeltaHandlers = {},
     options: { promptCache?: boolean } = {}
 ): Promise<StreamedCompletion> => {
-    const apiKey = await getOpenRouterApiKey();
-    if (!apiKey) throw new Error("Missing OPENROUTER_API_KEY");
+    const provider = resolveProvider(modelConfig);
+    const target = await resolveProviderTarget(provider);
 
     const body = buildRequestBody(messages, modelConfig, {
         stream: true,
@@ -177,19 +231,14 @@ export const fetchCompletionStream = async (
         promptCache: options.promptCache,
     });
 
-    const res = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+    const res = await fetch(target.endpoint, {
         method: "POST",
-        headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${apiKey}`,
-            "HTTP-Referer": "https://kainbu.test",
-            "X-Title": "Kainbu",
-        },
+        headers: target.headers,
         body: JSON.stringify(body),
     });
 
-    if (!res.ok) throw new Error("OpenRouter error: " + (await res.text()));
-    if (!res.body) throw new Error("OpenRouter returned an empty stream.");
+    if (!res.ok) throw new Error(`AI provider error (${provider}): ` + (await res.text()));
+    if (!res.body) throw new Error(`AI provider (${provider}) returned an empty stream.`);
 
     const reader = res.body.getReader();
     const decoder = new TextDecoder();
