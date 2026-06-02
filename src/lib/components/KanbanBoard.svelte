@@ -26,6 +26,7 @@
 		Tag as TagIcon,
 		Trash2,
 		Unlink,
+		UserPlus,
 		X
 	} from 'lucide-svelte';
 	import {
@@ -1537,7 +1538,7 @@
 								<div
 									animate:flip={{ duration: flipDurationMs }}
 									data-is-dnd-shadow-item-hint={isShadowItem(column)}
-									class={`flex h-max max-h-full min-h-0 shrink-0 flex-col overflow-hidden rounded-lg border bg-app-surface/82 ${
+									class={`flex h-full max-h-full min-h-0 shrink-0 flex-col overflow-hidden rounded-lg border bg-app-surface/82 ${
 										column.isLinkGroup
 											? 'border-app-primary/35 ring-1 ring-app-primary/15'
 											: 'border-app-border'
@@ -1638,14 +1639,14 @@
 									<div class="flex min-h-0 flex-1 flex-col overflow-hidden p-2">
 										<div
 											data-column-viewport={column.id}
-											class="min-h-0 flex-1 overflow-y-auto"
+											class="flex min-h-0 flex-1 flex-col overflow-y-auto"
 											onscroll={() => {
 												closeMenus();
 												bumpLinkOverlay();
 											}}
 										>
 											<div
-												class="flex flex-col gap-1.5"
+												class="flex min-h-16 flex-1 flex-col gap-1.5"
 												use:dndzone={{
 													items: column.tasks,
 													type: 'task',
@@ -1848,13 +1849,14 @@
 																		{:else}
 																			<button
 																				type="button"
-																				class="inline-flex items-center gap-1 rounded-md border border-dashed border-app-border px-1.5 py-0.5 text-[9px] font-medium text-app-subtext transition hover:border-app-primary/40 hover:text-app-primary"
+																				aria-label="Assign"
+																				class="inline-flex items-center rounded-md border border-dashed border-app-border p-0.5 text-app-subtext transition hover:border-app-primary/40 hover:text-app-primary"
 																				onclick={(event) => {
 																					event.stopPropagation();
 																					toggleAssignMenu(taskColumnId, task.id);
 																				}}
 																			>
-																				Assign
+																				<UserPlus size={12} />
 																			</button>
 																		{/if}
 																		{#if assignMenuOpen?.colId === taskColumnId && assignMenuOpen?.taskId === task.id}
@@ -1914,79 +1916,101 @@
 																{/if}
 															</div>
 
-															<div class="flex items-center">
-																<button
-																	type="button"
-																	class={`transition ${
-																		linkViewAnchorId === task.id
-																			? 'text-app-primary'
-																			: 'text-app-subtext hover:bg-app-element hover:text-app-primary'
-																	} ${isMobile ? 'min-h-8 min-w-8 rounded-lg p-1.5' : 'rounded-md p-1.5'}`}
-																	title="View links"
-																	disabled={isLocked || isDiffMode}
-																	onclick={(event) => {
-																		event.stopPropagation();
-																		toggleLinkView(task.id);
-																	}}
+															<div class="group/task-actions flex items-center">
+																<div
+																	class={`flex items-center ${
+																		isMobile
+																			? ''
+																			: 'w-0 overflow-hidden opacity-0 transition-all duration-150 group-hover/task-actions:w-auto group-hover/task-actions:opacity-100'
+																	}`}
 																>
-																	<Link2 size={isMobile ? 18 : 16} />
-																</button>
-																<button
-																	type="button"
-																	class={`transition ${
-																		taskInfoMenuOpen?.colId === taskColumnId &&
-																		taskInfoMenuOpen?.taskId === task.id
-																			? 'text-app-primary'
-																			: 'text-app-subtext hover:bg-app-element hover:text-app-text'
-																	} ${isMobile ? 'min-h-8 min-w-8 rounded-lg p-1.5' : 'rounded-md p-1.5'}`}
-																	title="Card info"
-																	aria-label="Card info"
-																	aria-expanded={taskInfoMenuOpen?.colId === taskColumnId &&
-																		taskInfoMenuOpen?.taskId === task.id}
-																	onclick={(event) => {
-																		event.stopPropagation();
-																		toggleTaskInfoMenu(
-																			taskColumnId,
-																			task.id,
-																			event.currentTarget as HTMLButtonElement
-																		);
-																	}}
-																>
-																	<Info size={isMobile ? 18 : 16} />
-																</button>
-																<div class="relative">
 																	<button
 																		type="button"
-																		class={`text-app-subtext transition hover:bg-app-element hover:text-app-text ${
-																			isMobile ? 'min-h-8 min-w-8 rounded-lg p-1.5' : 'rounded-md p-1.5'
-																		}`}
-																		title="Quick tags"
+																		class={`transition ${
+																			linkViewAnchorId === task.id
+																				? 'text-app-primary'
+																				: 'text-app-subtext hover:bg-app-element hover:text-app-primary'
+																		} ${isMobile ? 'min-h-8 min-w-8 rounded-lg p-1.5' : 'rounded-md p-1.5'}`}
+																		title="View links"
+																		disabled={isLocked || isDiffMode}
 																		onclick={(event) => {
 																			event.stopPropagation();
-																			toggleTaskTagMenu(
+																			toggleLinkView(task.id);
+																		}}
+																	>
+																		<Link2 size={isMobile ? 18 : 16} />
+																	</button>
+																	<button
+																		type="button"
+																		class={`transition ${
+																			taskInfoMenuOpen?.colId === taskColumnId &&
+																			taskInfoMenuOpen?.taskId === task.id
+																				? 'text-app-primary'
+																				: 'text-app-subtext hover:bg-app-element hover:text-app-text'
+																		} ${isMobile ? 'min-h-8 min-w-8 rounded-lg p-1.5' : 'rounded-md p-1.5'}`}
+																		title="Card info"
+																		aria-label="Card info"
+																		aria-expanded={taskInfoMenuOpen?.colId === taskColumnId &&
+																			taskInfoMenuOpen?.taskId === task.id}
+																		onclick={(event) => {
+																			event.stopPropagation();
+																			toggleTaskInfoMenu(
 																				taskColumnId,
 																				task.id,
 																				event.currentTarget as HTMLButtonElement
 																			);
 																		}}
 																	>
-																		<TagIcon size={isMobile ? 18 : 16} />
+																		<Info size={isMobile ? 18 : 16} />
+																	</button>
+																	<div class="relative">
+																		<button
+																			type="button"
+																			class={`text-app-subtext transition hover:bg-app-element hover:text-app-text ${
+																				isMobile ? 'min-h-8 min-w-8 rounded-lg p-1.5' : 'rounded-md p-1.5'
+																			}`}
+																			title="Quick tags"
+																			onclick={(event) => {
+																				event.stopPropagation();
+																				toggleTaskTagMenu(
+																					taskColumnId,
+																					task.id,
+																					event.currentTarget as HTMLButtonElement
+																				);
+																			}}
+																		>
+																			<TagIcon size={isMobile ? 18 : 16} />
+																		</button>
+																	</div>
+																	<button
+																		type="button"
+																		class={`text-app-subtext transition hover:bg-app-element hover:text-app-text ${
+																			isMobile ? 'min-h-8 min-w-8 rounded-lg p-1.5' : 'rounded-md p-1.5'
+																		}`}
+																		title="Copy title"
+																		aria-label="Copy title"
+																		onclick={(event) => {
+																			event.stopPropagation();
+																			void copyTaskTitle(taskColumnId, task.id);
+																		}}
+																	>
+																		<Copy size={isMobile ? 18 : 16} />
+																	</button>
+																	<button
+																		type="button"
+																		class={`text-app-subtext transition hover:bg-app-element hover:text-app-accent ${
+																			isMobile ? 'min-h-8 min-w-8 rounded-lg p-1.5' : 'rounded-md p-1.5'
+																		}`}
+																		title="Queue for chat"
+																		onclick={(event) => {
+																			event.stopPropagation();
+																			onSendToChat({ task, column });
+																			closeMenus();
+																		}}
+																	>
+																		<MessageSquarePlus size={isMobile ? 18 : 16} />
 																	</button>
 																</div>
-																<button
-																	type="button"
-																	class={`text-app-subtext transition hover:bg-app-element hover:text-app-accent ${
-																		isMobile ? 'min-h-8 min-w-8 rounded-lg p-1.5' : 'rounded-md p-1.5'
-																	}`}
-																	title="Queue for chat"
-																	onclick={(event) => {
-																		event.stopPropagation();
-																		onSendToChat({ task, column });
-																		closeMenus();
-																	}}
-																>
-																	<MessageSquarePlus size={isMobile ? 18 : 16} />
-																</button>
 
 																<div class="relative">
 																	<button
@@ -1996,6 +2020,8 @@
 																				? 'min-h-8 min-w-8 rounded-lg p-1.5'
 																				: 'rounded-md p-1.5'
 																		}`}
+																		title="More actions"
+																		aria-label="More actions"
 																		onclick={(event) => {
 																			event.stopPropagation();
 																			toggleTaskMenu(

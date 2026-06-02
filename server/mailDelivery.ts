@@ -78,8 +78,8 @@ const htmlEscape = (value: string) =>
 const buildInviteEmail = (projectName: string, appUrl: string) => {
 	const link = appUrl || '/';
 	const subject = `You were invited to ${projectName}`;
-	const html = `<p>You were invited to join <strong>${htmlEscape(projectName)}</strong> on Kainbu.</p><p><a href="${htmlEscape(link)}">Open Kainbu</a> and sign in with this email address to accept the invite.</p>`;
-	const text = `You were invited to join ${projectName} on Kainbu. Open ${link} and sign in with this email address to accept the invite.`;
+	const html = `<p>You were invited to join <strong>${htmlEscape(projectName)}</strong> on Kainbu.</p><p><a href="${htmlEscape(link)}">Open Kainbu</a> and sign up or sign in with this email address to accept the invite.</p>`;
+	const text = `You were invited to join ${projectName} on Kainbu. Open ${link} and sign up or sign in with this email address to accept the invite.`;
 	return { subject, html, text, link };
 };
 

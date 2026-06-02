@@ -130,8 +130,10 @@
 	} from '$lib/kainbu/workspaceUrl';
 	import { getProjectMemberDisplayName, getProjectMemberSearchText } from '$lib/kainbu/members';
 	import {
+		getProjectBoard,
 		getProjectPage,
 		normalizeProjectStructure,
+		pageToScratchpadData,
 		setProjectActiveBoard,
 		setProjectActivePage,
 		updateProjectBoardData,
@@ -171,7 +173,11 @@
 		WorkspaceTab
 	} from '$lib/kainbu/types';
 	import { isPocketBaseConfigured, pocketbase } from '$lib/pocketbaseClient';
-	import { formatPocketBaseError, isOwnUserRecordNotFound } from '$lib/pocketbaseErrors';
+	import {
+		formatPocketBaseError,
+		isOwnUserRecordNotFound,
+		isPocketBaseNotFound
+	} from '$lib/pocketbaseErrors';
 	import { shouldIgnorePocketBaseError } from '$lib/kainbu/pbRequest';
 	import { fetchAuthSettings, signupWithAuthSettings } from '$lib/kainbu/adminApi';
 
@@ -402,10 +408,7 @@
 		view: visibleWorkspaceTab
 	});
 	$: presenceProjectId = workspaceUrlState.projectId || currentProjectId || '';
-	$: presenceBoardId =
-		workspaceUrlState.view === 'kanban' && workspaceUrlState.boardId
-			? workspaceUrlState.boardId
-			: currentBoardId;
+	$: presenceBoardId = visibleWorkspaceTab === 'kanban' ? currentBoardId : '';
 	$: if (workspaceUrlReady && user && projects.length) {
 		syncWorkspaceUrl();
 	}
@@ -1663,6 +1666,25 @@
 		clearBoardPresenceTimer();
 	}
 
+	const resolveMergedActiveId = (
+		items: { id: string }[],
+		localId: string,
+		remoteId: string
+	) => {
+		if (items.some((item) => item.id === localId)) return localId;
+		if (items.some((item) => item.id === remoteId)) return remoteId;
+		return items[0]?.id || '';
+	};
+
+	const localChildListHasPendingDeletions = (
+		localItems: { id: string }[],
+		remoteItems: { id: string }[]
+	) => {
+		if (localItems.length >= remoteItems.length) return false;
+		const remoteIds = new Set(remoteItems.map((item) => item.id));
+		return localItems.every((item) => remoteIds.has(item.id));
+	};
+
 	const mergeRemoteProjects = (localProjects: Project[], remoteProjects: Project[]) => {
 		const localProjectsById = new Map(localProjects.map((project) => [project.id, project]));
 		const remoteProjectsById = new Map(remoteProjects.map((project) => [project.id, project]));
@@ -1679,12 +1701,28 @@
 			const preferLocalBoardState =
 				preferLocalFallback ||
 				hasPendingBoardSyncForProject(remoteProject.id) ||
-				localProject.boards.length > remoteProject.boards.length;
+				localProject.boards.length > remoteProject.boards.length ||
+				localChildListHasPendingDeletions(localProject.boards, remoteProject.boards);
 			const preferLocalPageState =
 				preferLocalFallback ||
 				hasPendingPageSyncForProject(remoteProject.id) ||
-				localProject.pages.length > remoteProject.pages.length;
+				localProject.pages.length > remoteProject.pages.length ||
+				localChildListHasPendingDeletions(localProject.pages, remoteProject.pages);
 			const preferLocalAiState = pendingChatSyncs.has(remoteProject.id) || preferLocalFallback;
+			const mergedBoards = preferLocalBoardState ? localProject.boards : remoteProject.boards;
+			const mergedPages = preferLocalPageState ? localProject.pages : remoteProject.pages;
+			const activeBoardId = resolveMergedActiveId(
+				mergedBoards,
+				localProject.activeBoardId,
+				remoteProject.activeBoardId
+			);
+			const activePageId = resolveMergedActiveId(
+				mergedPages,
+				localProject.activePageId,
+				remoteProject.activePageId
+			);
+			const activeBoard = getProjectBoard({ boards: mergedBoards, activeBoardId }, activeBoardId);
+			const activePage = getProjectPage({ pages: mergedPages, activePageId }, activePageId);
 			const mergedMembers = remoteProject.members.map((remoteMember) => {
 				const localMember = localProject.members.find(
 					(member) => member.userId === remoteMember.userId
@@ -1710,24 +1748,14 @@
 				backgroundTheme: preferLocalFallback
 					? localProject.backgroundTheme
 					: remoteProject.backgroundTheme,
-				boards: preferLocalBoardState ? localProject.boards : remoteProject.boards,
-				activeBoardId: preferLocalBoardState
-					? localProject.activeBoardId
-					: remoteProject.activeBoardId,
-				kanbanData:
-					preferLocalBoardState
-						? localProject.kanbanData
-						: remoteProject.kanbanData,
-				pages: preferLocalPageState ? localProject.pages : remoteProject.pages,
-				activePageId: preferLocalPageState
-					? localProject.activePageId
-					: remoteProject.activePageId,
-				scratchpadData:
-					preferLocalPageState
-						? localProject.scratchpadData
-						: remoteProject.scratchpadData,
+				boards: mergedBoards,
+				activeBoardId: activeBoard?.id || activeBoardId,
+				kanbanData: activeBoard?.kanbanData || [],
+				pages: mergedPages,
+				activePageId: activePage?.id || activePageId,
+				scratchpadData: activePage ? pageToScratchpadData(activePage) : remoteProject.scratchpadData,
 				scratchpadRev:
-					preferLocalPageState
+					activePageId === localProject.activePageId
 						? localProject.scratchpadRev
 						: remoteProject.scratchpadRev,
 				aiSessions: preferLocalAiState ? localProject.aiSessions : remoteProject.aiSessions,
@@ -2007,9 +2035,15 @@
 		try {
 			if (payload.isSignUp) {
 				const result = await signupWithAuthSettings(payload.email, payload.password);
-				authInfoMessage = result.requiresVerification
-					? 'Account created. Check your email to verify your address before signing in.'
-					: 'Account created. Sign in with your email and password.';
+				if (result.requiresVerification) {
+					authInfoMessage =
+						'Account created. Check your email to verify your address before signing in.';
+					return;
+				}
+				await pocketbase
+					.collection('users')
+					.authWithPassword(payload.email, payload.password);
+				authInfoMessage = 'Account created.';
 				return;
 			}
 
@@ -2545,6 +2579,25 @@
 		});
 	};
 
+	const clearBoardSyncState = (projectId: string, boardId: string) => {
+		const syncKey = getBoardHistoryKey(projectId, boardId);
+		const boardTimeout = boardSyncTimeouts.get(syncKey);
+		if (boardTimeout) clearTimeout(boardTimeout);
+		boardSyncTimeouts.delete(syncKey);
+		pendingBoardSyncs.delete(syncKey);
+
+		const { [syncKey]: _removedHistory, ...remainingHistory } = boardSessionHistory;
+		boardSessionHistory = remainingHistory;
+	};
+
+	const clearPageSyncState = (projectId: string, pageId: string) => {
+		const syncKey = `${projectId}::page::${pageId}`;
+		const pageTimeout = scratchpadSyncTimeouts.get(syncKey);
+		if (pageTimeout) clearTimeout(pageTimeout);
+		scratchpadSyncTimeouts.delete(syncKey);
+		pendingScratchpadSyncs.delete(syncKey);
+	};
+
 	const handleDeleteBoard = async (projectId: string, boardId: string) => {
 		const project = projects.find((entry) => entry.id === projectId);
 		if (!project || project.boards.length <= 1) return;
@@ -2555,26 +2608,40 @@
 		const confirmed = window.confirm(`Delete board "${board.name}"?`);
 		if (!confirmed) return;
 
+		const previousProjects = projects;
 		const remainingBoards = project.boards.filter((b) => b.id !== boardId);
-		const needsSwitch = currentProjectId === projectId && currentBoardId === boardId;
+		const nextActiveBoardId =
+			project.activeBoardId === boardId
+				? remainingBoards[0]?.id || ''
+				: project.activeBoardId;
 
-		projects = projects.map((p) =>
-			p.id === projectId ? { ...p, boards: remainingBoards } : p
-		);
-
-		if (needsSwitch && remainingBoards.length > 0) {
-			selectProject(projectId, (cp) =>
-				setProjectActiveBoard(cp, remainingBoards[0].id)
-			);
-		}
+		clearBoardSyncState(projectId, boardId);
+		applyWorkspaceState({
+			nextProjects: projects.map((entry) =>
+				entry.id === projectId
+					? normalizeProjectStructure({
+							...entry,
+							boards: remainingBoards,
+							activeBoardId: nextActiveBoardId
+						})
+					: entry
+			),
+			preferredProjectId: currentProjectId
+		});
 
 		try {
 			await runSyncAction(
 				() => deleteProjectBoardRemote(projectId, boardId),
 				'Unable to delete this board right now.'
 			);
+			scheduleSnapshotPersist();
 		} catch (error) {
+			if (isPocketBaseNotFound(error)) return;
 			console.error(error);
+			applyWorkspaceState({
+				nextProjects: previousProjects,
+				preferredProjectId: currentProjectId
+			});
 		}
 	};
 
@@ -2588,26 +2655,38 @@
 		const confirmed = window.confirm(`Delete page "${page.name}"?`);
 		if (!confirmed) return;
 
+		const previousProjects = projects;
 		const remainingPages = project.pages.filter((p) => p.id !== pageId);
-		const needsSwitch = currentProjectId === projectId && currentPageId === pageId;
+		const nextActivePageId =
+			project.activePageId === pageId ? remainingPages[0]?.id || '' : project.activePageId;
 
-		projects = projects.map((p) =>
-			p.id === projectId ? { ...p, pages: remainingPages } : p
-		);
-
-		if (needsSwitch && remainingPages.length > 0) {
-			selectProject(projectId, (cp) =>
-				setProjectActivePage(cp, remainingPages[0].id)
-			);
-		}
+		clearPageSyncState(projectId, pageId);
+		applyWorkspaceState({
+			nextProjects: projects.map((entry) =>
+				entry.id === projectId
+					? normalizeProjectStructure({
+							...entry,
+							pages: remainingPages,
+							activePageId: nextActivePageId
+						})
+					: entry
+			),
+			preferredProjectId: currentProjectId
+		});
 
 		try {
 			await runSyncAction(
 				() => deleteProjectPageRemote(projectId, pageId),
 				'Unable to delete this page right now.'
 			);
+			scheduleSnapshotPersist();
 		} catch (error) {
+			if (isPocketBaseNotFound(error)) return;
 			console.error(error);
+			applyWorkspaceState({
+				nextProjects: previousProjects,
+				preferredProjectId: currentProjectId
+			});
 		}
 	};
 
@@ -4803,11 +4882,13 @@
 								class="chat-orb__icon relative z-10 h-7 w-7"
 							/>
 						</button>
-					{:else}
-						<div
-							class="relative h-full min-w-0 shrink-0 border-l border-app-border bg-app-surface/92 backdrop-blur-xl"
-							style={`width:${desktopChatWidth}rem;`}
-						>
+					{/if}
+					<div
+						class:hidden={desktopChatCollapsed}
+						class="relative h-full min-w-0 shrink-0 border-l border-app-border bg-app-surface/92 backdrop-blur-xl"
+						aria-hidden={desktopChatCollapsed}
+						style={`width:${desktopChatWidth}rem;`}
+					>
 							<div
 								class="absolute left-0 top-0 z-60 h-full w-2 cursor-col-resize transition hover:bg-app-primary/20"
 								on:pointerdown={handleDesktopChatResizeStart}
@@ -4856,8 +4937,7 @@
 									/>
 								</div>
 							{/key}
-						</div>
-					{/if}
+					</div>
 				{/if}
 			</div>
 		</div>

@@ -307,7 +307,14 @@ export const handleAuthSignup = async (c: Context) => {
 			passwordConfirm: password
 		});
 
-		await linkPendingInvitesByEmail(pb, email, String(user.id));
+		const inviteLink = await linkPendingInvitesByEmail(pb, email, String(user.id));
+		if (inviteLink.failed > 0) {
+			console.warn('[auth] signup: some pending invites were not linked', {
+				email,
+				userId: user.id,
+				...inviteLink
+			});
+		}
 
 		if (settings.emailVerificationEnabled) {
 			await pb.collection('users').requestVerification(email);
@@ -320,6 +327,21 @@ export const handleAuthSignup = async (c: Context) => {
 		});
 	} catch (error) {
 		const { status, message } = adminError(error);
+		const normalized = message.toLowerCase();
+		if (
+			status === 400 &&
+			(normalized.includes('already') ||
+				normalized.includes('unique') ||
+				normalized.includes('validation_not_unique'))
+		) {
+			return c.json(
+				{
+					error:
+						'An account with this email already exists. Sign in instead, or use Forgot password if you were invited.'
+				},
+				400
+			);
+		}
 		return c.json({ error: message }, status as 400 | 403 | 500);
 	}
 };

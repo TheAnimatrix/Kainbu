@@ -114,7 +114,7 @@ onRecordAfterCreateSuccess((e) => {
 		const appUrl = (e.app.settings().meta.appURL || '').replace(/\/+$/, '');
 		const link = appUrl || '/';
 		const subject = `You were invited to ${projectName}`;
-		const html = `<p>You were invited to join <strong>${htmlEscape(projectName)}</strong> on Kainbu.</p><p><a href="${htmlEscape(link)}">Open Kainbu</a> and sign in with this email address to accept the invite.</p>`;
+		const html = `<p>You were invited to join <strong>${htmlEscape(projectName)}</strong> on Kainbu.</p><p><a href="${htmlEscape(link)}">Open Kainbu</a> and sign up or sign in with this email address to accept the invite.</p>`;
 
 		const message = new MailerMessage({
 			from: {
@@ -124,7 +124,7 @@ onRecordAfterCreateSuccess((e) => {
 			to: [{ address: inviteeEmail }],
 			subject,
 			html,
-			text: `You were invited to join ${projectName} on Kainbu. Open ${link} and sign in with this email address to accept the invite.`
+			text: `You were invited to join ${projectName} on Kainbu. Open ${link} and sign up or sign in with this email address to accept the invite.`
 		});
 		e.app.newMailClient().send(message);
 	} catch (err) {

@@ -45,6 +45,9 @@
 		duplicateTopLevelNode,
 		type BlockTransformId,
 		type TopLevelBlock,
+		ensureWritableSurfacesAroundAssetImages,
+		findTopLevelBlockAtPos,
+		focusWritableSurfaceBesideBlock,
 		getTopLevelBlockDom,
 		getTopLevelBlockByIndex,
 		getTopLevelBlocks,
@@ -349,8 +352,37 @@
 					)
 			);
 
-	const hasMarkdownContent = (source: string) =>
-		preprocessMarkdownForEditor(source || '').trim().length > 0;
+	const ASSET_MARKDOWN_PATTERN = /!\[[^\]]*]\(asset:[^)]+\)/;
+
+	const hasMarkdownContent = (source: string) => {
+		const raw = source || '';
+		if (ASSET_MARKDOWN_PATTERN.test(raw)) return true;
+		return preprocessMarkdownForEditor(raw).trim().length > 0;
+	};
+
+	const serializeEditorMarkdown = (target: Editor) => {
+		const markdown = target.getMarkdown();
+		if (markdown.trim()) return markdown;
+
+		const assetBlocks: string[] = [];
+		target.state.doc.forEach((node) => {
+			if (node.type.name !== 'assetImage') return;
+			assetBlocks.push(
+				buildAssetMarkdown(node.attrs.assetId || '', node.attrs.alt || '', {
+					width: clampImageWidth(node.attrs.width)
+				})
+			);
+		});
+		return assetBlocks.length ? assetBlocks.join('\n\n') : markdown;
+	};
+
+	const normalizeAssetImageEditingSurfaces = (
+		target: Editor,
+		options: { emitChange?: boolean } = { emitChange: true }
+	) => {
+		if (!ensureWritableSurfacesAroundAssetImages(target)) return;
+		if (options.emitChange) queueChange('command');
+	};
 
 	const applyEditorContent = (target: Editor, source: string) => {
 		if (!hasMarkdownContent(source)) {
@@ -362,6 +394,7 @@
 			contentType: 'markdown',
 			emitUpdate: false
 		});
+		normalizeAssetImageEditingSurfaces(target, { emitChange: false });
 	};
 
 	type MenuRendererOptions<T extends MenuRenderableItem> = {
@@ -573,7 +606,7 @@
 		force = false
 	) => {
 		if (!editor) return;
-		const nextValue = editor.getMarkdown();
+		const nextValue = serializeEditorMarkdown(editor);
 		if (!force && nextValue === editorValue) return;
 		editorValue = nextValue;
 		onChange(nextValue, options);
@@ -1043,6 +1076,13 @@
 				}))
 			)
 			.run();
+		normalizeAssetImageEditingSurfaces(editor);
+		const imageBlockIndex = getTopLevelBlocks(editor.state.doc).findIndex((block) =>
+			block.node.type.name === 'assetImage'
+		);
+		if (imageBlockIndex >= 0) {
+			focusWritableSurfaceBesideBlock(editor, imageBlockIndex, 'below');
+		}
 
 		let uploadResults: ImageUploadResult[];
 		try {
@@ -1502,6 +1542,26 @@
 						if ((event.target as HTMLElement | null)?.closest('[data-kainbu-control]')) return;
 						const position = props.getPos();
 						if (typeof position !== 'number') return;
+						const block = findTopLevelBlockAtPos(props.view.state.doc, position);
+						const rect = dom.getBoundingClientRect();
+						const relativeY = event.clientY - rect.top;
+						const topZone = Math.min(28, rect.height * 0.22);
+						const bottomZone = Math.max(rect.height - 28, rect.height * 0.78);
+
+						if (block && editor && relativeY < topZone) {
+							event.preventDefault();
+							queueChange('command');
+							focusWritableSurfaceBesideBlock(editor, block.index, 'above');
+							return;
+						}
+
+						if (block && editor && relativeY > bottomZone) {
+							event.preventDefault();
+							queueChange('command');
+							focusWritableSurfaceBesideBlock(editor, block.index, 'below');
+							return;
+						}
+
 						event.preventDefault();
 						props.view.dispatch(
 							props.view.state.tr.setSelection(NodeSelection.create(props.view.state.doc, position))
@@ -1539,6 +1599,29 @@
 							clearResize();
 						}
 					};
+				};
+			}
+		});
+
+	const createAssetImageKeyboardExtension = () =>
+		Extension.create({
+			name: 'assetImageKeyboard',
+			addKeyboardShortcuts() {
+				const focusBesideSelectedImage = (side: 'above' | 'below') => {
+					const { selection } = this.editor.state;
+					if (!(selection instanceof NodeSelection) || selection.node.type.name !== 'assetImage') {
+						return false;
+					}
+					const block = findTopLevelBlockAtPos(this.editor.state.doc, selection.from);
+					if (!block) return false;
+					queueChange('command');
+					return focusWritableSurfaceBesideBlock(this.editor, block.index, side);
+				};
+
+				return {
+					ArrowUp: () => focusBesideSelectedImage('above'),
+					ArrowDown: () => focusBesideSelectedImage('below'),
+					Enter: () => focusBesideSelectedImage('below')
 				};
 			}
 		});
@@ -1647,6 +1730,7 @@
 				Image,
 				createReferenceNode(),
 				createAssetNode(),
+				createAssetImageKeyboardExtension(),
 				createSlashCommands(),
 				...(isPageBlockHandleMode ? [createBlockHandleExtension()] : [])
 			],
@@ -1671,7 +1755,8 @@
 				}
 			},
 			onCreate: ({ editor: nextEditor }) => {
-				editorValue = nextEditor.getMarkdown();
+				normalizeAssetImageEditingSurfaces(nextEditor, { emitChange: false });
+				editorValue = serializeEditorMarkdown(nextEditor);
 				void syncBlockHandlePosition();
 			},
 			onUpdate: () => {

@@ -12,6 +12,7 @@ import { normalizeProjectStructure } from '$lib/kainbu/projectStructure';
 import { normalizeScratchpadData, serializeScratchpadData } from '$lib/kainbu/scratchpad';
 import { normalizeUserSettings } from '$lib/kainbu/settings';
 import { pbNoAutoCancel } from '$lib/kainbu/pbRequest';
+import { isPocketBaseNotFound } from '$lib/pocketbaseErrors';
 import { isPocketBaseRecordId } from '$lib/kainbu/recordIds';
 import { normalizeDueTimestamp } from '$lib/kainbu/timing';
 import { getPb } from '$lib/kainbu/pocketbaseContext';
@@ -1360,12 +1361,25 @@ const deleteProjectChildByClientId = async (
 ) => {
 	const pb = getPb();
 	const projectPbId = await getProjectPbId(projectId);
-	const record = await pb
-		.collection(collection)
-		.getFirstListItem(
-			`${projectRelationFilter(projectPbId)} && client_id = "${pbEscapeFilter(clientId)}"`
-		);
-	await pb.collection(collection).delete(record.id);
+	let recordId: string;
+	try {
+		const record = await pb
+			.collection(collection)
+			.getFirstListItem(
+				`${projectRelationFilter(projectPbId)} && client_id = "${pbEscapeFilter(clientId)}"`
+			);
+		recordId = record.id;
+	} catch (error) {
+		if (isPocketBaseNotFound(error)) return;
+		throw error;
+	}
+
+	try {
+		await pb.collection(collection).delete(recordId);
+	} catch (error) {
+		if (isPocketBaseNotFound(error)) return;
+		throw error;
+	}
 };
 
 export const renameProjectBoard = async (projectId: string, boardId: string, name: string) => {
@@ -1528,12 +1542,36 @@ export const reportBoardPresence = async (projectId: string, boardId: string | n
 };
 
 export const setProjectPinned = async (projectId: string, pinned: boolean) => {
-	await invokeWorkspaceApi('/api/workspace/projects/pin', {
-		body: {
-			projectId,
-			pinned
+	const pinnedAt = pinned ? new Date().toISOString() : '';
+
+	try {
+		await invokeWorkspaceApi('/api/workspace/projects/pin', {
+			body: {
+				projectId,
+				pinned
+			}
+		});
+		return;
+	} catch (apiError) {
+		const pb = getPb();
+		const userId = pb.authStore.model?.id;
+		if (!userId) throw apiError;
+
+		try {
+			const membership = await pb.collection('project_memberships').getFirstListItem(
+				`user = "${pbEscapeFilter(userId)}" && project.client_id = "${pbEscapeFilter(projectId)}"`
+			);
+			await pb.collection('project_memberships').update(membership.id, {
+				pinned_at: pinnedAt
+			});
+		} catch (directError) {
+			console.error('[kainbu] project pin API and direct PocketBase update failed', {
+				apiError,
+				directError
+			});
+			throw apiError;
 		}
-	});
+	}
 };
 
 export const updateProjectBackground = async (

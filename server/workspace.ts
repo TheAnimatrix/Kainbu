@@ -239,26 +239,52 @@ const getProfileByEmail = async (admin: PocketBase, inviteeEmail: string) => {
 	}
 };
 
+const isUnsetInviteeRelation = (value: unknown) => !relationId(value);
+
+export type LinkPendingInvitesResult = { linked: number; failed: number };
+
+/** Attach email-only pending invites to a new user. Never throws — signup must not fail after user create. */
 export const linkPendingInvitesByEmail = async (
 	admin: PocketBase,
 	email: string,
 	userId: string
-) => {
+): Promise<LinkPendingInvitesResult> => {
 	const normalizedEmail = email.trim().toLowerCase();
-	if (!normalizedEmail || !userId) return;
+	if (!normalizedEmail || !userId) return { linked: 0, failed: 0 };
 
-	let invites: { id: string }[] = [];
+	let invites: { id: string; invitee?: unknown }[] = [];
 	try {
 		invites = await admin.collection('project_invites').getFullList({
-			filter: `invitee_email = "${pbEscapeFilter(normalizedEmail)}" && status = "pending" && invitee = ""`
+			filter: `invitee_email = "${pbEscapeFilter(normalizedEmail)}" && status = "pending"`
 		});
-	} catch {
-		return;
+	} catch (error) {
+		console.error('[invites] linkPendingInvitesByEmail list failed', {
+			email: normalizedEmail,
+			error: error instanceof Error ? error.message : String(error)
+		});
+		return { linked: 0, failed: 0 };
 	}
 
-	for (const invite of invites) {
-		await admin.collection('project_invites').update(invite.id, { invitee: userId });
+	const toLink = invites.filter((invite) => isUnsetInviteeRelation(invite.invitee));
+	let linked = 0;
+	let failed = 0;
+
+	for (const invite of toLink) {
+		try {
+			await admin.collection('project_invites').update(invite.id, { invitee: userId });
+			linked += 1;
+		} catch (error) {
+			failed += 1;
+			console.error('[invites] linkPendingInvitesByEmail update failed', {
+				inviteId: invite.id,
+				email: normalizedEmail,
+				userId,
+				error: error instanceof Error ? error.message : String(error)
+			});
+		}
 	}
+
+	return { linked, failed };
 };
 
 const inviteeCanRespond = (

@@ -56,9 +56,13 @@
 		try {
 			if (isSignUp) {
 				const result = await signupWithAuthSettings(email, password);
-				infoMessage = result.requiresVerification
-					? 'Account created. Check your email before signing in to authorize the CLI.'
-					: 'Account created. Sign in, then authorize the CLI.';
+				if (result.requiresVerification) {
+					infoMessage =
+						'Account created. Check your email before signing in to authorize the CLI.';
+				} else {
+					await pocketbase.collection('users').authWithPassword(email, password);
+					infoMessage = 'Account created. You can authorize the CLI below.';
+				}
 			} else {
 				await pocketbase.collection('users').authWithPassword(email, password);
 			}

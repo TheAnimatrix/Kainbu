@@ -34,6 +34,11 @@ const cloneNode = (node: ProseMirrorNode) => node.copy(node.content);
 const createParagraphNode = (schema: Schema) =>
 	schema.nodes.paragraph.createAndFill() ?? schema.nodes.paragraph.create();
 
+const isAssetImageNode = (node: ProseMirrorNode) => node.type.name === 'assetImage';
+
+const canTypeBeforeAssetImage = (node: ProseMirrorNode | undefined) =>
+	Boolean(node && !isAssetImageNode(node));
+
 const getInlineContentFromBlock = (block: TopLevelBlock) => {
 	const textblock = findFirstTextblock(block.node);
 	return textblock?.content.size ? textblock.content : null;
@@ -255,6 +260,67 @@ export const insertParagraphNearTopLevelNode = (
 	nodes.splice(Math.max(0, Math.min(nodes.length, insertIndex)), 0, createParagraphNode(editor.state.schema));
 	replaceTopLevelNodes(editor, nodes, insertIndex);
 	return true;
+};
+
+/** Ensures empty paragraphs exist around image blocks so the caret can move above/below them. */
+export const ensureWritableSurfacesAroundAssetImages = (editor: Editor) => {
+	const blocks = getTopLevelBlocks(editor.state.doc);
+	if (!blocks.some((block) => isAssetImageNode(block.node))) return false;
+
+	const schema = editor.state.schema;
+	const nodes = blocks.map((block) => cloneNode(block.node));
+	const nextNodes: ProseMirrorNode[] = [];
+	let changed = false;
+
+	const pushParagraph = () => {
+		nextNodes.push(createParagraphNode(schema));
+		changed = true;
+	};
+
+	for (let index = 0; index < nodes.length; index += 1) {
+		const node = nodes[index];
+		if (!isAssetImageNode(node)) {
+			nextNodes.push(node);
+			continue;
+		}
+
+		const previous = nextNodes[nextNodes.length - 1];
+		if (!canTypeBeforeAssetImage(previous)) {
+			pushParagraph();
+		}
+
+		nextNodes.push(node);
+
+		const following = nodes[index + 1];
+		if (!following || isAssetImageNode(following)) {
+			pushParagraph();
+		}
+	}
+
+	if (!changed) return false;
+
+	const firstImageIndex = blocks.findIndex((block) => isAssetImageNode(block.node));
+	replaceTopLevelNodes(editor, nextNodes, Math.max(0, firstImageIndex));
+	return true;
+};
+
+export const focusWritableSurfaceBesideBlock = (
+	editor: Editor,
+	blockIndex: number,
+	side: 'above' | 'below'
+): boolean => {
+	const blocks = getTopLevelBlocks(editor.state.doc);
+	const neighborIndex = side === 'above' ? blockIndex - 1 : blockIndex + 1;
+	const neighbor = blocks[neighborIndex];
+
+	if (neighbor && !isAssetImageNode(neighbor.node)) {
+		const selection = getSelectionForTopLevelBlock(editor.state.doc, neighborIndex);
+		editor.view.dispatch(editor.state.tr.setSelection(selection).scrollIntoView());
+		return true;
+	}
+
+	if (!insertParagraphNearTopLevelNode(editor, blockIndex, side)) return false;
+	return focusWritableSurfaceBesideBlock(editor, blockIndex, side);
 };
 
 export const transformTopLevelNode = (

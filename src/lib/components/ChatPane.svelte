@@ -104,7 +104,8 @@
 	$: isFramelessChrome = isSidebar || isMobileChrome;
 	$: activeSession = sessions.find((session) => session.id === activeSessionId) || sessions[0] || null;
 
-	let showingSessionsList = true;
+	// Sidebar opens on the active session; use back to browse all sessions.
+	let showingSessionsList = false;
 	let showAllSessions = false;
 	let sessionSearchActive = false;
 	let sessionSearchQuery = '';
