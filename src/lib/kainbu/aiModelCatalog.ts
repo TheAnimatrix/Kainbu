@@ -2,7 +2,8 @@ import type {
 	AiModelConfig,
 	AiModelProvider,
 	AiThinkingConfig,
-	AiThinkingLevel
+	AiThinkingLevel,
+	AiVisionFallbackConfig
 } from '$lib/kainbu/types';
 
 export const AI_MODEL_PROVIDERS = ['openrouter', 'vercel'] as const satisfies readonly AiModelProvider[];
@@ -40,6 +41,8 @@ export type AiModelCatalogEntry = {
 	openrouterModel: string;
 	provider: AiModelProvider;
 	enabled: boolean;
+	/** Native multimodal input for chat (images sent as image parts). */
+	vision: boolean;
 	thinkingLevels: AiThinkingLevel[];
 	defaultThinkingLevel: AiThinkingLevel;
 	position: number;
@@ -48,6 +51,7 @@ export type AiModelCatalogEntry = {
 export type AiModelCatalog = {
 	defaultModelId: string;
 	models: AiModelCatalogEntry[];
+	visionFallback: AiVisionFallbackConfig;
 };
 
 const LEGACY_TO_CATALOG = (): AiModelCatalogEntry[] =>
@@ -61,17 +65,42 @@ const LEGACY_TO_CATALOG = (): AiModelCatalogEntry[] =>
 			openrouterModel: config.model,
 			provider: DEFAULT_AI_MODEL_PROVIDER,
 			enabled: true,
+			vision: true,
 			thinkingLevels: levels,
 			defaultThinkingLevel: supportsThinking ? 'medium' : 'none',
 			position: index
 		};
 	});
 
+export const defaultVisionFallback = (): AiVisionFallbackConfig => ({
+	enabled: false,
+	provider: DEFAULT_AI_MODEL_PROVIDER,
+	model: ''
+});
+
+export const normalizeVisionFallback = (raw: unknown): AiVisionFallbackConfig => {
+	const fallback = defaultVisionFallback();
+	if (!raw || typeof raw !== 'object') return fallback;
+	const candidate = raw as Partial<AiVisionFallbackConfig> & { openrouterModel?: string };
+	const model =
+		typeof candidate.model === 'string'
+			? candidate.model.trim()
+			: typeof candidate.openrouterModel === 'string'
+				? candidate.openrouterModel.trim()
+				: '';
+	return {
+		enabled: candidate.enabled === true,
+		provider: normalizeAiModelProvider(candidate.provider),
+		model
+	};
+};
+
 export const defaultAiModelCatalog = (): AiModelCatalog => {
 	const models = LEGACY_TO_CATALOG();
 	return {
 		defaultModelId: models[0]?.id || 'gemini 3 flash',
-		models
+		models,
+		visionFallback: defaultVisionFallback()
 	};
 };
 
@@ -109,6 +138,7 @@ export const normalizeCatalogEntry = (
 		openrouterModel,
 		provider: normalizeAiModelProvider(entry.provider),
 		enabled: entry.enabled !== false,
+		vision: entry.vision !== false,
 		thinkingLevels,
 		defaultThinkingLevel,
 		position: Number.isFinite(entry.position) ? Number(entry.position) : index
@@ -136,7 +166,11 @@ export const normalizeAiModelCatalog = (raw: unknown): AiModelCatalog => {
 			? candidate.defaultModelId
 			: models.find((entry) => entry.enabled)?.id || models[0].id;
 
-	return { defaultModelId, models };
+	return {
+		defaultModelId,
+		models,
+		visionFallback: normalizeVisionFallback(candidate.visionFallback)
+	};
 };
 
 export const catalogEntryToModelConfig = (entry: AiModelCatalogEntry): AiModelConfig => {
@@ -156,9 +190,20 @@ export const catalogEntryToModelConfig = (entry: AiModelCatalogEntry): AiModelCo
 		id: entry.id,
 		model: entry.openrouterModel,
 		provider: entry.provider,
+		vision: entry.vision,
 		thinking,
 		allowedThinkingLevels,
 		defaultThinkingLevel
+	};
+};
+
+export const visionFallbackToModelConfig = (
+	fallback: AiVisionFallbackConfig
+): Pick<AiModelConfig, 'model' | 'provider'> | null => {
+	if (!fallback.enabled || !fallback.model.trim()) return null;
+	return {
+		model: fallback.model.trim(),
+		provider: fallback.provider
 	};
 };
 
@@ -170,6 +215,7 @@ export const newCatalogEntry = (catalog: AiModelCatalog): AiModelCatalogEntry =>
 	openrouterModel: '',
 	provider: DEFAULT_AI_MODEL_PROVIDER,
 	enabled: true,
+	vision: true,
 	thinkingLevels: ['none'],
 	defaultThinkingLevel: 'none',
 	position: catalog.models.length

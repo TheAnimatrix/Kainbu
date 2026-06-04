@@ -9,10 +9,11 @@
 		AI_MODEL_PROVIDERS,
 		AI_MODEL_PROVIDER_LABELS,
 		ALL_THINKING_LEVELS,
+		defaultVisionFallback,
 		newCatalogEntry,
 		type AiModelCatalogEntry
 	} from '$lib/kainbu/aiModelCatalog';
-	import type { AiModelProvider, AiThinkingLevel } from '$lib/kainbu/types';
+	import type { AiModelProvider, AiThinkingLevel, AiVisionFallbackConfig } from '$lib/kainbu/types';
 	import { thinkingLevelLabel } from '$lib/kainbu/models';
 
 	let loading = true;
@@ -56,7 +57,11 @@
 		const defaultModelId = next.some((entry) => entry.id === catalog?.defaultModelId)
 			? catalog.defaultModelId
 			: next.find((entry) => entry.enabled)?.id || next[0]?.id || '';
-		catalog = { defaultModelId, models: next.map((entry, position) => ({ ...entry, position })) };
+		catalog = {
+			...catalog,
+			defaultModelId,
+			models: next.map((entry, position) => ({ ...entry, position }))
+		};
 	};
 
 	const moveModel = (index: number, direction: -1 | 1) => {
@@ -95,6 +100,17 @@
 		};
 	};
 
+	const updateVisionFallback = (patch: Partial<AiVisionFallbackConfig>) => {
+		if (!catalog) return;
+		catalog = {
+			...catalog,
+			visionFallback: {
+				...(catalog.visionFallback ?? defaultVisionFallback()),
+				...patch
+			}
+		};
+	};
+
 	const save = async () => {
 		if (!catalog) return;
 		error = '';
@@ -121,7 +137,7 @@
 				<p class="text-[10px] font-semibold uppercase tracking-[0.25em] text-app-primary">Admin</p>
 				<h1 class="mt-1.5 text-2xl font-bold tracking-tight text-app-text">Models</h1>
 				<p class="mt-1 text-sm text-app-subtext">
-					Workspace model list and allowed thinking levels per model.
+					Workspace model list, vision support, and allowed thinking levels per model.
 				</p>
 			</div>
 			<div class="flex gap-2">
@@ -160,6 +176,59 @@
 		{#if loading}
 			<p class="px-1 text-sm text-app-subtext">Loading…</p>
 		{:else if catalog}
+			<div class="rounded-lg border border-app-border/40 px-3 py-3 sm:px-4">
+				<div class="flex flex-wrap items-center justify-between gap-2">
+					<div>
+						<h2 class="text-sm font-semibold text-app-text">Vision fallback</h2>
+						<p class="mt-1 text-xs text-app-subtext">
+							Transcribes image attachments for chat models with vision disabled (two-step flow).
+						</p>
+					</div>
+					<label class="flex items-center gap-1.5 text-xs text-app-subtext">
+						<input
+							type="checkbox"
+							checked={catalog.visionFallback.enabled}
+							on:change={(event) =>
+								updateVisionFallback({
+									enabled: (event.currentTarget as HTMLInputElement).checked
+								})}
+						/>
+						Enabled
+					</label>
+				</div>
+				<div class="mt-3 grid gap-2 sm:grid-cols-2">
+					<label class="flex flex-col gap-1 text-xs text-app-subtext">
+						Provider
+						<select
+							class="rounded-md border border-app-border/40 bg-app-bg px-2 py-1.5 text-sm text-app-text disabled:opacity-50"
+							value={catalog.visionFallback.provider}
+							disabled={!catalog.visionFallback.enabled}
+							on:change={(event) =>
+								updateVisionFallback({
+									provider: (event.currentTarget as HTMLSelectElement).value as AiModelProvider
+								})}
+						>
+							{#each AI_MODEL_PROVIDERS as provider}
+								<option value={provider}>{AI_MODEL_PROVIDER_LABELS[provider]}</option>
+							{/each}
+						</select>
+					</label>
+					<label class="flex flex-col gap-1 text-xs text-app-subtext">
+						Model id
+						<input
+							class="rounded-md border border-app-border/40 bg-app-bg px-2 py-1.5 text-sm text-app-text disabled:opacity-50"
+							value={catalog.visionFallback.model}
+							disabled={!catalog.visionFallback.enabled}
+							placeholder="google/gemini-3-flash-preview"
+							on:input={(event) =>
+								updateVisionFallback({
+									model: (event.currentTarget as HTMLInputElement).value
+								})}
+						/>
+					</label>
+				</div>
+			</div>
+
 			<div class="overflow-hidden rounded-lg border border-app-border/40">
 				<div class="divide-y divide-app-border/30">
 					{#each catalog.models as entry, index (entry.position)}
@@ -188,6 +257,17 @@
 										}}
 									/>
 									Default
+								</label>
+								<label class="flex items-center gap-1.5 text-xs text-app-subtext">
+									<input
+										type="checkbox"
+										checked={entry.vision}
+										on:change={(event) =>
+											updateEntry(entry, {
+												vision: (event.currentTarget as HTMLInputElement).checked
+											})}
+									/>
+									Vision
 								</label>
 								<div class="ml-auto flex gap-1">
 									<button

@@ -1,8 +1,9 @@
 import { applyThinkingLevel } from '../../src/lib/kainbu/models.js';
-import type { AiModelConfig } from './types.js';
+import type { AiModelConfig, AiWorkspaceModelsResponse } from './types.js';
 import {
 	assertThinkingLevelAllowed,
 	getEnabledModelConfigs,
+	getVisionFallbackConfig,
 	loadAiModelCatalog,
 	resolveModelConfigById
 } from '../ai-models.js';
@@ -25,6 +26,11 @@ const cloneModelConfig = (config: AiModelConfig): AiModelConfig => ({
 });
 
 export const getWorkspaceAiModels = () => getEnabledModelConfigs().map(cloneModelConfig);
+
+export const getWorkspaceAiModelsResponse = (): AiWorkspaceModelsResponse => ({
+	models: getWorkspaceAiModels(),
+	visionFallback: getVisionFallbackConfig()
+});
 
 export const getDefaultWorkspaceAiModel = () => {
 	const models = getWorkspaceAiModels();

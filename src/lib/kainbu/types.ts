@@ -141,9 +141,23 @@ export interface AiModelConfig {
 	id: AiModelId;
 	model: string;
 	provider: AiModelProvider;
+	/** When false, image attachments are transcribed via the workspace vision fallback before chat. */
+	vision: boolean;
 	thinking: AiThinkingConfig | null;
 	allowedThinkingLevels: AiThinkingLevel[];
 	defaultThinkingLevel: AiThinkingLevel;
+}
+
+/** Admin-configured model used to transcribe images for non-vision chat models. */
+export interface AiVisionFallbackConfig {
+	enabled: boolean;
+	provider: AiModelProvider;
+	model: string;
+}
+
+export interface AiWorkspaceModelsResponse {
+	models: AiModelConfig[];
+	visionFallback: AiVisionFallbackConfig | null;
 }
 
 export interface CitationAnnotation {

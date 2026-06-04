@@ -2,9 +2,10 @@ import {
 	catalogToModelConfigs,
 	defaultAiModelCatalog,
 	normalizeAiModelCatalog,
+	visionFallbackToModelConfig,
 	type AiModelCatalog
 } from '../src/lib/kainbu/aiModelCatalog.js';
-import type { AiModelConfig, AiThinkingLevel } from '../src/lib/kainbu/types.js';
+import type { AiModelConfig, AiThinkingLevel, AiVisionFallbackConfig } from '../src/lib/kainbu/types.js';
 import { isAiThinkingLevel } from '../src/lib/kainbu/models.js';
 import type PocketBase from 'pocketbase';
 import { createAdminPb } from './pocketbase.js';
@@ -143,6 +144,31 @@ export const saveAiModelCatalog = async (catalog: AiModelCatalog) => {
 export const getEnabledModelConfigs = (): AiModelConfig[] => {
 	const catalog = cachedCatalog ?? defaultAiModelCatalog();
 	return catalogToModelConfigs(catalog);
+};
+
+export const getVisionFallbackConfig = (): AiVisionFallbackConfig | null => {
+	const catalog = cachedCatalog ?? defaultAiModelCatalog();
+	const config = visionFallbackToModelConfig(catalog.visionFallback);
+	if (!config) return null;
+	return {
+		enabled: true,
+		provider: config.provider,
+		model: config.model
+	};
+};
+
+export const getVisionFallbackModelConfig = (): AiModelConfig | null => {
+	const fallback = getVisionFallbackConfig();
+	if (!fallback) return null;
+	return {
+		id: '__vision_fallback__',
+		model: fallback.model,
+		provider: fallback.provider,
+		vision: true,
+		thinking: null,
+		allowedThinkingLevels: ['none'],
+		defaultThinkingLevel: 'none'
+	};
 };
 
 export const resolveModelConfigById = (modelId: string): AiModelConfig | null => {

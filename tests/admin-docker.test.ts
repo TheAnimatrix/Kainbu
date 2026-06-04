@@ -225,9 +225,9 @@ describe('Local Docker — admin model settings', () => {
 		expect(reload.body.persisted).toBe(true);
 		expect(reload.body.catalog?.defaultModelId).toBe(marker);
 
-		const models = await fetch(`${API}/api/models`).then((res) => res.json());
-		expect(Array.isArray(models)).toBe(true);
-		expect(models.length).toBeGreaterThan(0);
+		const modelsPayload = await fetch(`${API}/api/models`).then((res) => res.json());
+		expect(Array.isArray(modelsPayload.models)).toBe(true);
+		expect(modelsPayload.models.length).toBeGreaterThan(0);
 	});
 });
 
@@ -309,8 +309,8 @@ describe.skipIf(!hasOpenRouter)('Local Docker — admin usage with AI', () => {
 			position: 0
 		});
 
-		const models = await fetch(`${API}/api/models`).then((res) => res.json());
-		const modelId = models[0]?.id;
+		const modelsPayload = await fetch(`${API}/api/models`).then((res) => res.json());
+		const modelId = modelsPayload.models?.[0]?.id;
 		expect(modelId).toBeTruthy();
 
 		const aiResponse = await fetch(`${API}/api/workspace-ai`, {

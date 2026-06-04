@@ -60,6 +60,7 @@
 		DESKTOP_CHAT_WIDTH
 	} from '$lib/kainbu/constants';
 	import { fetchWorkspaceAiModels, generateSessionTitle, invokeWorkspaceAi } from '$lib/kainbu/ai';
+	import { prepareChatHistoryForModel } from '$lib/kainbu/aiVision';
 	import { exportProjectsToFile, parseProjectsImport } from '$lib/kainbu/backup';
 	import {
 		getKanbanFingerprint,
@@ -144,6 +145,7 @@
 	import { buildTimedTasks, clearTaskDueAt } from '$lib/kainbu/timing';
 	import type {
 		AiModelConfig,
+		AiVisionFallbackConfig,
 		AiModelId,
 		AiProposal,
 		AiProgressEvent,
@@ -205,6 +207,7 @@
 	let currentProjectId = '';
 	let settings: UserSettings = structuredClone(DEFAULT_SETTINGS);
 	let aiModels: AiModelConfig[] = structuredClone(DEFAULT_AI_MODEL_CONFIGS);
+	let aiVisionFallback: AiVisionFallbackConfig | null = null;
 	let aiThinkingLevel: import('$lib/kainbu/types').AiThinkingLevel = 'none';
 	let lastSyncedAiThinkingModelId = '';
 	let profile: UserProfile | null = null;
@@ -1898,7 +1901,8 @@
 
 	const loadAiModels = async () => {
 		try {
-			const nextModels = await fetchWorkspaceAiModels();
+			const { models: nextModels, visionFallback: nextVisionFallback } =
+				await fetchWorkspaceAiModels();
 			if (!nextModels.length) return;
 			const previousModelIds = new Set(aiModels.map((model) => model.id));
 			const nextModelIds = new Set(nextModels.map((model) => model.id));
@@ -1906,6 +1910,7 @@
 				previousModelIds.size !== nextModelIds.size ||
 				[...nextModelIds].some((id) => !previousModelIds.has(id));
 			aiModels = nextModels;
+			aiVisionFallback = nextVisionFallback;
 			if (catalogChanged) {
 				lastSyncedAiThinkingModelId = '';
 			}
@@ -3676,13 +3681,25 @@
 			const boundTarget = buildBoundTargetHint(projectSnapshot, taskCards, activeTaskContext);
 			const clientNowIso = new Date().toISOString();
 			const clientTimezone = Intl.DateTimeFormat().resolvedOptions().timeZone || undefined;
+			const activeModelConfig =
+				aiModels.find((model) => model.id === aiSessionSnapshot.modelId) ?? aiModels[0];
+			const rawHistory = buildAiHistory(
+				aiSessionSnapshot.history,
+				userMessage,
+				continuation?.questionId
+			);
+			const historyForModel = await prepareChatHistoryForModel(
+				rawHistory,
+				activeModelConfig,
+				aiVisionFallback
+			);
 			const response = await invokeWorkspaceAi(
 				{
 					projectId: projectSnapshot.id,
 					sessionId: aiSessionSnapshot.id,
 					modelId: aiSessionSnapshot.modelId,
 					thinkingLevel: aiThinkingLevel,
-					history: buildAiHistory(aiSessionSnapshot.history, userMessage, continuation?.questionId),
+					history: historyForModel,
 					scope: {
 						currentTab: visibleWorkspaceTab,
 						selectedTaskIds,

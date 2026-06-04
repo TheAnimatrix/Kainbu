@@ -34,8 +34,9 @@ async function getServerModelId() {
 					throw new Error(`Unable to load /api/models: ${res.status}`);
 				}
 
-				const body = (await res.json()) as Array<{ id?: string }>;
-				const modelId = body[0]?.id;
+				const body = (await res.json()) as { models?: Array<{ id?: string }> } | Array<{ id?: string }>;
+				const models = Array.isArray(body) ? body : body.models;
+				const modelId = models?.[0]?.id;
 				if (!modelId) {
 					throw new Error('No model ids were returned from /api/models.');
 				}
@@ -67,13 +68,15 @@ describe('Health & Discovery', () => {
 		expect(res.status).toBe(200);
 	});
 
-	it('GET /api/models returns a model config array', async () => {
+	it('GET /api/models returns models and optional vision fallback', async () => {
 		const res = await fetch(`${BASE}/api/models`);
 		expect(res.status).toBe(200);
 		const body = await res.json();
-		expect(Array.isArray(body)).toBe(true);
-		expect(typeof body[0]?.id).toBe('string');
-		expect(typeof body[0]?.model).toBe('string');
+		expect(Array.isArray(body.models)).toBe(true);
+		expect(typeof body.models[0]?.id).toBe('string');
+		expect(typeof body.models[0]?.model).toBe('string');
+		expect(typeof body.models[0]?.vision).toBe('boolean');
+		expect(body.visionFallback === null || typeof body.visionFallback === 'object').toBe(true);
 	});
 });
 

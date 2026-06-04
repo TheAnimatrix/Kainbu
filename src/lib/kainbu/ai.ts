@@ -4,7 +4,7 @@ import {
 	resolveWorkspaceApiUrl
 } from '$lib/kainbu/api';
 import type {
-	AiModelConfig,
+	AiWorkspaceModelsResponse,
 	AiProgressEvent,
 	AiWorkspaceRequest,
 	AiWorkspaceResponse,
@@ -195,7 +195,28 @@ export const generateSessionTitle = async (
 	}
 };
 
-export const fetchWorkspaceAiModels = async () => {
+const parseWorkspaceAiModelsPayload = (raw: unknown): AiWorkspaceModelsResponse => {
+	if (Array.isArray(raw)) {
+		return { models: raw, visionFallback: null };
+	}
+	if (!raw || typeof raw !== 'object') {
+		return { models: [], visionFallback: null };
+	}
+	const payload = raw as Partial<AiWorkspaceModelsResponse>;
+	return {
+		models: Array.isArray(payload.models) ? payload.models : [],
+		visionFallback:
+			payload.visionFallback &&
+			typeof payload.visionFallback === 'object' &&
+			payload.visionFallback.enabled === true &&
+			typeof payload.visionFallback.model === 'string' &&
+			payload.visionFallback.model.trim()
+				? payload.visionFallback
+				: null
+	};
+};
+
+export const fetchWorkspaceAiModels = async (): Promise<AiWorkspaceModelsResponse> => {
 	const response = await fetch(resolveWorkspaceApiUrl(WORKSPACE_AI_MODELS_PATH), {
 		method: 'GET',
 		cache: 'no-store',
@@ -210,5 +231,5 @@ export const fetchWorkspaceAiModels = async () => {
 		throw new Error(responseText.trim() || 'Unable to load AI models.');
 	}
 
-	return (responseText.trim() ? JSON.parse(responseText) : []) as AiModelConfig[];
+	return parseWorkspaceAiModelsPayload(responseText.trim() ? JSON.parse(responseText) : null);
 };

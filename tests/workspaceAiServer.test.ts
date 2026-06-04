@@ -3,6 +3,7 @@ import {
 	WorkspaceAiRequestError,
 	applyThinkingLevel,
 	getWorkspaceAiModels,
+	getWorkspaceAiModelsResponse,
 	resolveWorkspaceAiModel,
 	validateWorkspaceAiRequest
 } from '../server/workspace-ai/models';
@@ -17,6 +18,13 @@ describe('workspace AI model catalog', () => {
 
 		models[0].id = 'mutated';
 		expect(getWorkspaceAiModels()[0].id).toBe(DEFAULT_AI_MODEL_CONFIGS[0].id);
+	});
+
+	it('includes vision fallback in the models response payload', () => {
+		const payload = getWorkspaceAiModelsResponse();
+		expect(payload.models.length).toBeGreaterThan(0);
+		expect(payload.models[0].vision).toBe(true);
+		expect(payload.visionFallback).toBeNull();
 	});
 
 	it('resolves a known model id', () => {

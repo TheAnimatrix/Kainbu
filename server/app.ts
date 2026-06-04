@@ -29,7 +29,11 @@ import {
 	handleGetAuthSettings
 } from './admin.js';
 import { loadAiModelCatalog } from './ai-models.js';
-import { getWorkspaceAiModels, handleWorkspaceAiRequest } from './workspace-ai.js';
+import {
+	getWorkspaceAiModelsResponse,
+	handleWorkspaceAiRequest,
+	transcribeVisionImages
+} from './workspace-ai.js';
 import {
 	handleCliDeviceApprove,
 	handleCliDeviceExchange,
@@ -66,6 +70,7 @@ const apiRootPayload = {
 		'/api/workspace-ai',
 		'/api/workspace-ai/session-title',
 		'/api/workspace-ai/task-title',
+		'/api/workspace-ai/transcribe-images',
 		'/api/workspace-ai/stream',
 		'/api/workspace/projects/touch',
 		'/api/workspace/projects/pin',
@@ -110,7 +115,7 @@ app.get('/api/health', (c) => c.json(healthPayload));
 app.get('/api/models', async (c) => {
 	await loadAiModelCatalog({ fresh: true });
 	c.header('Cache-Control', 'no-store');
-	return c.json(getWorkspaceAiModels());
+	return c.json(getWorkspaceAiModelsResponse());
 });
 app.get('/api/auth/settings', handleGetAuthSettings);
 app.post('/api/auth/signup', handleAuthSignup);
@@ -245,6 +250,7 @@ app.get('/api/workspace-ai', methodNotAllowed);
 app.get('/api/workspace-ai/stream', methodNotAllowed);
 app.get('/api/workspace-ai/session-title', methodNotAllowed);
 app.get('/api/workspace-ai/task-title', methodNotAllowed);
+app.get('/api/workspace-ai/transcribe-images', methodNotAllowed);
 
 app.post('/api/workspace-ai/stream', async (c) => {
 	await loadAiModelCatalog();
@@ -367,6 +373,40 @@ app.post('/api/workspace-ai/task-title', async (c) => {
 		console.error('Task title rewrite failed:', error);
 		const message = error instanceof Error ? error.message : 'Task title rewrite failed';
 		return c.json({ error: message, title: '' }, 502);
+	}
+});
+
+app.post('/api/workspace-ai/transcribe-images', async (c) => {
+	if (!c.req.header('Authorization')) {
+		return c.json({ error: 'Unauthorized' }, 401);
+	}
+
+	try {
+		const body = (await c.req.json()) as {
+			images?: Array<{ id?: string; name?: string; content?: string }>;
+		};
+		const images = Array.isArray(body.images)
+			? body.images
+					.map((image, index) => ({
+						id: typeof image.id === 'string' && image.id.trim() ? image.id.trim() : `image-${index}`,
+						name: typeof image.name === 'string' ? image.name.trim() : 'image',
+						content: typeof image.content === 'string' ? image.content.trim() : ''
+					}))
+					.filter((image) => image.content)
+			: [];
+
+		if (!images.length) {
+			return c.json({ error: 'images is required' }, 400);
+		}
+
+		await getAuthenticatedUserId(c.req.header('Authorization'));
+		const transcriptions = await transcribeVisionImages(images);
+		return c.json({ transcriptions });
+	} catch (error) {
+		console.error('Image transcription failed:', error);
+		const message = error instanceof Error ? error.message : 'Image transcription failed';
+		const status = message.includes('not configured') ? 503 : 502;
+		return c.json({ error: message }, status);
 	}
 });
 
