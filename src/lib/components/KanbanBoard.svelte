@@ -186,6 +186,8 @@
 	let taskInfoMenuOpen: TaskMenuState | null = null;
 	let boardScrollViewport: HTMLDivElement | null = null;
 	let activeTaskDragColumnId: string | null = null;
+	let taskDragInProgress = false;
+	let boardDataAtDragStart: KanbanData | null = null;
 	let expandedDiffTaskId: string | null = null;
 	let boardLayoutMode: BoardLayoutMode = 'columns';
 	let linkViewAnchorId: string | null = null;
@@ -255,7 +257,7 @@
 	$: if (data === lastEmittedData) {
 		boardData = data;
 		lastEmittedData = null;
-	} else if (data !== boardData) {
+	} else if (data !== boardData && !taskDragInProgress) {
 		boardData = data;
 	}
 	$: if (projectId !== lastColumnMoveProjectId) {
@@ -855,6 +857,36 @@
 		});
 	};
 
+	const recoverMissingDraggedTask = (
+		columns: KanbanData,
+		columnId: string,
+		taskId: string,
+		fallbackBoard: KanbanData | null
+	) => {
+		if (findTaskColumnId(columns, taskId)) return columns;
+
+		const fallbackTask = fallbackBoard
+			?.flatMap((column) => column.tasks)
+			.find((task) => task.id === taskId && !isShadowItem(task));
+		if (!fallbackTask) return columns;
+
+		const targetColumn = columns.find((column) => column.id === columnId);
+		if (!targetColumn) return columns;
+
+		return withUpdatedColumnTasks(columns, columnId, [
+			...withoutDndShadowTasks(targetColumn.tasks),
+			fallbackTask
+		]);
+	};
+
+	const endTaskDrag = () => {
+		queueMicrotask(() => {
+			taskDragInProgress = false;
+			activeTaskDragColumnId = null;
+			boardDataAtDragStart = null;
+		});
+	};
+
 	const updateColumnTasks = (columnId: string, tasks: Task[]) => {
 		emitBoardChange(withUpdatedColumnTasks(boardData, columnId, tasks));
 	};
@@ -1345,12 +1377,14 @@
 		const taskId = info.id;
 
 		if (phase === 'consider') {
+			if (!taskDragInProgress) {
+				boardDataAtDragStart = boardData;
+			}
+			taskDragInProgress = true;
 			activeTaskDragColumnId = columnId;
-			boardData = withUpdatedColumnTasks(boardData, columnId, items as Task[]);
+			boardData = withFinalizedDndColumnTasks(boardData, columnId, items as Task[]);
 			return;
 		}
-
-		activeTaskDragColumnId = null;
 
 		// Cross-column pointer drops finalize the origin zone with DROPPED_INTO_ANOTHER.
 		if (info.trigger === TRIGGERS.DROPPED_INTO_ANOTHER) {
@@ -1359,20 +1393,30 @@
 				(column) => column.id !== fromColumnId && column.tasks.some((task) => task.id === taskId)
 			)?.id;
 
-			emitBoardChange(
+			const nextBoard = recoverMissingDraggedTask(
 				withFinalizedDndColumnTasks(boardData, columnId, items as Task[], {
 					dedupeAcrossColumns: false
-				})
+				}),
+				columnId,
+				taskId,
+				boardDataAtDragStart
 			);
+			emitBoardChange(nextBoard);
 
 			if (toColumnId) {
 				recordLastColumnMove(fromColumnId, toColumnId);
 			}
+			endTaskDrag();
 			return;
 		}
 
 		const fromColumnId = findTaskColumnId(boardData, taskId);
-		const nextBoard = withFinalizedDndColumnTasks(boardData, columnId, items as Task[]);
+		const nextBoard = recoverMissingDraggedTask(
+			withFinalizedDndColumnTasks(boardData, columnId, items as Task[]),
+			columnId,
+			taskId,
+			boardDataAtDragStart
+		);
 		const toColumnId = findTaskColumnId(nextBoard, taskId);
 
 		emitBoardChange(nextBoard);
@@ -1380,6 +1424,7 @@
 		if (fromColumnId && toColumnId) {
 			recordLastColumnMove(fromColumnId, toColumnId);
 		}
+		endTaskDrag();
 	};
 
 	const cardClasses = (task: DiffTask, options?: { linkDimmed?: boolean }) => {
@@ -1731,9 +1776,9 @@
 														dragDisabled:
 															isLocked || Boolean(column.isLinkGroup) || boardSearchFiltering,
 														delayTouchStart: isMobile ? 220 : true,
-														morphDisabled: isMobile,
+														morphDisabled: true,
 														centreDraggedOnCursor: isMobile,
-														useCursorForDetection: isMobile,
+														useCursorForDetection: true,
 														dropAnimationDisabled: false
 													}}
 													onconsider={(event) => {

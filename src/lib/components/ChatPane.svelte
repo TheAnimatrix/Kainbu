@@ -5,6 +5,7 @@
 		CheckCircle2,
 		ChevronDown,
 		ChevronLeft,
+		ChevronRight,
 		Circle,
 		Copy,
 		ExternalLink,
@@ -305,7 +306,7 @@
 	let previewDragOriginX = 0;
 	let previewDragOriginY = 0;
 	let questionDrafts: Record<string, string> = {};
-	let questionOptionDrafts: Record<string, string> = {};
+	let activeOpenQuestionIndex = 0;
 	let copiedMessageId = '';
 	let copiedMessageTimeout: ReturnType<typeof setTimeout> | null = null;
 
@@ -316,7 +317,11 @@
 			(question, index, questions) =>
 				questions.findIndex((entry) => entry.id === question.id) === index
 		);
-	$: hasBatchQuestions = openQuestions.length > 1;
+	$: if (activeOpenQuestionIndex >= openQuestions.length) {
+		activeOpenQuestionIndex = Math.max(0, openQuestions.length - 1);
+	}
+	$: activeOpenQuestion = openQuestions[activeOpenQuestionIndex] || null;
+	$: showQuestionCarousel = openQuestions.length > 0;
 
 	$: if (!active && previewAttachment) {
 		previewAttachment = null;
@@ -637,13 +642,6 @@
 		};
 	};
 
-	const setQuestionOptionDraft = (questionId: string, optionId: string) => {
-		questionOptionDrafts = {
-			...questionOptionDrafts,
-			[questionId]: optionId
-		};
-	};
-
 	const submitQuestionFreeform = (questionId: string) => {
 		const value = questionDrafts[questionId]?.trim();
 		if (!value) return;
@@ -651,25 +649,19 @@
 		setQuestionDraft(questionId, '');
 	};
 
-	const submitQuestionBatch = () => {
-		const answers = openQuestions
-			.map((question) => {
-				const optionId = questionOptionDrafts[question.id];
-				const text = questionDrafts[question.id]?.trim();
-				if (!optionId && !text) return null;
-				return {
-					questionId: question.id,
-					...(optionId ? { optionId } : {}),
-					...(text ? { text } : {})
-				};
-			})
-			.filter((answer): answer is { questionId: string; optionId?: string; text?: string } =>
-				Boolean(answer)
-			);
-		if (answers.length !== openQuestions.length) return;
-		onAnswerQuestions(answers);
-		questionOptionDrafts = {};
-		questionDrafts = {};
+	const showPreviousOpenQuestion = () => {
+		if (activeOpenQuestionIndex <= 0) return;
+		activeOpenQuestionIndex -= 1;
+	};
+
+	const showNextOpenQuestion = () => {
+		if (activeOpenQuestionIndex >= openQuestions.length - 1) return;
+		activeOpenQuestionIndex += 1;
+	};
+
+	const answerOpenQuestion = (questionId: string, optionId?: string, text?: string) => {
+		onAnswerQuestion(questionId, optionId, text);
+		setQuestionDraft(questionId, '');
 	};
 
 	const copyMessageText = async (message: ChatMessage) => {
@@ -1177,81 +1169,23 @@
 									</p>
 								{/if}
 
-								{#if message.question}
+								{#if message.question?.status === 'answered'}
 									<div class="mt-2">
-										{#if message.question.status === 'answered'}
-											<div class="mb-1.5">
-												<span
-													class="rounded-full border border-emerald-500/30 bg-emerald-500/10 px-2 py-0.5 text-[9px] font-bold uppercase tracking-[0.18em] text-emerald-200"
-												>
-													Answered
-												</span>
-											</div>
-										{/if}
-										<p class="text-sm font-semibold text-app-text">{message.question.prompt}</p>
-										{#if message.question.reason}
-											<p class="mt-0.5 text-xs leading-relaxed text-app-subtext">
-												{message.question.reason}
-											</p>
-										{/if}
-										<div class="mt-2 flex flex-wrap gap-1.5">
-											{#each message.question.options as option (option.id)}
-												<button
-													type="button"
-													disabled={message.question.status === 'answered'}
-													class={`rounded-lg border px-2.5 py-1.5 text-left text-xs font-medium transition ${
-														message.question.status === 'answered'
-															? option.id === message.question.answeredOptionId
-																? 'border-emerald-500/35 bg-emerald-500/10 text-emerald-100'
-																: 'cursor-not-allowed border-app-border bg-app-element/70 text-app-subtext'
-															: hasBatchQuestions &&
-																  questionOptionDrafts[message.question.id] === option.id
-																? 'border-app-primary/45 bg-app-primary/15 text-app-primary'
-																: 'border-app-border bg-app-element text-app-text hover:border-app-primary/35 hover:text-app-primary'
-													}`}
-													on:click={() => {
-														if (!message.question) return;
-														if (hasBatchQuestions) {
-															setQuestionOptionDraft(message.question.id, option.id);
-															return;
-														}
-														onAnswerQuestion(message.question.id, option.id);
-													}}
-												>
-													<span>{option.label}</span>
-													{#if option.description}
-														<span class="mt-0.5 block text-[10px] font-normal text-app-subtext">
-															{option.description}
-														</span>
-													{/if}
-												</button>
-											{/each}
+										<div class="mb-1.5">
+											<span
+												class="rounded-full border border-emerald-500/30 bg-emerald-500/10 px-2 py-0.5 text-[9px] font-bold uppercase tracking-[0.18em] text-emerald-200"
+											>
+												Answered
+											</span>
 										</div>
-										{#if message.question.allowFreeform}
-											<div class="mt-2 flex items-end gap-1.5">
-												<textarea
-													rows={2}
-													disabled={message.question.status === 'answered'}
-													class="min-h-14 flex-1 resize-none rounded-lg border border-app-border bg-app-bg px-2.5 py-1.5 text-xs text-app-text outline-none placeholder:text-app-subtext/50 disabled:cursor-not-allowed disabled:opacity-60"
-													placeholder="Add your own answer…"
-													value={questionDrafts[message.question.id] || ''}
-													on:input={(event) =>
-														setQuestionDraft(
-															message.question?.id || '',
-															(event.currentTarget as HTMLTextAreaElement).value
-														)}
-												></textarea>
-												<button
-													type="button"
-													disabled={message.question.status === 'answered' ||
-														hasBatchQuestions ||
-														!(questionDrafts[message.question.id] || '').trim().length}
-													class="rounded-lg bg-app-primary px-2.5 py-1.5 text-xs font-semibold text-white transition disabled:cursor-not-allowed disabled:opacity-45"
-													on:click={() => submitQuestionFreeform(message.question?.id || '')}
-												>
-													Send
-												</button>
-											</div>
+										<p class="text-sm font-semibold text-app-text">{message.question.prompt}</p>
+										{#if message.question.answerText || message.question.answeredOptionId}
+											<p class="mt-1 text-xs text-app-subtext">
+												{message.question.answerText ||
+													message.question.options.find(
+														(option) => option.id === message.question?.answeredOptionId
+													)?.label}
+											</p>
 										{/if}
 									</div>
 								{/if}
@@ -1296,23 +1230,81 @@
 					</div>
 				{/each}
 
-				{#if hasBatchQuestions}
+				{#if showQuestionCarousel && activeOpenQuestion}
 					<div class="rounded-lg border border-app-primary/25 bg-app-primary/10 p-3">
-						<p class="text-sm font-semibold text-app-text">Answer all questions</p>
-						<p class="mt-1 text-xs text-app-subtext">
-							Choose or type an answer for each open question, then submit once.
-						</p>
-						<button
-							type="button"
-							class="mt-3 rounded-lg bg-app-primary px-3 py-1.5 text-xs font-semibold text-white transition disabled:cursor-not-allowed disabled:opacity-45"
-							disabled={openQuestions.some(
-								(question) =>
-									!questionOptionDrafts[question.id] && !questionDrafts[question.id]?.trim()
-							)}
-							on:click={submitQuestionBatch}
-						>
-							Submit answers
-						</button>
+						<div class="flex items-center justify-between gap-2">
+							<p class="text-[10px] font-bold uppercase tracking-[0.18em] text-app-primary">
+								Question {activeOpenQuestionIndex + 1} of {openQuestions.length}
+							</p>
+							<div class="flex items-center gap-1">
+								<button
+									type="button"
+									class="inline-flex h-7 w-7 items-center justify-center rounded-md border border-app-border bg-app-surface text-app-subtext transition hover:text-app-text disabled:cursor-not-allowed disabled:opacity-40"
+									disabled={activeOpenQuestionIndex <= 0 || isProcessing}
+									aria-label="Previous question"
+									on:click={showPreviousOpenQuestion}
+								>
+									<ChevronLeft size={14} />
+								</button>
+								<button
+									type="button"
+									class="inline-flex h-7 w-7 items-center justify-center rounded-md border border-app-border bg-app-surface text-app-subtext transition hover:text-app-text disabled:cursor-not-allowed disabled:opacity-40"
+									disabled={activeOpenQuestionIndex >= openQuestions.length - 1 || isProcessing}
+									aria-label="Next question"
+									on:click={showNextOpenQuestion}
+								>
+									<ChevronRight size={14} />
+								</button>
+							</div>
+						</div>
+						<p class="mt-2 text-sm font-semibold text-app-text">{activeOpenQuestion.prompt}</p>
+						{#if activeOpenQuestion.reason}
+							<p class="mt-0.5 text-xs leading-relaxed text-app-subtext">
+								{activeOpenQuestion.reason}
+							</p>
+						{/if}
+						<div class="mt-2 flex flex-wrap gap-1.5">
+							{#each activeOpenQuestion.options as option (option.id)}
+								<button
+									type="button"
+									disabled={isProcessing}
+									class="rounded-lg border border-app-border bg-app-element px-2.5 py-1.5 text-left text-xs font-medium text-app-text transition hover:border-app-primary/35 hover:text-app-primary disabled:cursor-not-allowed disabled:opacity-45"
+									on:click={() => answerOpenQuestion(activeOpenQuestion.id, option.id)}
+								>
+									<span>{option.label}</span>
+									{#if option.description}
+										<span class="mt-0.5 block text-[10px] font-normal text-app-subtext">
+											{option.description}
+										</span>
+									{/if}
+								</button>
+							{/each}
+						</div>
+						{#if activeOpenQuestion.allowFreeform}
+							<div class="mt-2 flex items-end gap-1.5">
+								<textarea
+									rows={2}
+									disabled={isProcessing}
+									class="min-h-14 flex-1 resize-none rounded-lg border border-app-border bg-app-bg px-2.5 py-1.5 text-xs text-app-text outline-none placeholder:text-app-subtext/50 disabled:cursor-not-allowed disabled:opacity-60"
+									placeholder="Add your own answer…"
+									value={questionDrafts[activeOpenQuestion.id] || ''}
+									on:input={(event) =>
+										setQuestionDraft(
+											activeOpenQuestion.id,
+											(event.currentTarget as HTMLTextAreaElement).value
+										)}
+								></textarea>
+								<button
+									type="button"
+									disabled={isProcessing ||
+										!(questionDrafts[activeOpenQuestion.id] || '').trim().length}
+									class="rounded-lg bg-app-primary px-2.5 py-1.5 text-xs font-semibold text-white transition disabled:cursor-not-allowed disabled:opacity-45"
+									on:click={() => submitQuestionFreeform(activeOpenQuestion.id)}
+								>
+									Send
+								</button>
+							</div>
+						{/if}
 					</div>
 				{/if}
 
