@@ -1324,9 +1324,6 @@
 						>
 							<span class="ai-stream-orb h-2.5 w-2.5 rounded-full bg-app-primary"></span>
 						</div>
-						<div class="min-w-0 flex-1">
-							<AiActivityTrace events={processingEvents} isLive compact />
-						</div>
 					</div>
 				{/if}
 

@@ -41,6 +41,7 @@ import {
 	handleWorkspaceCancelInviteRequest,
 	handleWorkspaceCreateInviteRequest,
 	handleWorkspaceLeaveProjectRequest,
+	handleWorkspaceMemberProfilesRequest,
 	handleWorkspaceProjectBackgroundRequest,
 	handleWorkspaceRemoveMemberRequest,
 	handleWorkspaceRespondInviteRequest,
@@ -70,11 +71,13 @@ const apiRootPayload = {
 		'/api/workspace/projects/pin',
 		'/api/workspace/projects/background',
 		'/api/workspace/projects/scratchpad',
+		'/api/workspace/members/profiles',
 		'/api/workspace/...'
 	]
 };
 const methodNotAllowedPayload = { error: 'Method Not Allowed' };
-const UTILITY_AI_MODEL = DEFAULT_AI_MODEL_CONFIGS[0]?.model || 'google/gemini-3-flash-preview:nitro';
+const UTILITY_AI_MODEL =
+	DEFAULT_AI_MODEL_CONFIGS[0]?.model || 'google/gemini-3-flash-preview:nitro';
 const SESSION_TITLE_MAX_TOKENS = 20;
 const SESSION_TITLE_SYSTEM_PROMPT =
 	'Generate a short title (3-6 words) for this conversation. Return only the title, no quotes or punctuation.';
@@ -495,6 +498,18 @@ app.post('/api/workspace/members/leave', async (c) => {
 	try {
 		const payload = await handleWorkspaceLeaveProjectRequest(
 			(await c.req.json()) as { projectId: string },
+			c.req.header('Authorization')
+		);
+		return c.json(payload);
+	} catch (error) {
+		return handleWorkspaceMutationError(c, error);
+	}
+});
+
+app.post('/api/workspace/members/profiles', async (c) => {
+	try {
+		const payload = await handleWorkspaceMemberProfilesRequest(
+			(await c.req.json()) as { userIds: string[] },
 			c.req.header('Authorization')
 		);
 		return c.json(payload);

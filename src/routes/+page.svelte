@@ -3711,6 +3711,11 @@
 				}
 			);
 
+			const responseQuestions = response.questions?.length
+				? response.questions
+				: response.question
+					? [response.question]
+					: [];
 			const assistantMessage: ChatMessage = {
 				id: createId(),
 				role: 'assistant',
@@ -3725,17 +3730,27 @@
 				annotations: response.annotations,
 				toolActions: response.toolActions,
 				progressEvents: aiProgressEvents.filter(
-					(e) => e.kind !== 'assistant_draft' && e.kind !== 'thinking'
+					(e) =>
+						e.kind !== 'assistant_draft' &&
+						e.kind !== 'thinking' &&
+						(e.kind !== 'status' || /changes are ready|no project changes/i.test(e.message))
 				),
-				...(response.question ? { question: response.question } : {}),
+				...(responseQuestions[0] ? { question: responseQuestions[0] } : {}),
 				usage: response.usage,
 				...(response.stoppedReason ? { stoppedReason: response.stoppedReason } : {})
 			};
+			const extraQuestionMessages: ChatMessage[] = responseQuestions.slice(1).map((question) => ({
+				id: createId(),
+				role: 'assistant',
+				text: '',
+				timestamp: assistantMessage.timestamp,
+				question
+			}));
 
 			updateProjectLocal(projectSnapshot.id, (project) =>
 				updateActiveProjectAiSession(project, (session) => ({
 					...session,
-					history: [...session.history, assistantMessage],
+					history: [...session.history, assistantMessage, ...extraQuestionMessages],
 					updatedAt: assistantMessage.timestamp,
 					lastMessageAt: assistantMessage.timestamp
 				}))

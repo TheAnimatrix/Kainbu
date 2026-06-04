@@ -16,10 +16,8 @@ import {
 	updateTask,
 	validateToneColor
 } from '../server/workspace-ai/kanban-ops';
-import {
-	buildStaticSystemPrompt,
-	buildVariableSystemContext
-} from '../server/workspace-ai/prompt';
+import { buildStaticSystemPrompt, buildVariableSystemContext } from '../server/workspace-ai/prompt';
+import { OpenRouterTools } from '../server/workspace-ai/tools';
 import type { KanbanData } from '../src/lib/kainbu/types';
 import type { MaterializedWorkspace } from '../server/workspace-ai/sync';
 
@@ -281,8 +279,16 @@ describe('workspace AI kanban tools', () => {
 		const prompt = buildStaticSystemPrompt();
 		expect(prompt).toContain('Never show refs or UUIDs');
 		expect(prompt).toContain('bulk_update_tasks');
+		expect(prompt).toContain('ask_questions');
 		expect(prompt).toContain('tone:blue');
 		expect(prompt).not.toMatch(/[0-9a-f]{8}-[0-9a-f]{4}/);
+	});
+
+	it('exposes a structured Q&A tool', () => {
+		const toolNames = OpenRouterTools.map((tool) => tool.function.name);
+		expect(toolNames).toContain('ask_questions');
+		const questionTool = OpenRouterTools.find((tool) => tool.function.name === 'ask_questions');
+		expect(questionTool?.function.parameters.required).toContain('questions');
 	});
 
 	it('validateToneColor accepts tone values and rejects unknown', () => {

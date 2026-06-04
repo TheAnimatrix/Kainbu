@@ -828,9 +828,15 @@
 
 	const withoutDndShadowTasks = (tasks: Task[]) => tasks.filter((task) => !isShadowItem(task));
 
-	const withFinalizedDndColumnTasks = (columns: KanbanData, columnId: string, tasks: Task[]) => {
+	const withFinalizedDndColumnTasks = (
+		columns: KanbanData,
+		columnId: string,
+		tasks: Task[],
+		options: { dedupeAcrossColumns?: boolean } = {}
+	) => {
 		const finalizedTasks = withoutDndShadowTasks(tasks);
 		const finalizedIds = new Set(finalizedTasks.map((task) => task.id));
+		const dedupeAcrossColumns = options.dedupeAcrossColumns !== false;
 
 		return columns.map((column) => {
 			if (column.id === columnId) {
@@ -842,7 +848,9 @@
 
 			return {
 				...column,
-				tasks: withoutDndShadowTasks(column.tasks).filter((task) => !finalizedIds.has(task.id))
+				tasks: withoutDndShadowTasks(column.tasks).filter(
+					(task) => !dedupeAcrossColumns || !finalizedIds.has(task.id)
+				)
 			};
 		});
 	};
@@ -1351,7 +1359,11 @@
 				(column) => column.id !== fromColumnId && column.tasks.some((task) => task.id === taskId)
 			)?.id;
 
-			emitBoardChange(withFinalizedDndColumnTasks(boardData, columnId, items as Task[]));
+			emitBoardChange(
+				withFinalizedDndColumnTasks(boardData, columnId, items as Task[], {
+					dedupeAcrossColumns: false
+				})
+			);
 
 			if (toColumnId) {
 				recordLastColumnMove(fromColumnId, toColumnId);

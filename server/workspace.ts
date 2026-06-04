@@ -106,6 +106,10 @@ type WorkspaceBoardPresenceRequest = {
 	boardId: string | null;
 };
 
+type WorkspaceMemberProfilesRequest = {
+	userIds: string[];
+};
+
 const requireString = (value: unknown, field: string) => {
 	if (typeof value !== 'string' || !value.trim()) {
 		throw new WorkspaceApiError(400, `${field} is required.`);
@@ -179,9 +183,11 @@ const ensureOwnerProject = async (admin: PocketBase, projectId: string, userId: 
 const getMembership = async (admin: PocketBase, projectId: string, userId: string) => {
 	const projectPbId = await getProjectPbId(admin, projectId);
 	try {
-		return await admin.collection('project_memberships').getFirstListItem(
-			`${projectRelationFilter(projectPbId)} && user = "${pbEscapeFilter(userId)}"`
-		);
+		return await admin
+			.collection('project_memberships')
+			.getFirstListItem(
+				`${projectRelationFilter(projectPbId)} && user = "${pbEscapeFilter(userId)}"`
+			);
 	} catch {
 		return null;
 	}
@@ -213,9 +219,7 @@ const getInviteOrThrow = async (admin: PocketBase, inviteId: string) => {
 			invitee_email: String(data.invitee_email || ''),
 			invited_by_user_id: relationId(data.invited_by),
 			status:
-				data.status === 'accepted' ||
-				data.status === 'rejected' ||
-				data.status === 'cancelled'
+				data.status === 'accepted' || data.status === 'rejected' || data.status === 'cancelled'
 					? data.status
 					: 'pending',
 			created_at: String(data.created || new Date().toISOString()),
@@ -315,7 +319,8 @@ export const toWorkspaceApiError = (error: unknown) => {
 	}
 
 	if (error instanceof ClientResponseError) {
-		const status = error.status === 404 ? 404 : error.status >= 400 && error.status < 600 ? error.status : 500;
+		const status =
+			error.status === 404 ? 404 : error.status >= 400 && error.status < 600 ? error.status : 500;
 		return {
 			status,
 			message:
@@ -491,9 +496,11 @@ export const handleWorkspaceCreateInviteRequest = async (
 	}
 
 	try {
-		const existing = await admin.collection('project_invites').getFirstListItem(
-			`${projectRelationFilter(projectPbId)} && invitee_email = "${pbEscapeFilter(inviteeEmail)}" && status = "pending"`
-		);
+		const existing = await admin
+			.collection('project_invites')
+			.getFirstListItem(
+				`${projectRelationFilter(projectPbId)} && invitee_email = "${pbEscapeFilter(inviteeEmail)}" && status = "pending"`
+			);
 		await admin.collection('project_invites').update(existing.id, invitePayload);
 	} catch {
 		await admin.collection('project_invites').create({
@@ -611,9 +618,7 @@ export const handleWorkspaceRemoveMemberRequest = async (
 	await Promise.all([
 		...userStates.map((record) => admin.collection('project_user_state').delete(record.id)),
 		...aiSessions.map((record) => admin.collection('project_ai_sessions').delete(record.id)),
-		membership
-			? admin.collection('project_memberships').delete(membership.id)
-			: Promise.resolve()
+		membership ? admin.collection('project_memberships').delete(membership.id) : Promise.resolve()
 	]);
 
 	return { ok: true };
@@ -647,4 +652,60 @@ export const handleWorkspaceLeaveProjectRequest = async (
 	]);
 
 	return { ok: true };
+};
+
+export const handleWorkspaceMemberProfilesRequest = async (
+	body: WorkspaceMemberProfilesRequest,
+	authorization: string | undefined
+) => {
+	const userId = await getAuthenticatedUserId(authorization);
+	const admin = await createAdminPb();
+	const requestedUserIds = [
+		...new Set(
+			(Array.isArray(body.userIds) ? body.userIds : []).filter((id) => typeof id === 'string')
+		)
+	]
+		.map((id) => id.trim())
+		.filter(Boolean)
+		.slice(0, 100);
+
+	if (!requestedUserIds.length) {
+		return { profiles: [] };
+	}
+
+	const ownMemberships = await admin.collection('project_memberships').getFullList({
+		filter: `user = "${pbEscapeFilter(userId)}"`
+	});
+	const projectIds = [...new Set(ownMemberships.map((membership) => String(membership.project)))];
+	if (!projectIds.length) {
+		return { profiles: [] };
+	}
+
+	const sharedMemberships = await admin.collection('project_memberships').getFullList({
+		filter: `(${projectIds
+			.map((projectId) => `project = "${pbEscapeFilter(projectId)}"`)
+			.join(' || ')}) && (${requestedUserIds
+			.map((id) => `user = "${pbEscapeFilter(id)}"`)
+			.join(' || ')})`
+	});
+	const allowedUserIds = [
+		...new Set(sharedMemberships.map((membership) => String(membership.user)).filter(Boolean))
+	];
+
+	if (!allowedUserIds.length) {
+		return { profiles: [] };
+	}
+
+	const users = await admin.collection('users').getFullList({
+		filter: allowedUserIds.map((id) => `id = "${pbEscapeFilter(id)}"`).join(' || ')
+	});
+
+	return {
+		profiles: users.map((user) => ({
+			userId: String(user.id),
+			email: typeof user.email === 'string' ? user.email : null,
+			username:
+				typeof user.username === 'string' && user.username.trim() ? user.username.trim() : null
+		}))
+	};
 };

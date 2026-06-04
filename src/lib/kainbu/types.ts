@@ -571,6 +571,7 @@ export interface AiWorkspaceResponse {
 	latencyMs: number;
 	requestId: string;
 	question?: AiQuestion;
+	questions?: AiQuestion[];
 	proposals: AiProposal[];
 	usage: AiUsage;
 	highlightedTaskIds: string[];

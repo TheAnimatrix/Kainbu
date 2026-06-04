@@ -289,7 +289,8 @@ const normalizeMetadata = (value: unknown): ChatMessage['metadata'] | undefined 
 	if (!isObject(value)) return undefined;
 
 	const model = typeof value.model === 'string' && value.model.trim() ? value.model : 'Legacy';
-	const modelId = typeof value.modelId === 'string' && value.modelId.trim() ? value.modelId : undefined;
+	const modelId =
+		typeof value.modelId === 'string' && value.modelId.trim() ? value.modelId : undefined;
 	const directLatency = toNumber(value.latencyMs);
 	const legacyLatency = toNumber(value.latency);
 	const latencyMs =
@@ -396,6 +397,23 @@ const mapProfileRow = (
 	username: normalizeUsernameValue(row?.username)
 });
 
+const fetchSharedMemberProfiles = async (userIds: string[]) => {
+	const uniqueUserIds = [...new Set(userIds.map((id) => id.trim()).filter(Boolean))];
+	if (!uniqueUserIds.length) return [] as Pick<ProfileRow, 'user_id' | 'email' | 'username'>[];
+
+	const result = await invokeWorkspaceApi<{
+		profiles: Array<{ userId: string; email?: string | null; username?: string | null }>;
+	}>('/api/workspace/members/profiles', {
+		body: { userIds: uniqueUserIds }
+	});
+
+	return (result.profiles || []).map((profile) => ({
+		user_id: profile.userId,
+		email: profile.email || null,
+		username: normalizeUsernameValue(profile.username)
+	}));
+};
+
 const mapMembershipRow = (
 	row: ProjectMembershipRow,
 	email: string | undefined,
@@ -443,9 +461,7 @@ const normalizeLinkedTaskIds = (value: unknown): string[] => {
 	if (!Array.isArray(value)) return [];
 	return [
 		...new Set(
-			value.filter(
-				(entry): entry is string => typeof entry === 'string' && entry.trim().length > 0
-			)
+			value.filter((entry): entry is string => typeof entry === 'string' && entry.trim().length > 0)
 		)
 	];
 };
@@ -511,11 +527,7 @@ const mapPageRow = (row: ProjectPageRow): ProjectPage => ({
 	updatedAt: new Date(row.updated_at).getTime()
 });
 
-const mapAiSessionUpsertRow = (
-	projectId: string,
-	userId: string,
-	session: ProjectAiSession
-) => ({
+const mapAiSessionUpsertRow = (projectId: string, userId: string, session: ProjectAiSession) => ({
 	id: session.id,
 	project_id: projectId,
 	user_id: userId,
@@ -932,10 +944,15 @@ const loadWorkspaceFromRemote = async (userId: string) => {
 	const profileIds = [...new Set(allMembershipRows.map((membership) => membership.user_id))];
 	const profileRows: Pick<ProfileRow, 'user_id' | 'email' | 'username'>[] = [];
 	if (profileIds.length) {
-		const profiles = await pb.collection('users').getFullList({
-			filter: profileIds.map((id) => `id = "${pbEscapeFilter(id)}"`).join(' || '),
-			...pbNoAutoCancel
-		});
+		let profiles: Array<Record<string, unknown>> = [];
+		try {
+			profiles = await pb.collection('users').getFullList({
+				filter: profileIds.map((id) => `id = "${pbEscapeFilter(id)}"`).join(' || '),
+				...pbNoAutoCancel
+			});
+		} catch {
+			profiles = [];
+		}
 		for (const profile of profiles) {
 			const mapped = mapProfileRecord(profile, String(profile.id));
 			profileRows.push({
@@ -943,6 +960,15 @@ const loadWorkspaceFromRemote = async (userId: string) => {
 				email: mapped.email,
 				username: mapped.username
 			});
+		}
+		const resolvedProfileIds = new Set(profileRows.map((profile) => profile.user_id));
+		const missingProfileIds = profileIds.filter((id) => !resolvedProfileIds.has(id));
+		if (missingProfileIds.length) {
+			try {
+				profileRows.push(...(await fetchSharedMemberProfiles(missingProfileIds)));
+			} catch {
+				// Member names are a display enhancement; keep workspace fetch usable if API is offline.
+			}
 		}
 	}
 
@@ -964,12 +990,7 @@ const loadWorkspaceFromRemote = async (userId: string) => {
 		const current = membershipsByProjectId.get(row.project_id) || [];
 		const profileIdentity = profileIdentityById.get(row.user_id);
 		current.push(
-			mapMembershipRow(
-				row,
-				profileIdentity?.email,
-				profileIdentity?.username || null,
-				userId
-			)
+			mapMembershipRow(row, profileIdentity?.email, profileIdentity?.username || null, userId)
 		);
 		membershipsByProjectId.set(row.project_id, current);
 	}
@@ -1037,7 +1058,8 @@ const loadWorkspaceFromRemote = async (userId: string) => {
 
 			const userState = userStateByProjectId.get(row.id);
 			const projectBoards = (boardsByProjectId.get(row.id) || []).sort(
-				(left, right) => left.position - right.position || left.created_at.localeCompare(right.created_at)
+				(left, right) =>
+					left.position - right.position || left.created_at.localeCompare(right.created_at)
 			);
 			const fallbackBoard = projectBoards[0]?.id || '';
 			const boards = projectBoards.length
@@ -1051,7 +1073,7 @@ const loadWorkspaceFromRemote = async (userId: string) => {
 								(taskRow) => (taskRow.board_id || fallbackBoard) === boardRow.id
 							)
 						)
-				  )
+					)
 				: [];
 			const pages = (pagesByProjectId.get(row.id) || []).map(mapPageRow);
 			const aiSessions = aiSessionsByProjectId.get(row.id) || [];
@@ -1084,9 +1106,7 @@ const loadWorkspaceFromRemote = async (userId: string) => {
 					? new Date(ownMembership.pinned_at).getTime()
 					: undefined
 			});
-			return [
-				normalizedProject satisfies Project
-			];
+			return [normalizedProject satisfies Project];
 		})
 		.sort(compareProjects);
 
@@ -1449,9 +1469,11 @@ export const saveProjectAiState = async (
 	const projectPbId = await getProjectPbId(projectId);
 
 	try {
-		const userState = await pb.collection('project_user_state').getFirstListItem(
-			`${projectRelationFilter(projectPbId)} && user = "${pbEscapeFilter(userId)}"`
-		);
+		const userState = await pb
+			.collection('project_user_state')
+			.getFirstListItem(
+				`${projectRelationFilter(projectPbId)} && user = "${pbEscapeFilter(userId)}"`
+			);
 		await pb.collection('project_user_state').update(userState.id, {
 			active_ai_session_id: activeAiSessionId
 		});
@@ -1523,9 +1545,11 @@ export const reportBoardPresence = async (projectId: string, boardId: string | n
 		if (!userId) throw apiError;
 
 		try {
-			const membership = await pb.collection('project_memberships').getFirstListItem(
-				`user = "${pbEscapeFilter(userId)}" && project.client_id = "${pbEscapeFilter(projectId)}"`
-			);
+			const membership = await pb
+				.collection('project_memberships')
+				.getFirstListItem(
+					`user = "${pbEscapeFilter(userId)}" && project.client_id = "${pbEscapeFilter(projectId)}"`
+				);
 			await pb.collection('project_memberships').update(membership.id, {
 				last_opened_at: now,
 				viewing_board_client_id: normalizedBoardId,
@@ -1558,9 +1582,11 @@ export const setProjectPinned = async (projectId: string, pinned: boolean) => {
 		if (!userId) throw apiError;
 
 		try {
-			const membership = await pb.collection('project_memberships').getFirstListItem(
-				`user = "${pbEscapeFilter(userId)}" && project.client_id = "${pbEscapeFilter(projectId)}"`
-			);
+			const membership = await pb
+				.collection('project_memberships')
+				.getFirstListItem(
+					`user = "${pbEscapeFilter(userId)}" && project.client_id = "${pbEscapeFilter(projectId)}"`
+				);
 			await pb.collection('project_memberships').update(membership.id, {
 				pinned_at: pinnedAt
 			});
