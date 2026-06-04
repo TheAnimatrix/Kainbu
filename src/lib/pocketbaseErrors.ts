@@ -15,6 +15,16 @@ export const isOwnUserRecordNotFound = (error: unknown, userId: string): boolean
 
 /** Surface PocketBase validation / rule errors instead of generic "Failed to create record." */
 export function formatPocketBaseError(error: unknown, fallback: string): string {
+	if (error instanceof Error) {
+		const message = error.message.trim();
+		if (/already exists|not unique|unique/i.test(message)) {
+			return 'An account with that email already exists. Sign in instead.';
+		}
+		if (/failed to create record/i.test(message)) {
+			return fallback;
+		}
+	}
+
 	if (!(error instanceof ClientResponseError)) {
 		return error instanceof Error ? error.message : fallback;
 	}
@@ -25,7 +35,11 @@ export function formatPocketBaseError(error: unknown, fallback: string): string 
 			.filter(([key]) => key !== 'message')
 			.flatMap(([field, value]) => {
 				if (typeof value === 'object' && value && 'message' in value) {
-					return [`${field}: ${String((value as { message: unknown }).message)}`];
+					const message = String((value as { message: unknown }).message);
+					if (field === 'email' && /already exists|not unique|unique/i.test(message)) {
+						return ['An account with that email already exists. Sign in instead.'];
+					}
+					return [`${field}: ${message}`];
 				}
 				if (typeof value === 'string') return [`${field}: ${value}`];
 				return [];

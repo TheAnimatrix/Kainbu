@@ -11,11 +11,7 @@ export const getProjectMemberDisplayName = (
 		return 'You';
 	}
 
-	return (
-		normalizeMemberValue(member.username) ||
-		normalizeMemberValue(member.email) ||
-		member.userId.slice(0, 8)
-	);
+	return normalizeMemberValue(member.username) || normalizeMemberValue(member.email) || 'Teammate';
 };
 
 export const getProjectMemberSearchText = (

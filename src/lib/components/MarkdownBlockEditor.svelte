@@ -10,6 +10,10 @@
 	import Image from '@tiptap/extension-image';
 	import Link from '@tiptap/extension-link';
 	import Placeholder from '@tiptap/extension-placeholder';
+	import { Table } from '@tiptap/extension-table';
+	import { TableCell } from '@tiptap/extension-table-cell';
+	import { TableHeader } from '@tiptap/extension-table-header';
+	import { TableRow } from '@tiptap/extension-table-row';
 	import TaskItem from '@tiptap/extension-task-item';
 	import TaskList from '@tiptap/extension-task-list';
 	import { Markdown } from '@tiptap/markdown';
@@ -101,19 +105,12 @@
 	export let assetUrls: Record<string, string> = {};
 	export let referenceOptions: TaskReferenceOption[] = [];
 	export let onCheckboxToggle: ((index: number, checked: boolean) => void) | undefined = undefined;
-	export let onReferenceNavigate:
-		| ((reference: TaskReferenceOption) => void)
-		| undefined = undefined;
-	export let onReferenceRemove:
-		| ((reference: TaskReferenceOption) => void)
-		| undefined = undefined;
-	export let onReferencePromote:
-		| ((reference: TaskReferenceOption) => void)
-		| undefined = undefined;
+	export let onReferenceNavigate: ((reference: TaskReferenceOption) => void) | undefined =
+		undefined;
+	export let onReferenceRemove: ((reference: TaskReferenceOption) => void) | undefined = undefined;
+	export let onReferencePromote: ((reference: TaskReferenceOption) => void) | undefined = undefined;
 	export let onEmbedDelete: ((assetId: string) => Promise<void> | void) | undefined = undefined;
-	export let onEmbedAddToChat:
-		| ((assetId: string) => Promise<void> | void)
-		| undefined = undefined;
+	export let onEmbedAddToChat: ((assetId: string) => Promise<void> | void) | undefined = undefined;
 	export let onChange: (
 		nextValue: string,
 		options?: { immediate?: boolean; reason?: ChangeReason }
@@ -345,11 +342,7 @@
 			.replace(
 				/^!\[([^\]]*)\]\(asset:([^)]+)\)(?:\s*\{\s*width\s*=\s*(\d+)\s*\})?\s*$/gm,
 				(_match, alt: string, assetId: string, width?: string) =>
-					buildAssetPlaceholderHtml(
-						assetId,
-						alt,
-						width ? Number(width) : IMAGE_BLOCK_DEFAULT_WIDTH
-					)
+					buildAssetPlaceholderHtml(assetId, alt, width ? Number(width) : IMAGE_BLOCK_DEFAULT_WIDTH)
 			);
 
 	const ASSET_MARKDOWN_PATTERN = /!\[[^\]]*]\(asset:[^)]+\)/;
@@ -405,42 +398,42 @@
 		getExtraHtml?: (item: T) => string;
 	};
 
-	const createSuggestionMenuRenderer = <T extends MenuRenderableItem>(
-		options: MenuRendererOptions<T>
-	) => () => {
-		let popup: HTMLDivElement | null = null;
-		let props: SuggestionProps<T, T> | null = null;
-		let highlightedIndex = 0;
-		let removePositionListeners = () => {};
+	const createSuggestionMenuRenderer =
+		<T extends MenuRenderableItem>(options: MenuRendererOptions<T>) =>
+		() => {
+			let popup: HTMLDivElement | null = null;
+			let props: SuggestionProps<T, T> | null = null;
+			let highlightedIndex = 0;
+			let removePositionListeners = () => {};
 
-		const cleanup = () => {
-			removePositionListeners();
-			removePositionListeners = () => {};
-			popup?.remove();
-			popup = null;
-			props = null;
-			highlightedIndex = 0;
-		};
+			const cleanup = () => {
+				removePositionListeners();
+				removePositionListeners = () => {};
+				popup?.remove();
+				popup = null;
+				props = null;
+				highlightedIndex = 0;
+			};
 
-		const updatePosition = () => {
-			if (!popup || !props) return;
-			const root = options.getRoot();
-			const rect = props.clientRect?.();
-			if (!root || !rect) return;
-			const rootRect = root.getBoundingClientRect();
-			popup.style.top = `${Math.max(0, rect.bottom - rootRect.top + 8)}px`;
-		};
+			const updatePosition = () => {
+				if (!popup || !props) return;
+				const root = options.getRoot();
+				const rect = props.clientRect?.();
+				if (!root || !rect) return;
+				const rootRect = root.getBoundingClientRect();
+				popup.style.top = `${Math.max(0, rect.bottom - rootRect.top + 8)}px`;
+			};
 
-		const render = () => {
-			if (!popup || !props) return;
-			const items = props.items || [];
-			if (!items.length) {
-				cleanup();
-				return;
-			}
+			const render = () => {
+				if (!popup || !props) return;
+				const items = props.items || [];
+				if (!items.length) {
+					cleanup();
+					return;
+				}
 
-			highlightedIndex = Math.min(highlightedIndex, items.length - 1);
-			popup.innerHTML = `
+				highlightedIndex = Math.min(highlightedIndex, items.length - 1);
+				popup.innerHTML = `
 				<div class="markdown-editor__menu-panel">
 					<div class="markdown-editor__menu-title">${escapeHtml(options.getTitle())}</div>
 					<div class="markdown-editor__menu-list">
@@ -470,75 +463,75 @@
 				</div>
 			`;
 
-			popup.querySelectorAll<HTMLButtonElement>('[data-menu-index]').forEach((button) => {
-				button.addEventListener('mousedown', (event) => {
-					event.preventDefault();
+				popup.querySelectorAll<HTMLButtonElement>('[data-menu-index]').forEach((button) => {
+					button.addEventListener('mousedown', (event) => {
+						event.preventDefault();
+					});
+					button.addEventListener('click', () => {
+						const index = Number(button.dataset.menuIndex || 0);
+						const item = items[index];
+						if (!item) return;
+						props?.command(item);
+					});
 				});
-				button.addEventListener('click', () => {
-					const index = Number(button.dataset.menuIndex || 0);
-					const item = items[index];
-					if (!item) return;
-					props?.command(item);
-				});
-			});
 
-			updatePosition();
-		};
+				updatePosition();
+			};
 
-		return {
-			onStart(nextProps: SuggestionProps<T, T>) {
-				const root = options.getRoot();
-				if (!root || !nextProps.items.length) return;
-				cleanup();
-				props = nextProps;
-				popup = document.createElement('div');
-				popup.className = 'markdown-editor__menu';
-				root.appendChild(popup);
-				const handlePositionChange = () => updatePosition();
-				window.addEventListener('resize', handlePositionChange);
-				window.addEventListener('scroll', handlePositionChange, true);
-				removePositionListeners = () => {
-					window.removeEventListener('resize', handlePositionChange);
-					window.removeEventListener('scroll', handlePositionChange, true);
-				};
-				render();
-			},
-			onUpdate(nextProps: SuggestionProps<T, T>) {
-				props = nextProps;
-				render();
-			},
-			onKeyDown({ event, view }: { event: KeyboardEvent; view: Editor['view'] }) {
-				if (!props || !props.items.length) return false;
-				if (event.key === 'ArrowDown') {
-					event.preventDefault();
-					highlightedIndex = (highlightedIndex + 1) % props.items.length;
+			return {
+				onStart(nextProps: SuggestionProps<T, T>) {
+					const root = options.getRoot();
+					if (!root || !nextProps.items.length) return;
+					cleanup();
+					props = nextProps;
+					popup = document.createElement('div');
+					popup.className = 'markdown-editor__menu';
+					root.appendChild(popup);
+					const handlePositionChange = () => updatePosition();
+					window.addEventListener('resize', handlePositionChange);
+					window.addEventListener('scroll', handlePositionChange, true);
+					removePositionListeners = () => {
+						window.removeEventListener('resize', handlePositionChange);
+						window.removeEventListener('scroll', handlePositionChange, true);
+					};
 					render();
-					return true;
-				}
-				if (event.key === 'ArrowUp') {
-					event.preventDefault();
-					highlightedIndex = (highlightedIndex - 1 + props.items.length) % props.items.length;
+				},
+				onUpdate(nextProps: SuggestionProps<T, T>) {
+					props = nextProps;
 					render();
-					return true;
+				},
+				onKeyDown({ event, view }: { event: KeyboardEvent; view: Editor['view'] }) {
+					if (!props || !props.items.length) return false;
+					if (event.key === 'ArrowDown') {
+						event.preventDefault();
+						highlightedIndex = (highlightedIndex + 1) % props.items.length;
+						render();
+						return true;
+					}
+					if (event.key === 'ArrowUp') {
+						event.preventDefault();
+						highlightedIndex = (highlightedIndex - 1 + props.items.length) % props.items.length;
+						render();
+						return true;
+					}
+					if (event.key === 'Enter' || event.key === 'Tab') {
+						event.preventDefault();
+						const item = props.items[highlightedIndex];
+						if (item) props.command(item);
+						return true;
+					}
+					if (event.key === 'Escape') {
+						event.preventDefault();
+						exitSuggestion(view, options.pluginKey);
+						return true;
+					}
+					return false;
+				},
+				onExit() {
+					cleanup();
 				}
-				if (event.key === 'Enter' || event.key === 'Tab') {
-					event.preventDefault();
-					const item = props.items[highlightedIndex];
-					if (item) props.command(item);
-					return true;
-				}
-				if (event.key === 'Escape') {
-					event.preventDefault();
-					exitSuggestion(view, options.pluginKey);
-					return true;
-				}
-				return false;
-			},
-			onExit() {
-				cleanup();
-			}
+			};
 		};
-	};
 
 	let editor: Editor | null = null;
 	let editorRoot: HTMLDivElement | null = null;
@@ -548,12 +541,10 @@
 	let editorNotice = '';
 	let pendingImageInsertPos: number | null = null;
 	let syncingFromValue = false;
-	let pendingChange:
-		| {
-				reason?: ChangeReason;
-				immediate?: boolean;
-		  }
-		| null = null;
+	let pendingChange: {
+		reason?: ChangeReason;
+		immediate?: boolean;
+	} | null = null;
 	let blockHandleButton: HTMLButtonElement | null = null;
 	let blockMenuElement: HTMLDivElement | null = null;
 	let hoveredBlock: TopLevelBlock | null = null;
@@ -571,15 +562,13 @@
 	} | null = null;
 	let blockMenuAnchor: DOMRect | null = null;
 	let blockMenuStyle = '';
-	let draggingBlock:
-		| {
-				pointerId: number;
-				sourceIndex: number;
-				dropIndex: number;
-				y: number;
-				started: boolean;
-		  }
-		| null = null;
+	let draggingBlock: {
+		pointerId: number;
+		sourceIndex: number;
+		dropIndex: number;
+		y: number;
+		started: boolean;
+	} | null = null;
 	let dropIndicatorTop: number | null = null;
 	let suppressNextBlockMenuOpen = false;
 	let cleanupBlockDrag = () => {};
@@ -590,7 +579,9 @@
 	$: isPageBlockHandleMode = blockHandleMode === 'page';
 	$: activeBlockIndex =
 		draggingBlock?.sourceIndex ??
-		(blockMenuOpen ? activeBlock?.index ?? null : hoveredBlock?.index ?? focusedBlock?.index ?? null);
+		(blockMenuOpen
+			? (activeBlock?.index ?? null)
+			: (hoveredBlock?.index ?? focusedBlock?.index ?? null));
 	$: canTransformActiveBlock = activeBlock?.node.type.name !== 'assetImage';
 	$: visibleBlockTransformActions = canTransformActiveBlock
 		? blockMenuActions.filter((action) => action.kind === 'transform')
@@ -684,7 +675,8 @@
 		activeBlock = nextActiveBlock;
 		const rootRect = editorRoot.getBoundingClientRect();
 		const blockRect = blockDom.getBoundingClientRect();
-		blockHandleTop = blockRect.top - rootRect.top + Math.min(18, Math.max(14, blockRect.height / 2));
+		blockHandleTop =
+			blockRect.top - rootRect.top + Math.min(18, Math.max(14, blockRect.height / 2));
 		blockHandleVisible = true;
 
 		if (blockMenuOpen && blockHandleButton) {
@@ -730,9 +722,7 @@
 
 		if (normalizedIndex >= blocks.length) {
 			const lastDom = getTopLevelBlockDom(editor.view, blocks[blocks.length - 1]);
-			dropIndicatorTop = lastDom
-				? lastDom.getBoundingClientRect().bottom - rootRect.top
-				: null;
+			dropIndicatorTop = lastDom ? lastDom.getBoundingClientRect().bottom - rootRect.top : null;
 			return;
 		}
 
@@ -1077,8 +1067,8 @@
 			)
 			.run();
 		normalizeAssetImageEditingSurfaces(editor);
-		const imageBlockIndex = getTopLevelBlocks(editor.state.doc).findIndex((block) =>
-			block.node.type.name === 'assetImage'
+		const imageBlockIndex = getTopLevelBlocks(editor.state.doc).findIndex(
+			(block) => block.node.type.name === 'assetImage'
 		);
 		if (imageBlockIndex >= 0) {
 			focusWritableSurfaceBesideBlock(editor, imageBlockIndex, 'below');
@@ -1589,7 +1579,9 @@
 							render();
 						},
 						stopEvent(event) {
-							return Boolean((event.target as HTMLElement | null)?.closest('[data-kainbu-control]'));
+							return Boolean(
+								(event.target as HTMLElement | null)?.closest('[data-kainbu-control]')
+							);
 						},
 						ignoreMutation() {
 							return true;
@@ -1713,8 +1705,7 @@
 					}
 				}),
 				Placeholder.configure({
-					placeholder: () =>
-						placeholder || (isPageBlockHandleMode ? TRAILING_BLOCK_HINT : ''),
+					placeholder: () => placeholder || (isPageBlockHandleMode ? TRAILING_BLOCK_HINT : ''),
 					emptyEditorClass: 'is-editor-empty',
 					showOnlyCurrent: true,
 					showOnlyWhenEditable: true,
@@ -1724,6 +1715,13 @@
 				TaskItem.configure({
 					nested: true
 				}),
+				Table.configure({
+					resizable: true,
+					allowTableNodeSelection: true
+				}),
+				TableRow,
+				TableHeader,
+				TableCell,
 				Link.configure({
 					openOnClick: false
 				}),
@@ -1912,11 +1910,7 @@
 	{/if}
 
 	{#if isPageBlockHandleMode && blockMenuOpen && activeBlock}
-		<div
-			bind:this={blockMenuElement}
-			class="markdown-editor__block-menu"
-			style={blockMenuStyle}
-		>
+		<div bind:this={blockMenuElement} class="markdown-editor__block-menu" style={blockMenuStyle}>
 			<div class="markdown-editor__block-menu-panel">
 				<div class="markdown-editor__block-menu-list">
 					{#each visibleBlockEditActions as action (action.id)}

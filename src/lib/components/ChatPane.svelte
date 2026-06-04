@@ -6,6 +6,7 @@
 		ChevronDown,
 		ChevronLeft,
 		Circle,
+		Copy,
 		ExternalLink,
 		Info,
 		LoaderCircle,
@@ -72,6 +73,12 @@
 	export let onAcceptProposal: (proposalId: string) => void;
 	export let onRejectProposal: (proposalId: string) => void;
 	export let onAnswerQuestion: (questionId: string, optionId?: string, text?: string) => void;
+	export let onAnswerQuestions: (
+		answers: { questionId: string; optionId?: string; text?: string }[]
+	) => void = (answers) => {
+		const [answer] = answers;
+		if (answer) onAnswerQuestion(answer.questionId, answer.optionId, answer.text);
+	};
 	export let onCollapseSidebar: (() => void) | null = null;
 
 	$: activeModel = modelOptions.find((entry) => entry.id === modelId) ?? modelOptions[0] ?? null;
@@ -102,7 +109,8 @@
 	$: isSidebar = chrome === 'sidebar';
 	$: isMobileChrome = chrome === 'mobile';
 	$: isFramelessChrome = isSidebar || isMobileChrome;
-	$: activeSession = sessions.find((session) => session.id === activeSessionId) || sessions[0] || null;
+	$: activeSession =
+		sessions.find((session) => session.id === activeSessionId) || sessions[0] || null;
 
 	// Sidebar opens on the active session; use back to browse all sessions.
 	let showingSessionsList = false;
@@ -111,15 +119,19 @@
 	let sessionSearchQuery = '';
 	const VISIBLE_SESSION_COUNT = 5;
 
-	$: sortedSessions = [...sessions].sort((a, b) =>
-		(b.lastMessageAt || b.updatedAt) - (a.lastMessageAt || a.updatedAt)
+	$: sortedSessions = [...sessions].sort(
+		(a, b) => (b.lastMessageAt || b.updatedAt) - (a.lastMessageAt || a.updatedAt)
 	);
 	$: filteredSessions = sessionSearchQuery.trim()
-		? sortedSessions.filter((s) => s.title.toLowerCase().includes(sessionSearchQuery.trim().toLowerCase()))
+		? sortedSessions.filter((s) =>
+				s.title.toLowerCase().includes(sessionSearchQuery.trim().toLowerCase())
+			)
 		: sortedSessions;
 	$: displayedSessions = sessionSearchActive
 		? filteredSessions
-		: showAllSessions ? sortedSessions : sortedSessions.slice(0, VISIBLE_SESSION_COUNT);
+		: showAllSessions
+			? sortedSessions
+			: sortedSessions.slice(0, VISIBLE_SESSION_COUNT);
 	$: remainingSessionCount = Math.max(0, sessions.length - VISIBLE_SESSION_COUNT);
 
 	let sessionSwitcherOpen = false;
@@ -263,6 +275,11 @@
 		return `${weeks}w ago`;
 	};
 
+	const absoluteTime = (timestamp: number) =>
+		timestamp
+			? new Date(timestamp).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' })
+			: '';
+
 	const openSession = (sessionId: string) => {
 		showingSessionsList = false;
 		showAllSessions = false;
@@ -288,6 +305,18 @@
 	let previewDragOriginX = 0;
 	let previewDragOriginY = 0;
 	let questionDrafts: Record<string, string> = {};
+	let questionOptionDrafts: Record<string, string> = {};
+	let copiedMessageId = '';
+	let copiedMessageTimeout: ReturnType<typeof setTimeout> | null = null;
+
+	$: openQuestions = history
+		.filter((message) => message.question?.status === 'open')
+		.map((message) => message.question!)
+		.filter(
+			(question, index, questions) =>
+				questions.findIndex((entry) => entry.id === question.id) === index
+		);
+	$: hasBatchQuestions = openQuestions.length > 1;
 
 	$: if (!active && previewAttachment) {
 		previewAttachment = null;
@@ -608,11 +637,50 @@
 		};
 	};
 
+	const setQuestionOptionDraft = (questionId: string, optionId: string) => {
+		questionOptionDrafts = {
+			...questionOptionDrafts,
+			[questionId]: optionId
+		};
+	};
+
 	const submitQuestionFreeform = (questionId: string) => {
 		const value = questionDrafts[questionId]?.trim();
 		if (!value) return;
 		onAnswerQuestion(questionId, undefined, value);
 		setQuestionDraft(questionId, '');
+	};
+
+	const submitQuestionBatch = () => {
+		const answers = openQuestions
+			.map((question) => {
+				const optionId = questionOptionDrafts[question.id];
+				const text = questionDrafts[question.id]?.trim();
+				if (!optionId && !text) return null;
+				return {
+					questionId: question.id,
+					...(optionId ? { optionId } : {}),
+					...(text ? { text } : {})
+				};
+			})
+			.filter((answer): answer is { questionId: string; optionId?: string; text?: string } =>
+				Boolean(answer)
+			);
+		if (answers.length !== openQuestions.length) return;
+		onAnswerQuestions(answers);
+		questionOptionDrafts = {};
+		questionDrafts = {};
+	};
+
+	const copyMessageText = async (message: ChatMessage) => {
+		if (!message.text.trim()) return;
+		await navigator.clipboard.writeText(message.text);
+		copiedMessageId = message.id;
+		if (copiedMessageTimeout) clearTimeout(copiedMessageTimeout);
+		copiedMessageTimeout = setTimeout(() => {
+			copiedMessageId = '';
+			copiedMessageTimeout = null;
+		}, 1200);
 	};
 
 	const isCompactStatusMessage = (message: ChatMessage) =>
@@ -726,7 +794,9 @@
 >
 	{#if showingSessionsList && isSidebar}
 		<header class="flex items-center justify-between border-b border-app-border px-4 py-2.5">
-			<span class="text-[11px] font-bold uppercase tracking-[0.28em] text-app-subtext">Sessions</span>
+			<span class="text-[11px] font-bold uppercase tracking-[0.28em] text-app-subtext"
+				>Sessions</span
+			>
 			<div class="flex items-center gap-1">
 				<button
 					type="button"
@@ -819,7 +889,9 @@
 					class="flex w-full items-center justify-between px-4 py-2.5 text-left transition hover:bg-app-element/50"
 					on:click={() => (showAllSessions = true)}
 				>
-					<span class="text-[11px] font-bold uppercase tracking-[0.24em] text-app-subtext">More</span>
+					<span class="text-[11px] font-bold uppercase tracking-[0.24em] text-app-subtext"
+						>More</span
+					>
 					<span class="text-xs text-app-subtext">{sessions.length}</span>
 				</button>
 			{/if}
@@ -871,61 +943,61 @@
 				</button>
 			</div>
 
-		<div class={`ml-auto flex items-center ${isMobileChrome ? 'gap-1' : 'gap-1.5'}`}>
-			<button
-				type="button"
-				class={`rounded-md text-app-subtext transition hover:bg-app-element hover:text-app-text ${
-					isMobileChrome ? 'p-1' : 'p-1.5'
-				}`}
-				on:click={onCreateSession}
-				title="New chat"
-				aria-label="New chat"
-			>
-				<Plus size={16} />
-			</button>
+			<div class={`ml-auto flex items-center ${isMobileChrome ? 'gap-1' : 'gap-1.5'}`}>
+				<button
+					type="button"
+					class={`rounded-md text-app-subtext transition hover:bg-app-element hover:text-app-text ${
+						isMobileChrome ? 'p-1' : 'p-1.5'
+					}`}
+					on:click={onCreateSession}
+					title="New chat"
+					aria-label="New chat"
+				>
+					<Plus size={16} />
+				</button>
 
-			<button
-				type="button"
-				disabled={!activeSession}
-				class={`rounded-md text-app-subtext transition hover:bg-app-element hover:text-app-text disabled:cursor-not-allowed disabled:opacity-45 ${
-					isMobileChrome ? 'p-1' : 'p-1.5'
-				}`}
-				on:click={requestSessionRename}
-				title="Rename chat"
-				aria-label="Rename chat"
-			>
-				<Pencil size={16} />
-			</button>
+				<button
+					type="button"
+					disabled={!activeSession}
+					class={`rounded-md text-app-subtext transition hover:bg-app-element hover:text-app-text disabled:cursor-not-allowed disabled:opacity-45 ${
+						isMobileChrome ? 'p-1' : 'p-1.5'
+					}`}
+					on:click={requestSessionRename}
+					title="Rename chat"
+					aria-label="Rename chat"
+				>
+					<Pencil size={16} />
+				</button>
 
-			<button
-				type="button"
-				disabled={!activeSession || !onClearHistory}
-				class={`rounded-md text-app-subtext transition hover:bg-app-element hover:text-app-text disabled:cursor-not-allowed disabled:opacity-45 ${
-					isMobileChrome ? 'p-1' : 'p-1.5'
-				}`}
-				on:click={() => onClearHistory && onClearHistory()}
-				title="Clear messages"
-				aria-label="Clear messages"
-			>
-				<XCircle size={16} />
-			</button>
+				<button
+					type="button"
+					disabled={!activeSession || !onClearHistory}
+					class={`rounded-md text-app-subtext transition hover:bg-app-element hover:text-app-text disabled:cursor-not-allowed disabled:opacity-45 ${
+						isMobileChrome ? 'p-1' : 'p-1.5'
+					}`}
+					on:click={() => onClearHistory && onClearHistory()}
+					title="Clear messages"
+					aria-label="Clear messages"
+				>
+					<XCircle size={16} />
+				</button>
 
-			<button
-				type="button"
-				disabled={!activeSession}
-				class={`rounded-md text-app-subtext transition hover:bg-app-element hover:text-rose-300 disabled:cursor-not-allowed disabled:opacity-45 ${
-					isMobileChrome ? 'p-1' : 'p-1.5'
-				}`}
-				on:click={requestSessionDelete}
-				title="Delete chat"
-				aria-label="Delete chat"
-			>
-				<Trash2 size={16} />
-			</button>
+				<button
+					type="button"
+					disabled={!activeSession}
+					class={`rounded-md text-app-subtext transition hover:bg-app-element hover:text-rose-300 disabled:cursor-not-allowed disabled:opacity-45 ${
+						isMobileChrome ? 'p-1' : 'p-1.5'
+					}`}
+					on:click={requestSessionDelete}
+					title="Delete chat"
+					aria-label="Delete chat"
+				>
+					<Trash2 size={16} />
+				</button>
 
-			<div class="mx-0.5 h-4 w-px bg-app-border"></div>
+				<div class="mx-0.5 h-4 w-px bg-app-border"></div>
 
-			{#if isSidebar && onCollapseSidebar}
+				{#if isSidebar && onCollapseSidebar}
 					<button
 						type="button"
 						class={`rounded-md text-app-subtext transition hover:bg-app-element hover:text-app-text ${
@@ -937,345 +1009,397 @@
 					>
 						<PanelRight size={16} />
 					</button>
-			{/if}
-		</div>
-	</header>
-
-	<div
-		bind:this={historyViewport}
-		class={`min-h-0 flex-1 overflow-y-auto ${isMobileChrome ? 'px-3 py-3' : 'px-4 py-4'}`}
-	>
-		{#if !history.length}
-			<div class="flex h-full flex-col items-center justify-center text-center text-app-subtext">
-				<BrandMark size={isMobileChrome ? 52 : 60} className="mb-3" alt="" />
-				<p
-					class={`font-display tracking-[0.18em] text-app-text ${isMobileChrome ? 'text-xl' : 'text-2xl'}`}
-				>
-					KAINBU AI
-				</p>
-				<p
-					class={`mt-2 uppercase ${isMobileChrome ? 'text-[10px] tracking-[0.24em]' : 'text-[11px] tracking-[0.32em]'}`}
-				>
-					Awaiting instructions
-				</p>
+				{/if}
 			</div>
-		{/if}
+		</header>
 
-		<div class={`${isMobileChrome ? 'space-y-2.5' : 'space-y-3'}`}>
-			{#each history as message (message.id)}
-				<div class={`flex flex-col ${message.role === 'user' ? 'items-end' : 'items-start'}`}>
-					{#if isCompactStatusMessage(message)}
-						{@const compactProgress = latestProgressText(message.progressEvents || [])}
-						{#if compactProgress}
+		<div
+			bind:this={historyViewport}
+			class={`min-h-0 flex-1 overflow-y-auto ${isMobileChrome ? 'px-3 py-3' : 'px-4 py-4'}`}
+		>
+			{#if !history.length}
+				<div class="flex h-full flex-col items-center justify-center text-center text-app-subtext">
+					<BrandMark size={isMobileChrome ? 52 : 60} className="mb-3" alt="" />
+					<p
+						class={`font-display tracking-[0.18em] text-app-text ${isMobileChrome ? 'text-xl' : 'text-2xl'}`}
+					>
+						KAINBU AI
+					</p>
+					<p
+						class={`mt-2 uppercase ${isMobileChrome ? 'text-[10px] tracking-[0.24em]' : 'text-[11px] tracking-[0.32em]'}`}
+					>
+						Awaiting instructions
+					</p>
+				</div>
+			{/if}
+
+			<div class={`${isMobileChrome ? 'space-y-2.5' : 'space-y-3'}`}>
+				{#each history as message (message.id)}
+					<div class={`flex flex-col ${message.role === 'user' ? 'items-end' : 'items-start'}`}>
+						{#if isCompactStatusMessage(message)}
+							{@const compactProgress = latestProgressText(message.progressEvents || [])}
+							{#if compactProgress}
+								<div class="mb-1.5 px-1 text-[11px] text-app-subtext/70">
+									{compactProgress}
+								</div>
+							{/if}
+						{:else if message.role === 'assistant' && latestProgressEvent(message.progressEvents || [])}
+							{@const compactProgress = latestProgressText(message.progressEvents || [])}
 							<div class="mb-1.5 px-1 text-[11px] text-app-subtext/70">
 								{compactProgress}
 							</div>
+						{:else if (message.progressEvents?.length || 0) > 0}
+							<div class="mb-2">
+								<AiActivityTrace events={message.progressEvents || []} />
+							</div>
 						{/if}
-					{:else if message.role === 'assistant' && latestProgressEvent(message.progressEvents || [])}
-						{@const compactProgress = latestProgressText(message.progressEvents || [])}
-						<div class="mb-1.5 px-1 text-[11px] text-app-subtext/70">
-							{compactProgress}
-						</div>
-					{:else if (message.progressEvents?.length || 0) > 0}
-						<div class="mb-2">
-							<AiActivityTrace events={message.progressEvents || []} />
-						</div>
-					{/if}
 
-					{#if !isCompactStatusMessage(message)}
-						<div
-							class={message.role === 'user'
-								? `max-w-[96%] border ${
-										isMobileChrome ? 'rounded-lg px-3 py-2.5' : 'rounded-lg px-3.5 py-3'
-									} border-app-border bg-app-element text-app-text`
-								: `max-w-[min(100%,46rem)] text-app-text ${
-										isMobileChrome ? 'px-0 py-0' : 'px-0 py-0'
-									}`}
-						>
-							{#if message.taskCards?.length}
-								<div class="mb-3 flex gap-2 overflow-x-auto pb-1">
-									{#each message.taskCards as taskCard (taskCard.id)}
-										<div
-											class="w-[14rem] shrink-0 rounded-lg border border-app-border bg-app-surface/85 px-3 py-2.5"
-										>
-											<div class="flex items-center justify-between gap-2">
-												<p
-													class="truncate text-xs font-semibold uppercase tracking-[0.2em] text-app-subtext"
-												>
-													{taskCard.columnTitle}
-												</p>
-												{#if taskCard.checked}
-													<span
-														class="rounded-full bg-emerald-500/15 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.16em] text-emerald-200"
-													>
-														Done
-													</span>
-												{/if}
-											</div>
-											<p class="mt-2 text-sm font-semibold text-app-text">{taskCard.title}</p>
-											{#if taskCard.description}
-												<p class="mt-1 text-xs leading-relaxed text-app-subtext">
-													{summarize(taskCard.description)}
-												</p>
-											{/if}
-											{#if taskCard.tags.length}
-												<div class="mt-2 flex flex-wrap gap-1.5">
-													{#each taskCard.tags.slice(0, 3) as tag (tag.id)}
-														<span
-															class={`rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.15em] ${getTagToneClasses(tag.color)}`}
-														>
-															{tag.label}
-														</span>
-													{/each}
-												</div>
-											{/if}
-										</div>
-									{/each}
-								</div>
-							{/if}
-
-							{#if message.attachments?.length}
-								<div class="mb-3 space-y-2">
-									{#each message.attachments as attachment (attachment.id)}
-										{#if attachment.kind === 'image'}
-											<button
-												type="button"
-												class="flex w-full items-center gap-3 rounded-lg border border-app-border bg-app-surface/85 px-3 py-2.5 text-left transition hover:border-app-primary/35 hover:bg-app-surface"
-												on:click={() => openAttachmentPreview(attachment)}
-												aria-label={`Open image preview for ${attachment.name}`}
-											>
-												<img
-													src={attachment.content}
-													alt={attachment.name}
-													class="h-14 w-14 shrink-0 rounded-lg border border-app-border object-cover"
-												/>
-												<div class="min-w-0 flex-1">
-													<p class="truncate text-xs font-semibold text-app-text">
-														{attachment.name}
-													</p>
-													<p
-														class="mt-1 text-[10px] font-semibold uppercase tracking-[0.18em] text-app-subtext"
-													>
-														{attachmentLabel(attachment)}
-													</p>
-												</div>
-												<span
-													class="rounded-full border border-app-primary/20 bg-app-primary/10 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-app-primary"
-												>
-													Preview
-												</span>
-											</button>
-										{:else}
+						{#if !isCompactStatusMessage(message)}
+							<div
+								class={message.role === 'user'
+									? `max-w-[96%] border ${
+											isMobileChrome ? 'rounded-lg px-3 py-2.5' : 'rounded-lg px-3.5 py-3'
+										} border-app-border bg-app-element text-app-text`
+									: `max-w-[min(100%,46rem)] text-app-text ${
+											isMobileChrome ? 'px-0 py-0' : 'px-0 py-0'
+										}`}
+							>
+								{#if message.taskCards?.length}
+									<div class="mb-3 flex gap-2 overflow-x-auto pb-1">
+										{#each message.taskCards as taskCard (taskCard.id)}
 											<div
-												class="flex items-center gap-3 rounded-lg border border-app-border bg-app-surface/85 px-3 py-2.5"
+												class="w-[14rem] shrink-0 rounded-lg border border-app-border bg-app-surface/85 px-3 py-2.5"
 											>
-												<div
-													class="flex h-14 w-14 shrink-0 items-center justify-center rounded-lg border border-app-border bg-app-element text-app-subtext"
-												>
-													<Paperclip size={16} />
-												</div>
-												<div class="min-w-0 flex-1">
-													<p class="truncate text-xs font-semibold text-app-text">
-														{attachment.name}
-													</p>
+												<div class="flex items-center justify-between gap-2">
 													<p
-														class="mt-1 text-[10px] font-semibold uppercase tracking-[0.18em] text-app-subtext"
+														class="truncate text-xs font-semibold uppercase tracking-[0.2em] text-app-subtext"
 													>
-														{attachmentLabel(attachment)}
+														{taskCard.columnTitle}
 													</p>
+													{#if taskCard.checked}
+														<span
+															class="rounded-full bg-emerald-500/15 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.16em] text-emerald-200"
+														>
+															Done
+														</span>
+													{/if}
 												</div>
-											</div>
-										{/if}
-									{/each}
-								</div>
-							{/if}
-
-							{#if message.role === 'assistant'}
-								<RichText
-									value={message.text}
-									className={isMobileChrome
-										? 'kainbu-prose kainbu-chat-prose text-[13px]'
-										: 'kainbu-prose kainbu-chat-prose'}
-								/>
-							{:else}
-								<p
-									class={`whitespace-pre-wrap leading-relaxed ${isMobileChrome ? 'text-[13px]' : 'text-sm'}`}
-								>
-									{message.text}
-								</p>
-							{/if}
-
-							{#if message.question}
-								<div class="mt-2">
-									{#if message.question.status === 'answered'}
-										<div class="mb-1.5">
-											<span
-												class="rounded-full border border-emerald-500/30 bg-emerald-500/10 px-2 py-0.5 text-[9px] font-bold uppercase tracking-[0.18em] text-emerald-200"
-											>
-												Answered
-											</span>
-										</div>
-									{/if}
-									<p class="text-sm font-semibold text-app-text">{message.question.prompt}</p>
-									{#if message.question.reason}
-										<p class="mt-0.5 text-xs leading-relaxed text-app-subtext">
-											{message.question.reason}
-										</p>
-									{/if}
-									<div class="mt-2 flex flex-wrap gap-1.5">
-										{#each message.question.options as option (option.id)}
-											<button
-												type="button"
-												disabled={message.question.status === 'answered'}
-												class={`rounded-lg border px-2.5 py-1.5 text-left text-xs font-medium transition ${
-													message.question.status === 'answered'
-														? option.id === message.question.answeredOptionId
-															? 'border-emerald-500/35 bg-emerald-500/10 text-emerald-100'
-															: 'cursor-not-allowed border-app-border bg-app-element/70 text-app-subtext'
-														: 'border-app-border bg-app-element text-app-text hover:border-app-primary/35 hover:text-app-primary'
-												}`}
-												on:click={() => onAnswerQuestion(message.question?.id || '', option.id)}
-											>
-												<span>{option.label}</span>
-												{#if option.description}
-													<span class="mt-0.5 block text-[10px] font-normal text-app-subtext">
-														{option.description}
-													</span>
+												<p class="mt-2 text-sm font-semibold text-app-text">{taskCard.title}</p>
+												{#if taskCard.description}
+													<p class="mt-1 text-xs leading-relaxed text-app-subtext">
+														{summarize(taskCard.description)}
+													</p>
 												{/if}
-											</button>
+												{#if taskCard.tags.length}
+													<div class="mt-2 flex flex-wrap gap-1.5">
+														{#each taskCard.tags.slice(0, 3) as tag (tag.id)}
+															<span
+																class={`rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.15em] ${getTagToneClasses(tag.color)}`}
+															>
+																{tag.label}
+															</span>
+														{/each}
+													</div>
+												{/if}
+											</div>
 										{/each}
 									</div>
-									{#if message.question.allowFreeform}
-										<div class="mt-2 flex items-end gap-1.5">
-											<textarea
-												rows={2}
-												disabled={message.question.status === 'answered'}
-												class="min-h-14 flex-1 resize-none rounded-lg border border-app-border bg-app-bg px-2.5 py-1.5 text-xs text-app-text outline-none placeholder:text-app-subtext/50 disabled:cursor-not-allowed disabled:opacity-60"
-												placeholder="Add your own answer…"
-												value={questionDrafts[message.question.id] || ''}
-												on:input={(event) =>
-													setQuestionDraft(
-														message.question?.id || '',
-														(event.currentTarget as HTMLTextAreaElement).value
-													)}
-											></textarea>
-											<button
-												type="button"
-												disabled={message.question.status === 'answered' ||
-													!(questionDrafts[message.question.id] || '').trim().length}
-												class="rounded-lg bg-app-primary px-2.5 py-1.5 text-xs font-semibold text-white transition disabled:cursor-not-allowed disabled:opacity-45"
-												on:click={() => submitQuestionFreeform(message.question?.id || '')}
-											>
-												Send
-											</button>
+								{/if}
+
+								{#if message.attachments?.length}
+									<div class="mb-3 space-y-2">
+										{#each message.attachments as attachment (attachment.id)}
+											{#if attachment.kind === 'image'}
+												<button
+													type="button"
+													class="flex w-full items-center gap-3 rounded-lg border border-app-border bg-app-surface/85 px-3 py-2.5 text-left transition hover:border-app-primary/35 hover:bg-app-surface"
+													on:click={() => openAttachmentPreview(attachment)}
+													aria-label={`Open image preview for ${attachment.name}`}
+												>
+													<img
+														src={attachment.content}
+														alt={attachment.name}
+														class="h-14 w-14 shrink-0 rounded-lg border border-app-border object-cover"
+													/>
+													<div class="min-w-0 flex-1">
+														<p class="truncate text-xs font-semibold text-app-text">
+															{attachment.name}
+														</p>
+														<p
+															class="mt-1 text-[10px] font-semibold uppercase tracking-[0.18em] text-app-subtext"
+														>
+															{attachmentLabel(attachment)}
+														</p>
+													</div>
+													<span
+														class="rounded-full border border-app-primary/20 bg-app-primary/10 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-app-primary"
+													>
+														Preview
+													</span>
+												</button>
+											{:else}
+												<div
+													class="flex items-center gap-3 rounded-lg border border-app-border bg-app-surface/85 px-3 py-2.5"
+												>
+													<div
+														class="flex h-14 w-14 shrink-0 items-center justify-center rounded-lg border border-app-border bg-app-element text-app-subtext"
+													>
+														<Paperclip size={16} />
+													</div>
+													<div class="min-w-0 flex-1">
+														<p class="truncate text-xs font-semibold text-app-text">
+															{attachment.name}
+														</p>
+														<p
+															class="mt-1 text-[10px] font-semibold uppercase tracking-[0.18em] text-app-subtext"
+														>
+															{attachmentLabel(attachment)}
+														</p>
+													</div>
+												</div>
+											{/if}
+										{/each}
+									</div>
+								{/if}
+
+								{#if message.role === 'assistant'}
+									<RichText
+										value={message.text}
+										className={isMobileChrome
+											? 'kainbu-prose kainbu-chat-prose text-[13px]'
+											: 'kainbu-prose kainbu-chat-prose'}
+									/>
+								{:else}
+									<p
+										class={`whitespace-pre-wrap leading-relaxed ${isMobileChrome ? 'text-[13px]' : 'text-sm'}`}
+									>
+										{message.text}
+									</p>
+								{/if}
+
+								{#if message.question}
+									<div class="mt-2">
+										{#if message.question.status === 'answered'}
+											<div class="mb-1.5">
+												<span
+													class="rounded-full border border-emerald-500/30 bg-emerald-500/10 px-2 py-0.5 text-[9px] font-bold uppercase tracking-[0.18em] text-emerald-200"
+												>
+													Answered
+												</span>
+											</div>
+										{/if}
+										<p class="text-sm font-semibold text-app-text">{message.question.prompt}</p>
+										{#if message.question.reason}
+											<p class="mt-0.5 text-xs leading-relaxed text-app-subtext">
+												{message.question.reason}
+											</p>
+										{/if}
+										<div class="mt-2 flex flex-wrap gap-1.5">
+											{#each message.question.options as option (option.id)}
+												<button
+													type="button"
+													disabled={message.question.status === 'answered'}
+													class={`rounded-lg border px-2.5 py-1.5 text-left text-xs font-medium transition ${
+														message.question.status === 'answered'
+															? option.id === message.question.answeredOptionId
+																? 'border-emerald-500/35 bg-emerald-500/10 text-emerald-100'
+																: 'cursor-not-allowed border-app-border bg-app-element/70 text-app-subtext'
+															: hasBatchQuestions &&
+																  questionOptionDrafts[message.question.id] === option.id
+																? 'border-app-primary/45 bg-app-primary/15 text-app-primary'
+																: 'border-app-border bg-app-element text-app-text hover:border-app-primary/35 hover:text-app-primary'
+													}`}
+													on:click={() => {
+														if (!message.question) return;
+														if (hasBatchQuestions) {
+															setQuestionOptionDraft(message.question.id, option.id);
+															return;
+														}
+														onAnswerQuestion(message.question.id, option.id);
+													}}
+												>
+													<span>{option.label}</span>
+													{#if option.description}
+														<span class="mt-0.5 block text-[10px] font-normal text-app-subtext">
+															{option.description}
+														</span>
+													{/if}
+												</button>
+											{/each}
 										</div>
-									{/if}
-								</div>
-							{/if}
+										{#if message.question.allowFreeform}
+											<div class="mt-2 flex items-end gap-1.5">
+												<textarea
+													rows={2}
+													disabled={message.question.status === 'answered'}
+													class="min-h-14 flex-1 resize-none rounded-lg border border-app-border bg-app-bg px-2.5 py-1.5 text-xs text-app-text outline-none placeholder:text-app-subtext/50 disabled:cursor-not-allowed disabled:opacity-60"
+													placeholder="Add your own answer…"
+													value={questionDrafts[message.question.id] || ''}
+													on:input={(event) =>
+														setQuestionDraft(
+															message.question?.id || '',
+															(event.currentTarget as HTMLTextAreaElement).value
+														)}
+												></textarea>
+												<button
+													type="button"
+													disabled={message.question.status === 'answered' ||
+														hasBatchQuestions ||
+														!(questionDrafts[message.question.id] || '').trim().length}
+													class="rounded-lg bg-app-primary px-2.5 py-1.5 text-xs font-semibold text-white transition disabled:cursor-not-allowed disabled:opacity-45"
+													on:click={() => submitQuestionFreeform(message.question?.id || '')}
+												>
+													Send
+												</button>
+											</div>
+										{/if}
+									</div>
+								{/if}
 
-							{#if message.metadata}
-								<div
-									class={`mt-2 flex flex-wrap items-center gap-2 text-app-subtext/50 ${
-										isMobileChrome ? 'text-[10px]' : 'text-[10px]'
-									}`}
-								>
-									<span>{(message.metadata.latencyMs / 1000).toFixed(2)}s</span>
-								</div>
-							{/if}
-
-							{#if uniqueCitations(message).length}
-								<div class="mt-3 flex flex-wrap gap-2">
-									{#each uniqueCitations(message) as citation}
-										<a
-											href={citation.url}
-											target="_blank"
-											rel="noreferrer"
-											class="rounded-full border border-app-accent/25 bg-app-accent/10 px-3 py-1 text-[11px] font-semibold text-app-accent transition hover:bg-app-accent/20"
+								{#if message.metadata}
+									<div
+										class={`mt-2 flex flex-wrap items-center gap-2 text-app-subtext/50 ${
+											isMobileChrome ? 'text-[10px]' : 'text-[10px]'
+										}`}
+									>
+										<span>{absoluteTime(message.timestamp)}</span>
+										<span>{(message.metadata.latencyMs / 1000).toFixed(2)}s</span>
+										<button
+											type="button"
+											class="inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 transition hover:bg-app-element hover:text-app-text"
+											on:click={() => void copyMessageText(message)}
+											aria-label="Copy response"
+											title="Copy response"
 										>
-											{citation.title || citation.url}
-										</a>
-									{/each}
-								</div>
-							{/if}
-						</div>
-					{/if}
-				</div>
-			{/each}
+											<Copy size={11} />
+											{copiedMessageId === message.id ? 'Copied' : 'Copy'}
+										</button>
+									</div>
+								{/if}
 
-			{#if isProcessing}
-				<div class="flex items-start px-0.5">
-					<AiActivityTrace events={processingEvents} isLive compact />
-				</div>
-			{/if}
-
-			{#each pendingProposals as pendingProposal (pendingProposal.id)}
-				<div class="rounded-lg border border-app-primary/25 bg-app-primary/10 p-3.5">
-					<p class="text-[10px] font-bold uppercase tracking-[0.28em] text-app-subtext">
-						Sync proposal
-					</p>
-					<h3 class="mt-2 text-base font-semibold leading-snug text-app-text">
-						{pendingProposal.summary || 'Review AI changes'}
-					</h3>
-					<p class="mt-2 text-sm text-app-subtext">
-						{proposalStatusText(pendingProposal)}
-					</p>
-					<div class="mt-3 flex flex-wrap gap-2 text-[10px] font-bold uppercase tracking-[0.22em]">
-						<span
-							class="rounded-full border border-app-border bg-app-element/70 px-3 py-1 text-app-subtext"
-						>
-							{pendingProposal.target}
-						</span>
-						{#if activeProposalTarget === pendingProposal.target}
-							<span
-								class="rounded-full border border-app-accent/25 bg-app-accent/10 px-3 py-1 text-app-accent"
-							>
-								Preview Open
-							</span>
-						{/if}
-						{#if pendingProposal.proposalSafety.outOfScope}
-							<span
-								class="rounded-full border border-amber-500/30 bg-amber-500/10 px-3 py-1 text-amber-200"
-							>
-								Review Carefully
-							</span>
+								{#if uniqueCitations(message).length}
+									<div class="mt-3 flex flex-wrap gap-2">
+										{#each uniqueCitations(message) as citation}
+											<a
+												href={citation.url}
+												target="_blank"
+												rel="noreferrer"
+												class="rounded-full border border-app-accent/25 bg-app-accent/10 px-3 py-1 text-[11px] font-semibold text-app-accent transition hover:bg-app-accent/20"
+											>
+												{citation.title || citation.url}
+											</a>
+										{/each}
+									</div>
+								{/if}
+							</div>
 						{/if}
 					</div>
-					{#if proposalApplyErrors[pendingProposal.id]}
-						<p class="mt-2 text-sm text-rose-300">{proposalApplyErrors[pendingProposal.id]}</p>
-					{/if}
-					<div class="mt-3 flex flex-wrap gap-2.5">
-						{#if onReviewProposal}
+				{/each}
+
+				{#if hasBatchQuestions}
+					<div class="rounded-lg border border-app-primary/25 bg-app-primary/10 p-3">
+						<p class="text-sm font-semibold text-app-text">Answer all questions</p>
+						<p class="mt-1 text-xs text-app-subtext">
+							Choose or type an answer for each open question, then submit once.
+						</p>
+						<button
+							type="button"
+							class="mt-3 rounded-lg bg-app-primary px-3 py-1.5 text-xs font-semibold text-white transition disabled:cursor-not-allowed disabled:opacity-45"
+							disabled={openQuestions.some(
+								(question) =>
+									!questionOptionDrafts[question.id] && !questionDrafts[question.id]?.trim()
+							)}
+							on:click={submitQuestionBatch}
+						>
+							Submit answers
+						</button>
+					</div>
+				{/if}
+
+				{#if isProcessing}
+					<div class="flex items-start gap-2 px-0.5">
+						<div
+							class="mt-1 grid h-5 w-5 shrink-0 place-items-center rounded-full bg-app-primary/15 shadow-[0_0_18px_color-mix(in_oklab,var(--color-app-primary)_55%,transparent)]"
+							aria-hidden="true"
+						>
+							<span class="ai-stream-orb h-2.5 w-2.5 rounded-full bg-app-primary"></span>
+						</div>
+						<div class="min-w-0 flex-1">
+							<AiActivityTrace events={processingEvents} isLive compact />
+						</div>
+					</div>
+				{/if}
+
+				{#each pendingProposals as pendingProposal (pendingProposal.id)}
+					<div class="rounded-lg border border-app-primary/25 bg-app-primary/10 p-3.5">
+						<p class="text-[10px] font-bold uppercase tracking-[0.28em] text-app-subtext">
+							Sync proposal
+						</p>
+						<h3 class="mt-2 text-base font-semibold leading-snug text-app-text">
+							{pendingProposal.summary || 'Review AI changes'}
+						</h3>
+						<p class="mt-2 text-sm text-app-subtext">
+							{proposalStatusText(pendingProposal)}
+						</p>
+						<div
+							class="mt-3 flex flex-wrap gap-2 text-[10px] font-bold uppercase tracking-[0.22em]"
+						>
+							<span
+								class="rounded-full border border-app-border bg-app-element/70 px-3 py-1 text-app-subtext"
+							>
+								{pendingProposal.target}
+							</span>
+							{#if activeProposalTarget === pendingProposal.target}
+								<span
+									class="rounded-full border border-app-accent/25 bg-app-accent/10 px-3 py-1 text-app-accent"
+								>
+									Preview Open
+								</span>
+							{/if}
+							{#if pendingProposal.proposalSafety.outOfScope}
+								<span
+									class="rounded-full border border-amber-500/30 bg-amber-500/10 px-3 py-1 text-amber-200"
+								>
+									Review Carefully
+								</span>
+							{/if}
+						</div>
+						{#if proposalApplyErrors[pendingProposal.id]}
+							<p class="mt-2 text-sm text-rose-300">{proposalApplyErrors[pendingProposal.id]}</p>
+						{/if}
+						<div class="mt-3 flex flex-wrap gap-2.5">
+							{#if onReviewProposal}
+								<button
+									type="button"
+									class="inline-flex flex-1 items-center justify-center gap-2 rounded-lg border border-app-border bg-app-element px-4 py-2 text-sm font-semibold text-app-text"
+									on:click={() => onReviewProposal && onReviewProposal(pendingProposal.target)}
+								>
+									<Info size={16} />
+									Review
+								</button>
+							{/if}
+							<button
+								type="button"
+								disabled={applyingProposalId === pendingProposal.id}
+								class="inline-flex flex-1 items-center justify-center gap-2 rounded-lg bg-app-primary px-4 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-60"
+								on:click={() => onAcceptProposal(pendingProposal.id)}
+							>
+								<Check size={16} />
+								{applyingProposalId === pendingProposal.id ? 'Applying…' : 'Apply'}
+							</button>
 							<button
 								type="button"
 								class="inline-flex flex-1 items-center justify-center gap-2 rounded-lg border border-app-border bg-app-element px-4 py-2 text-sm font-semibold text-app-text"
-								on:click={() => onReviewProposal && onReviewProposal(pendingProposal.target)}
+								on:click={() => onRejectProposal(pendingProposal.id)}
 							>
-								<Info size={16} />
-								Review
+								<XCircle size={16} />
+								Discard
 							</button>
-						{/if}
-						<button
-							type="button"
-							disabled={applyingProposalId === pendingProposal.id}
-							class="inline-flex flex-1 items-center justify-center gap-2 rounded-lg bg-app-primary px-4 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-60"
-							on:click={() => onAcceptProposal(pendingProposal.id)}
-						>
-							<Check size={16} />
-							{applyingProposalId === pendingProposal.id ? 'Applying…' : 'Apply'}
-						</button>
-						<button
-							type="button"
-							class="inline-flex flex-1 items-center justify-center gap-2 rounded-lg border border-app-border bg-app-element px-4 py-2 text-sm font-semibold text-app-text"
-							on:click={() => onRejectProposal(pendingProposal.id)}
-						>
-							<XCircle size={16} />
-							Discard
-						</button>
+						</div>
 					</div>
-				</div>
-			{/each}
+				{/each}
+			</div>
 		</div>
-	</div>
 	{/if}
 
 	<div
@@ -1284,9 +1408,7 @@
 		}`}
 	>
 		<form
-			class={isMobileChrome
-				? 'space-y-2'
-				: 'space-y-0'}
+			class={isMobileChrome ? 'space-y-2' : 'space-y-0'}
 			on:submit|preventDefault={submitComposer}
 		>
 			{#if queuedTaskCards.length}
@@ -1438,8 +1560,6 @@
 							/>
 						</label>
 
-						
-
 						<select
 							class="rounded-md bg-transparent px-2 py-1.5 text-xs text-app-subtext outline-none transition hover:bg-app-element hover:text-app-text cursor-pointer"
 							value={modelId}
@@ -1507,92 +1627,90 @@
 			style={`top:${switcherPosition.top}px; left:${switcherPosition.left}px; width:${switcherPosition.width}px;`}
 			on:mousedown|stopPropagation
 		>
-				<div class="border-b border-app-border px-3 py-2.5">
-					<label class="flex items-center gap-2 rounded-lg bg-app-bg/80 px-2.5 py-2">
-						<Search size={14} class="shrink-0 text-app-subtext" />
-						<input
-							bind:this={switcherSearchInput}
-							bind:value={switcherSearchQuery}
-							type="search"
-							placeholder="Search chats…"
-							class="min-w-0 flex-1 bg-transparent text-sm text-app-text outline-none placeholder:text-app-subtext/60"
-						/>
-					</label>
-				</div>
+			<div class="border-b border-app-border px-3 py-2.5">
+				<label class="flex items-center gap-2 rounded-lg bg-app-bg/80 px-2.5 py-2">
+					<Search size={14} class="shrink-0 text-app-subtext" />
+					<input
+						bind:this={switcherSearchInput}
+						bind:value={switcherSearchQuery}
+						type="search"
+						placeholder="Search chats…"
+						class="min-w-0 flex-1 bg-transparent text-sm text-app-text outline-none placeholder:text-app-subtext/60"
+					/>
+				</label>
+			</div>
 
-				<div class="max-h-[min(24rem,calc(100vh-8rem))] overflow-y-auto p-1.5">
-					{#if !switcherFilteredSessions.length}
-						<p class="px-3 py-4 text-sm text-app-subtext">No chats match.</p>
-					{:else}
-						{#each switcherGroupedSessions as group (group.label)}
-							<div class="px-2 pb-1 pt-2">
-								<p class="px-2 pb-1.5 text-[11px] font-medium text-app-subtext">{group.label}</p>
-								<div class="space-y-0.5">
-									{#each group.sessions as session (session.id)}
-										<div
-											class={`group flex items-center gap-1 rounded-lg transition ${
-												session.id === activeSessionId
-													? 'bg-app-element'
-													: 'hover:bg-app-element/70'
-											}`}
-											role="presentation"
-											on:mouseenter={() => (hoveredSwitcherSessionId = session.id)}
-											on:mouseleave={() => {
-												if (hoveredSwitcherSessionId === session.id) {
-													hoveredSwitcherSessionId = '';
-												}
-											}}
+			<div class="max-h-[min(24rem,calc(100vh-8rem))] overflow-y-auto p-1.5">
+				{#if !switcherFilteredSessions.length}
+					<p class="px-3 py-4 text-sm text-app-subtext">No chats match.</p>
+				{:else}
+					{#each switcherGroupedSessions as group (group.label)}
+						<div class="px-2 pb-1 pt-2">
+							<p class="px-2 pb-1.5 text-[11px] font-medium text-app-subtext">{group.label}</p>
+							<div class="space-y-0.5">
+								{#each group.sessions as session (session.id)}
+									<div
+										class={`group flex items-center gap-1 rounded-lg transition ${
+											session.id === activeSessionId ? 'bg-app-element' : 'hover:bg-app-element/70'
+										}`}
+										role="presentation"
+										on:mouseenter={() => (hoveredSwitcherSessionId = session.id)}
+										on:mouseleave={() => {
+											if (hoveredSwitcherSessionId === session.id) {
+												hoveredSwitcherSessionId = '';
+											}
+										}}
+									>
+										<button
+											type="button"
+											role="option"
+											aria-selected={session.id === activeSessionId}
+											class="flex min-w-0 flex-1 items-center gap-2.5 px-2.5 py-2 text-left text-app-text"
+											on:click={() => selectSwitcherSession(session.id)}
 										>
-											<button
-												type="button"
-												role="option"
-												aria-selected={session.id === activeSessionId}
-												class="flex min-w-0 flex-1 items-center gap-2.5 px-2.5 py-2 text-left text-app-text"
-												on:click={() => selectSwitcherSession(session.id)}
-											>
-												<span class="shrink-0 text-app-subtext">
-													{#if session.id === activeSessionId && isProcessing}
-														<LoaderCircle size={15} class="animate-spin" />
-													{:else if session.id === activeSessionId}
-														<CheckCircle2 size={15} class="text-app-text" />
-													{:else}
-														<Circle size={15} />
-													{/if}
-												</span>
-												<span class="min-w-0 flex-1 truncate text-[13px]">{session.title}</span>
-											</button>
-											{#if hoveredSwitcherSessionId === session.id}
-												<span class="flex shrink-0 items-center gap-0.5 pr-1.5">
-													<button
-														type="button"
-														class="rounded-md p-1 text-app-subtext transition hover:bg-app-bg hover:text-app-text"
-														title="Rename chat"
-														aria-label="Rename chat"
-														on:click={() => requestSessionRenameById(session)}
-													>
-														<Pencil size={13} />
-													</button>
-													<button
-														type="button"
-														class="rounded-md p-1 text-app-subtext transition hover:bg-app-bg hover:text-rose-300"
-														title="Delete chat"
-														aria-label="Delete chat"
-														on:click={() => requestSessionDeleteById(session)}
-													>
-														<Trash2 size={13} />
-													</button>
-												</span>
-											{/if}
-										</div>
-									{/each}
-								</div>
+											<span class="shrink-0 text-app-subtext">
+												{#if session.id === activeSessionId && isProcessing}
+													<LoaderCircle size={15} class="animate-spin" />
+												{:else if session.id === activeSessionId}
+													<CheckCircle2 size={15} class="text-app-text" />
+												{:else}
+													<Circle size={15} />
+												{/if}
+											</span>
+											<span class="min-w-0 flex-1 truncate text-[13px]">{session.title}</span>
+										</button>
+										{#if hoveredSwitcherSessionId === session.id}
+											<span class="flex shrink-0 items-center gap-0.5 pr-1.5">
+												<button
+													type="button"
+													class="rounded-md p-1 text-app-subtext transition hover:bg-app-bg hover:text-app-text"
+													title="Rename chat"
+													aria-label="Rename chat"
+													on:click={() => requestSessionRenameById(session)}
+												>
+													<Pencil size={13} />
+												</button>
+												<button
+													type="button"
+													class="rounded-md p-1 text-app-subtext transition hover:bg-app-bg hover:text-rose-300"
+													title="Delete chat"
+													aria-label="Delete chat"
+													on:click={() => requestSessionDeleteById(session)}
+												>
+													<Trash2 size={13} />
+												</button>
+											</span>
+										{/if}
+									</div>
+								{/each}
 							</div>
-						{/each}
-					{/if}
-				</div>
+						</div>
+					{/each}
+				{/if}
 			</div>
 		</div>
-	{/if}
+	</div>
+{/if}
 
 {#if previewAttachment}
 	<div class="fixed inset-0 z-[90] flex bg-black/82 backdrop-blur-xl">
@@ -1686,3 +1804,30 @@
 		</div>
 	</div>
 {/if}
+
+<style>
+	.ai-stream-orb {
+		animation: ai-stream-orb 1.25s ease-in-out infinite;
+		box-shadow:
+			0 0 10px color-mix(in oklab, var(--color-app-primary) 80%, transparent),
+			0 0 22px color-mix(in oklab, var(--color-app-primary) 45%, transparent);
+	}
+
+	@keyframes ai-stream-orb {
+		0%,
+		100% {
+			opacity: 0.72;
+			transform: scale(0.82);
+		}
+		50% {
+			opacity: 1;
+			transform: scale(1.18);
+		}
+	}
+
+	@media (prefers-reduced-motion: reduce) {
+		.ai-stream-orb {
+			animation: none;
+		}
+	}
+</style>

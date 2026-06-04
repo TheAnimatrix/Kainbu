@@ -139,10 +139,7 @@
 		updateProjectBoardData,
 		updateProjectPageContent as updateProjectPageState
 	} from '$lib/kainbu/projectStructure';
-	import {
-		getActiveScratchpadPad,
-		getScratchpadPad,
-	} from '$lib/kainbu/scratchpad';
+	import { getActiveScratchpadPad, getScratchpadPad } from '$lib/kainbu/scratchpad';
 	import type { TaskReferenceOption } from '$lib/kainbu/taskMarkdown';
 	import { buildTimedTasks, clearTaskDueAt } from '$lib/kainbu/timing';
 	import type {
@@ -298,7 +295,9 @@
 	const USERNAME_CHECK_DEBOUNCE_MS = 260;
 	const USERNAME_REGEX = /^[a-z0-9_]{3,32}$/;
 
-	const focusOnMount = (node: HTMLElement) => { node.focus(); };
+	const focusOnMount = (node: HTMLElement) => {
+		node.focus();
+	};
 
 	let boardPresenceTimer: ReturnType<typeof setInterval> | null = null;
 	let workspaceUrlReady = false;
@@ -329,7 +328,8 @@
 	$: isMobile = viewportWidth > 0 && viewportWidth < 768;
 	$: currentProject = projects.find((project) => project.id === currentProjectId) || null;
 	$: activeAiSession = currentProject ? getActiveProjectAiSession(currentProject) : null;
-	$: activeAiModelId = activeAiSession?.modelId || settings.preferredAiModelId || DEFAULT_AI_MODEL_ID;
+	$: activeAiModelId =
+		activeAiSession?.modelId || settings.preferredAiModelId || DEFAULT_AI_MODEL_ID;
 	$: if (activeAiModelId && activeAiModelId !== lastSyncedAiThinkingModelId) {
 		const model = aiModels.find((entry) => entry.id === activeAiModelId);
 		if (model) {
@@ -514,7 +514,8 @@
 	}
 	const getProjectRevisionState = (projectId: string): ProjectRevisionState =>
 		projectRevisions[projectId] || { kanban: 0, scratchpad: 0 };
-	const getBoardHistoryKey = (projectId: string, boardId: string) => `${projectId}::board::${boardId}`;
+	const getBoardHistoryKey = (projectId: string, boardId: string) =>
+		`${projectId}::board::${boardId}`;
 	const getPageSyncKey = (projectId: string, pageId: string) => `${projectId}::page::${pageId}`;
 	const hasKeyWithPrefix = (keys: Iterable<string>, prefix: string) => {
 		for (const key of keys) {
@@ -647,10 +648,7 @@
 		}
 
 		if (!USERNAME_REGEX.test(normalized)) {
-			setUsernameStatus(
-				'invalid',
-				'Use 3-32 lowercase letters, numbers, or underscores.'
-			);
+			setUsernameStatus('invalid', 'Use 3-32 lowercase letters, numbers, or underscores.');
 			return null;
 		}
 
@@ -725,9 +723,7 @@
 			return getKanbanFingerprint(project.kanbanData) !== proposal.baseFingerprint;
 		}
 
-		return (
-			getProjectPagesFingerprint(project.pages) !== proposal.baseFingerprint
-		);
+		return getProjectPagesFingerprint(project.pages) !== proposal.baseFingerprint;
 	};
 	const refreshPendingProposalStaleness = (nextProjects = projects) => {
 		pendingProposals = pendingProposals.map((proposal) => {
@@ -1666,11 +1662,7 @@
 		clearBoardPresenceTimer();
 	}
 
-	const resolveMergedActiveId = (
-		items: { id: string }[],
-		localId: string,
-		remoteId: string
-	) => {
+	const resolveMergedActiveId = (items: { id: string }[], localId: string, remoteId: string) => {
 		if (items.some((item) => item.id === localId)) return localId;
 		if (items.some((item) => item.id === remoteId)) return remoteId;
 		return items[0]?.id || '';
@@ -1753,16 +1745,17 @@
 				kanbanData: activeBoard?.kanbanData || [],
 				pages: mergedPages,
 				activePageId: activePage?.id || activePageId,
-				scratchpadData: activePage ? pageToScratchpadData(activePage) : remoteProject.scratchpadData,
+				scratchpadData: activePage
+					? pageToScratchpadData(activePage)
+					: remoteProject.scratchpadData,
 				scratchpadRev:
 					activePageId === localProject.activePageId
 						? localProject.scratchpadRev
 						: remoteProject.scratchpadRev,
 				aiSessions: preferLocalAiState ? localProject.aiSessions : remoteProject.aiSessions,
-				activeAiSessionId:
-					preferLocalAiState
-						? localProject.activeAiSessionId
-						: remoteProject.activeAiSessionId,
+				activeAiSessionId: preferLocalAiState
+					? localProject.activeAiSessionId
+					: remoteProject.activeAiSessionId,
 				chatHistory: preferLocalAiState ? localProject.chatHistory : remoteProject.chatHistory,
 				updatedAt: Math.max(remoteProject.updatedAt, localProject.updatedAt)
 			});
@@ -2040,9 +2033,7 @@
 						'Account created. Check your email to verify your address before signing in.';
 					return;
 				}
-				await pocketbase
-					.collection('users')
-					.authWithPassword(payload.email, payload.password);
+				await pocketbase.collection('users').authWithPassword(payload.email, payload.password);
 				authInfoMessage = 'Account created.';
 				return;
 			}
@@ -2357,11 +2348,9 @@
 				? {
 						...entry,
 						boards: entry.boards.map((candidate) =>
-							candidate.id === boardId
-								? { ...candidate, name, updatedAt: Date.now() }
-								: candidate
+							candidate.id === boardId ? { ...candidate, name, updatedAt: Date.now() } : candidate
 						)
-				  }
+					}
 				: entry
 		);
 
@@ -2386,11 +2375,9 @@
 				? {
 						...entry,
 						pages: entry.pages.map((candidate) =>
-							candidate.id === pageId
-								? { ...candidate, name, updatedAt: Date.now() }
-								: candidate
+							candidate.id === pageId ? { ...candidate, name, updatedAt: Date.now() } : candidate
 						)
-				  }
+					}
 				: entry
 		);
 
@@ -2529,7 +2516,12 @@
 			if (!board || board.name === name) return;
 			projects = projects.map((p) =>
 				p.id === projectId
-					? { ...p, boards: p.boards.map((b) => (b.id === itemId ? { ...b, name, updatedAt: Date.now() } : b)) }
+					? {
+							...p,
+							boards: p.boards.map((b) =>
+								b.id === itemId ? { ...b, name, updatedAt: Date.now() } : b
+							)
+						}
 					: p
 			);
 			try {
@@ -2545,7 +2537,12 @@
 			if (!page || page.name === name) return;
 			projects = projects.map((p) =>
 				p.id === projectId
-					? { ...p, pages: p.pages.map((pg) => (pg.id === itemId ? { ...pg, name, updatedAt: Date.now() } : pg)) }
+					? {
+							...p,
+							pages: p.pages.map((pg) =>
+								pg.id === itemId ? { ...pg, name, updatedAt: Date.now() } : pg
+							)
+						}
 					: p
 			);
 			try {
@@ -2567,9 +2564,7 @@
 			column.id === columnId
 				? {
 						...column,
-						tasks: column.tasks.map((task) =>
-							task.id === taskId ? clearTaskDueAt(task) : task
-						)
+						tasks: column.tasks.map((task) => (task.id === taskId ? clearTaskDueAt(task) : task))
 					}
 				: column
 		);
@@ -2611,9 +2606,7 @@
 		const previousProjects = projects;
 		const remainingBoards = project.boards.filter((b) => b.id !== boardId);
 		const nextActiveBoardId =
-			project.activeBoardId === boardId
-				? remainingBoards[0]?.id || ''
-				: project.activeBoardId;
+			project.activeBoardId === boardId ? remainingBoards[0]?.id || '' : project.activeBoardId;
 
 		clearBoardSyncState(projectId, boardId);
 		applyWorkspaceState({
@@ -3007,17 +3000,15 @@
 		if (!currentProject || isAiProcessing) return;
 
 		const preserveComposerState =
-			composerDraft.trim().length > 0 ||
-			queuedAttachments.length > 0 ||
-			queuedTaskCards.length > 0;
+			composerDraft.trim().length > 0 || queuedAttachments.length > 0 || queuedTaskCards.length > 0;
 
 		const emptySession = currentProject.aiSessions.find(
-			(s) =>
-				isDefaultAiSessionTitle(s.title) &&
-				!s.history.some((m) => m.role === 'user')
+			(s) => isDefaultAiSessionTitle(s.title) && !s.history.some((m) => m.role === 'user')
 		);
 		if (emptySession) {
-			updateProjectLocal(currentProject.id, (project) => setActiveProjectAiSession(project, emptySession.id));
+			updateProjectLocal(currentProject.id, (project) =>
+				setActiveProjectAiSession(project, emptySession.id)
+			);
 			scheduleChatSync(currentProject.id, 0);
 			if (!preserveComposerState) clearComposerState();
 			highlightedTaskIds = [];
@@ -3033,7 +3024,9 @@
 
 	const handleActiveAiSessionChange = (sessionId: string) => {
 		if (!currentProject || isAiProcessing) return;
-		updateProjectLocal(currentProject.id, (project) => setActiveProjectAiSession(project, sessionId));
+		updateProjectLocal(currentProject.id, (project) =>
+			setActiveProjectAiSession(project, sessionId)
+		);
 		scheduleChatSync(currentProject.id, 0);
 		clearComposerState();
 		highlightedTaskIds = [];
@@ -3042,7 +3035,9 @@
 
 	const handleRenameAiSession = (sessionId: string, title: string) => {
 		if (!currentProject || isAiProcessing) return;
-		updateProjectLocal(currentProject.id, (project) => renameProjectAiSession(project, sessionId, title));
+		updateProjectLocal(currentProject.id, (project) =>
+			renameProjectAiSession(project, sessionId, title)
+		);
 		scheduleChatSync(currentProject.id, 0);
 	};
 
@@ -3319,16 +3314,13 @@
 				? {
 						...proposal,
 						projectId: projectSnapshot.id,
-						stale:
-							getKanbanFingerprint(projectSnapshot.kanbanData) !== proposal.baseFingerprint,
+						stale: getKanbanFingerprint(projectSnapshot.kanbanData) !== proposal.baseFingerprint,
 						originalKanbanData: structuredClone(projectSnapshot.kanbanData)
 					}
 				: {
 						...proposal,
 						projectId: projectSnapshot.id,
-						stale:
-							getProjectPagesFingerprint(projectSnapshot.pages) !==
-							proposal.baseFingerprint,
+						stale: getProjectPagesFingerprint(projectSnapshot.pages) !== proposal.baseFingerprint,
 						originalScratchpadState: structuredClone(projectSnapshot.scratchpadData)
 					}
 		);
@@ -3435,8 +3427,7 @@
 					mobileTab = 'kanban';
 				}
 			}
-			const updatedProject =
-				projects.find((entry) => entry.id === nextProject.id) || nextProject;
+			const updatedProject = projects.find((entry) => entry.id === nextProject.id) || nextProject;
 			logWorkspaceAiProposalDebug('accept:finish', nextProject.id, refreshedProposal, {
 				applied,
 				resultFingerprint: getKanbanFingerprint(updatedProject.kanbanData),
@@ -3461,8 +3452,7 @@
 				});
 
 				try {
-					let workingProject =
-						projects.find((entry) => entry.id === nextProject.id) || nextProject;
+					let workingProject = projects.find((entry) => entry.id === nextProject.id) || nextProject;
 
 					for (const pad of previewPads) {
 						const existingPage = workingProject.pages.find((page) => page.id === pad.id);
@@ -3493,12 +3483,7 @@
 								projects.find((entry) => entry.id === workingProject.id) || withPage.nextProject;
 							if (pad.name && pad.name !== createdPage.name) {
 								await runSyncAction(
-									() =>
-										renameProjectPageRemote(
-											workingProject.id,
-											createdPage.id,
-											pad.name
-										),
+									() => renameProjectPageRemote(workingProject.id, createdPage.id, pad.name),
 									'Unable to rename the new page right now.'
 								);
 								updateProjectLocal(workingProject.id, (project) => ({
@@ -3510,13 +3495,11 @@
 									)
 								}));
 								workingProject =
-									projects.find((entry) => entry.id === workingProject.id) ||
-									workingProject;
+									projects.find((entry) => entry.id === workingProject.id) || workingProject;
 							}
 						} else if (pad.name && pad.name !== existingPage.name) {
 							await runSyncAction(
-								() =>
-									renameProjectPageRemote(workingProject.id, existingPage.id, pad.name),
+								() => renameProjectPageRemote(workingProject.id, existingPage.id, pad.name),
 								'Unable to rename this page right now.'
 							);
 							updateProjectLocal(workingProject.id, (project) => ({
@@ -3563,12 +3546,10 @@
 					desktopWorkspaceTab = 'scratchpad';
 					mobileTab = 'scratchpad';
 				} catch (error) {
-					applyError =
-						error instanceof Error ? error.message : 'Could not apply page changes.';
+					applyError = error instanceof Error ? error.message : 'Could not apply page changes.';
 				}
 
-				const updatedProject =
-					projects.find((entry) => entry.id === nextProject.id) || nextProject;
+				const updatedProject = projects.find((entry) => entry.id === nextProject.id) || nextProject;
 				logWorkspaceAiProposalDebug('accept:finish', nextProject.id, refreshedProposal, {
 					applied,
 					targetPageId: targetPadId,
@@ -3701,11 +3682,7 @@
 					sessionId: aiSessionSnapshot.id,
 					modelId: aiSessionSnapshot.modelId,
 					thinkingLevel: aiThinkingLevel,
-					history: buildAiHistory(
-						aiSessionSnapshot.history,
-						userMessage,
-						continuation?.questionId
-					),
+					history: buildAiHistory(aiSessionSnapshot.history, userMessage, continuation?.questionId),
 					scope: {
 						currentTab: visibleWorkspaceTab,
 						selectedTaskIds,
@@ -3887,6 +3864,67 @@
 		});
 	};
 
+	const handleAnswerQuestions = async (
+		answers: { questionId: string; optionId?: string; text?: string }[]
+	) => {
+		if (!currentProject || isAiProcessing || !answers.length) return;
+		const activeSession = getActiveProjectAiSession(currentProject);
+		if (!activeSession) return;
+
+		const answerByQuestionId = new Map(answers.map((answer) => [answer.questionId, answer]));
+		const openQuestionMessages = activeSession.history.filter(
+			(message) =>
+				message.question?.status === 'open' && answerByQuestionId.has(message.question.id)
+		);
+		if (openQuestionMessages.length !== answers.length) return;
+
+		const answerLines = openQuestionMessages
+			.map((message, index) => {
+				const question = message.question!;
+				const answer = answerByQuestionId.get(question.id)!;
+				const selectedOption = question.options.find((option) => option.id === answer.optionId);
+				const answerText = answer.text?.trim() || selectedOption?.label || '';
+				return `${index + 1}. ${question.prompt}\n${answerText}`;
+			})
+			.filter((line) => line.trim().length > 0);
+		if (answerLines.length !== answers.length) return;
+
+		updateProjectLocal(currentProject.id, (project) =>
+			updateActiveProjectAiSession(project, (session) => ({
+				...session,
+				history: session.history.map((message) => {
+					if (!message.question || !answerByQuestionId.has(message.question.id)) return message;
+					const answer = answerByQuestionId.get(message.question.id)!;
+					const selectedOption = message.question.options.find(
+						(option) => option.id === answer.optionId
+					);
+					return {
+						...message,
+						question: {
+							...message.question,
+							status: 'answered',
+							answeredOptionId: answer.optionId,
+							answerText: answer.text?.trim() || selectedOption?.label || undefined,
+							answeredAt: Date.now()
+						}
+					};
+				}),
+				updatedAt: Date.now(),
+				lastMessageAt: session.lastMessageAt
+			}))
+		);
+		scheduleChatSync(currentProject.id);
+
+		const latestAnswer = answers.at(-1)!;
+		await submitAiTurn({
+			displayText: answerLines.join('\n\n'),
+			continuation: {
+				questionId: latestAnswer.questionId,
+				text: answerLines.join('\n\n')
+			}
+		});
+	};
+
 	const handleExportProjects = () => {
 		exportProjectsToFile(projects);
 	};
@@ -4010,8 +4048,7 @@
 			inviteFeedback = {
 				projectId,
 				kind: 'error',
-				message:
-					error instanceof Error ? error.message : 'Unable to send that invite right now.'
+				message: error instanceof Error ? error.message : 'Unable to send that invite right now.'
 			};
 		}
 	};
@@ -4276,7 +4313,7 @@
 				visible={!isMobile}
 				compact={projectRailCompact}
 				{syncStatus}
-				profileEmail={profileEmail}
+				{profileEmail}
 				profileUsername={profile?.username || null}
 				onToggleCompact={() => (projectRailCompact = !projectRailCompact)}
 				onOpenBoard={openProjectBoard}
@@ -4299,9 +4336,7 @@
 
 			<div class="relative flex min-h-0 min-w-0 flex-1">
 				<div class="relative flex min-h-0 min-w-0 flex-1 flex-col">
-					<header
-						class="bg-app-bg/82 px-3 py-2 backdrop-blur-xl lg:px-4"
-					>
+					<header class="bg-app-bg/82 px-3 py-2 backdrop-blur-xl lg:px-4">
 						<div class="flex flex-wrap items-center gap-2.5">
 							{#if isMobile}
 								<button
@@ -4347,7 +4382,17 @@
 										on:click={() => setWorkspaceTab('dashboard')}
 										title="Dashboard"
 									>
-										<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+										<svg
+											xmlns="http://www.w3.org/2000/svg"
+											width="16"
+											height="16"
+											viewBox="0 0 24 24"
+											fill="none"
+											stroke="currentColor"
+											stroke-width="1.75"
+											stroke-linecap="round"
+											stroke-linejoin="round"
+										>
 											<rect x="3" y="3" width="7" height="7" rx="1" />
 											<rect x="14" y="3" width="7" height="7" rx="1" />
 											<rect x="3" y="14" width="7" height="7" rx="1" />
@@ -4364,7 +4409,17 @@
 										on:click={() => setWorkspaceTab('kanban')}
 										title="Board"
 									>
-										<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+										<svg
+											xmlns="http://www.w3.org/2000/svg"
+											width="16"
+											height="16"
+											viewBox="0 0 24 24"
+											fill="none"
+											stroke="currentColor"
+											stroke-width="1.75"
+											stroke-linecap="round"
+											stroke-linejoin="round"
+										>
 											<rect x="3" y="3" width="18" height="18" rx="2" />
 											<path d="M9 3v18" />
 											<path d="M15 3v18" />
@@ -4380,7 +4435,17 @@
 										on:click={() => setWorkspaceTab('scratchpad')}
 										title="Pages"
 									>
-										<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+										<svg
+											xmlns="http://www.w3.org/2000/svg"
+											width="16"
+											height="16"
+											viewBox="0 0 24 24"
+											fill="none"
+											stroke="currentColor"
+											stroke-width="1.75"
+											stroke-linecap="round"
+											stroke-linejoin="round"
+										>
 											<path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z" />
 											<path d="M14 2v4a2 2 0 0 0 2 2h4" />
 											<path d="M10 13H8" />
@@ -4458,11 +4523,7 @@
 								</div>
 							{/if}
 
-							<SyncBadge
-								status={syncStatus}
-								compact={true}
-								hint={syncErrorMessage || undefined}
-							/>
+							<SyncBadge status={syncStatus} compact={true} hint={syncErrorMessage || undefined} />
 
 							{#if isMobile}
 								<button
@@ -4596,39 +4657,44 @@
 												out:fade={projectSwitchFadeOut}
 											>
 												<ChatPane
-											history={currentProject.chatHistory}
-											bind:draft={composerDraft}
-											{queuedAttachments}
-											{queuedTaskCards}
-											isProcessing={isAiProcessing}
-											processingEvents={aiProgressEvents}
-											pendingProposals={activePendingProposals}
-											{proposalApplyErrors}
-											{applyingProposalId}
-											activeProposalTarget={proposalPreviewTarget}
-											sessions={currentProject.aiSessions}
-											activeSessionId={currentProject.activeAiSessionId}
-											modelId={activeAiModelId}
-											modelOptions={aiModels}
-											active={mobileTab === 'chat'}
-											chrome="mobile"
-											onDraftChange={handleDraftChange}
-											onSend={handleSendMessage}
-											onAddAttachments={handleAddAttachments}
-											onRemoveAttachment={handleRemoveAttachment}
-											onRemoveTaskCard={handleRemoveTaskCard}
-											onClearHistory={handleClearHistory}
-											onSessionChange={handleActiveAiSessionChange}
-											onCreateSession={handleCreateAiSession}
-											onRenameSession={handleRenameAiSession}
-											onDeleteSession={handleDeleteAiSession}
-											onModelChange={handleAiModelChange}
-										thinkingLevel={aiThinkingLevel}
-										onThinkingLevelChange={(level) => { aiThinkingLevel = level; }}
-											onReviewProposal={activePendingProposals.length ? handleReviewProposal : null}
-											onAcceptProposal={handleAcceptProposal}
-											onRejectProposal={handleRejectProposal}
-											onAnswerQuestion={handleAnswerQuestion}
+													history={currentProject.chatHistory}
+													bind:draft={composerDraft}
+													{queuedAttachments}
+													{queuedTaskCards}
+													isProcessing={isAiProcessing}
+													processingEvents={aiProgressEvents}
+													pendingProposals={activePendingProposals}
+													{proposalApplyErrors}
+													{applyingProposalId}
+													activeProposalTarget={proposalPreviewTarget}
+													sessions={currentProject.aiSessions}
+													activeSessionId={currentProject.activeAiSessionId}
+													modelId={activeAiModelId}
+													modelOptions={aiModels}
+													active={mobileTab === 'chat'}
+													chrome="mobile"
+													onDraftChange={handleDraftChange}
+													onSend={handleSendMessage}
+													onAddAttachments={handleAddAttachments}
+													onRemoveAttachment={handleRemoveAttachment}
+													onRemoveTaskCard={handleRemoveTaskCard}
+													onClearHistory={handleClearHistory}
+													onSessionChange={handleActiveAiSessionChange}
+													onCreateSession={handleCreateAiSession}
+													onRenameSession={handleRenameAiSession}
+													onDeleteSession={handleDeleteAiSession}
+													onModelChange={handleAiModelChange}
+													thinkingLevel={aiThinkingLevel}
+													onThinkingLevelChange={(level) => {
+														aiThinkingLevel = level;
+													}}
+													onReviewProposal={activePendingProposals.length
+														? handleReviewProposal
+														: null}
+													onAcceptProposal={handleAcceptProposal}
+													onRejectProposal={handleRejectProposal}
+													onAnswerQuestion={handleAnswerQuestion}
+													onAnswerQuestions={handleAnswerQuestions}
 												/>
 											</div>
 										{/key}
@@ -4641,8 +4707,8 @@
 											username={profile?.username || null}
 											{usernameDraft}
 											{usernameAvailability}
-											usernameFeedback={usernameFeedback}
-											usernameSaving={usernameSaving}
+											{usernameFeedback}
+											{usernameSaving}
 											personalImageUrl={personalBackgroundImageUrl}
 											boardImageUrl={projectBackgroundImageUrl}
 											personalImageUploading={personalBackgroundUploading}
@@ -4770,8 +4836,8 @@
 											username={profile?.username || null}
 											{usernameDraft}
 											{usernameAvailability}
-											usernameFeedback={usernameFeedback}
-											usernameSaving={usernameSaving}
+											{usernameFeedback}
+											{usernameSaving}
 											personalImageUrl={personalBackgroundImageUrl}
 											boardImageUrl={projectBackgroundImageUrl}
 											personalImageUploading={personalBackgroundUploading}
@@ -4796,8 +4862,8 @@
 													Open a project first
 												</p>
 												<p class="mt-2 text-sm leading-relaxed text-app-subtext">
-													Choose a project from the dashboard or rail to start editing boards, pages,
-													or your private AI thread.
+													Choose a project from the dashboard or rail to start editing boards,
+													pages, or your private AI thread.
 												</p>
 												<div class="mt-4 flex justify-center gap-2">
 													<button
@@ -4889,152 +4955,154 @@
 						aria-hidden={desktopChatCollapsed}
 						style={`width:${desktopChatWidth}rem;`}
 					>
+						<div
+							class="absolute left-0 top-0 z-60 h-full w-2 cursor-col-resize transition hover:bg-app-primary/20"
+							on:pointerdown={handleDesktopChatResizeStart}
+						></div>
+						{#key currentProjectId}
 							<div
-								class="absolute left-0 top-0 z-60 h-full w-2 cursor-col-resize transition hover:bg-app-primary/20"
-								on:pointerdown={handleDesktopChatResizeStart}
-							></div>
-							{#key currentProjectId}
-								<div
-									class="absolute inset-0"
-									in:fade={projectSwitchFadeIn}
-									out:fade={projectSwitchFadeOut}
-								>
-									<ChatPane
-								history={currentProject.chatHistory}
-								bind:draft={composerDraft}
-								{queuedAttachments}
-								{queuedTaskCards}
-								isProcessing={isAiProcessing}
-								processingEvents={aiProgressEvents}
-								pendingProposals={activePendingProposals}
-								{proposalApplyErrors}
-								{applyingProposalId}
-								activeProposalTarget={proposalPreviewTarget}
-								sessions={currentProject.aiSessions}
-								activeSessionId={currentProject.activeAiSessionId}
-								modelId={activeAiModelId}
-								modelOptions={aiModels}
-								active={true}
-								chrome="sidebar"
-								onDraftChange={handleDraftChange}
-								onSend={handleSendMessage}
-								onAddAttachments={handleAddAttachments}
-								onRemoveAttachment={handleRemoveAttachment}
-								onRemoveTaskCard={handleRemoveTaskCard}
-								onClearHistory={handleClearHistory}
-								onSessionChange={handleActiveAiSessionChange}
-								onCreateSession={handleCreateAiSession}
-								onRenameSession={handleRenameAiSession}
-								onDeleteSession={handleDeleteAiSession}
-								onModelChange={handleAiModelChange}
-										thinkingLevel={aiThinkingLevel}
-										onThinkingLevelChange={(level) => { aiThinkingLevel = level; }}
-								onReviewProposal={activePendingProposals.length ? handleReviewProposal : null}
-								onAcceptProposal={handleAcceptProposal}
-								onRejectProposal={handleRejectProposal}
-								onAnswerQuestion={handleAnswerQuestion}
-								onCollapseSidebar={() => (desktopChatCollapsed = true)}
-									/>
-								</div>
-							{/key}
+								class="absolute inset-0"
+								in:fade={projectSwitchFadeIn}
+								out:fade={projectSwitchFadeOut}
+							>
+								<ChatPane
+									history={currentProject.chatHistory}
+									bind:draft={composerDraft}
+									{queuedAttachments}
+									{queuedTaskCards}
+									isProcessing={isAiProcessing}
+									processingEvents={aiProgressEvents}
+									pendingProposals={activePendingProposals}
+									{proposalApplyErrors}
+									{applyingProposalId}
+									activeProposalTarget={proposalPreviewTarget}
+									sessions={currentProject.aiSessions}
+									activeSessionId={currentProject.activeAiSessionId}
+									modelId={activeAiModelId}
+									modelOptions={aiModels}
+									active={true}
+									chrome="sidebar"
+									onDraftChange={handleDraftChange}
+									onSend={handleSendMessage}
+									onAddAttachments={handleAddAttachments}
+									onRemoveAttachment={handleRemoveAttachment}
+									onRemoveTaskCard={handleRemoveTaskCard}
+									onClearHistory={handleClearHistory}
+									onSessionChange={handleActiveAiSessionChange}
+									onCreateSession={handleCreateAiSession}
+									onRenameSession={handleRenameAiSession}
+									onDeleteSession={handleDeleteAiSession}
+									onModelChange={handleAiModelChange}
+									thinkingLevel={aiThinkingLevel}
+									onThinkingLevelChange={(level) => {
+										aiThinkingLevel = level;
+									}}
+									onReviewProposal={activePendingProposals.length ? handleReviewProposal : null}
+									onAcceptProposal={handleAcceptProposal}
+									onRejectProposal={handleRejectProposal}
+									onAnswerQuestion={handleAnswerQuestion}
+									onAnswerQuestions={handleAnswerQuestions}
+									onCollapseSidebar={() => (desktopChatCollapsed = true)}
+								/>
+							</div>
+						{/key}
 					</div>
 				{/if}
 			</div>
 		</div>
 
-			{#if requiresUsername}
-				<UsernameModal
-					email={profileEmail}
-					currentUsername={profile?.username || null}
-					usernameDraft={usernameDraft}
-					availability={usernameAvailability}
-					feedback={usernameFeedback}
-					saving={usernameSaving}
-					onDraftChange={handleUsernameDraftChange}
-					onSubmit={handleUsernameSubmit}
-					onSignOut={handleSignOut}
-				/>
-			{/if}
+		{#if requiresUsername}
+			<UsernameModal
+				email={profileEmail}
+				currentUsername={profile?.username || null}
+				{usernameDraft}
+				availability={usernameAvailability}
+				feedback={usernameFeedback}
+				saving={usernameSaving}
+				onDraftChange={handleUsernameDraftChange}
+				onSubmit={handleUsernameSubmit}
+				onSignOut={handleSignOut}
+			/>
+		{/if}
 
-			{#if nameModalState}
-				<div class="absolute inset-0 z-40 flex items-center justify-center bg-app-bg/60 p-4 backdrop-blur-sm">
-					<div
-						role="dialog"
-						aria-modal="true"
-						aria-label={
-							nameModalState.kind === 'create-project'
-								? 'Create project'
+		{#if nameModalState}
+			<div
+				class="absolute inset-0 z-40 flex items-center justify-center bg-app-bg/60 p-4 backdrop-blur-sm"
+			>
+				<div
+					role="dialog"
+					aria-modal="true"
+					aria-label={nameModalState.kind === 'create-project'
+						? 'Create project'
+						: nameModalState.kind === 'create-board'
+							? 'Create board'
+							: nameModalState.kind === 'create-page'
+								? 'Create page'
+								: nameModalState.kind === 'rename-board'
+									? 'Rename board'
+									: 'Rename page'}
+					class="w-full max-w-md rounded-xl border border-app-border/60 bg-app-surface/95"
+				>
+					<div class="border-b border-app-border/40 px-5 py-4">
+						<p class="text-[10px] font-semibold uppercase tracking-[0.2em] text-app-primary">
+							{nameModalState.kind === 'create-project'
+								? 'New Project'
 								: nameModalState.kind === 'create-board'
-									? 'Create board'
+									? 'New Board'
 									: nameModalState.kind === 'create-page'
-										? 'Create page'
+										? 'New Page'
 										: nameModalState.kind === 'rename-board'
-											? 'Rename board'
-											: 'Rename page'
-						}
-						class="w-full max-w-md rounded-xl border border-app-border/60 bg-app-surface/95"
-					>
-						<div class="border-b border-app-border/40 px-5 py-4">
-							<p class="text-[10px] font-semibold uppercase tracking-[0.2em] text-app-primary">
-								{nameModalState.kind === 'create-project'
-									? 'New Project'
-									: nameModalState.kind === 'create-board'
-										? 'New Board'
-										: nameModalState.kind === 'create-page'
-											? 'New Page'
-											: nameModalState.kind === 'rename-board'
-												? 'Rename Board'
-												: 'Rename Page'}
-							</p>
-							<p class="mt-1 text-sm text-app-subtext">
-								{nameModalState.kind === 'create-project'
-									? 'Name the new board space so it is easy to find later.'
-									: nameModalState.kind === 'create-board'
-										? 'Choose a name for this board view.'
-										: nameModalState.kind === 'create-page'
-											? 'Choose a name for this markdown page.'
-											: 'Update the name shown across the workspace.'}
-							</p>
-						</div>
-						<form
-							class="px-5 py-4"
-							on:submit|preventDefault={handleNameModalSubmit}
-						>
-							<label class="block">
-								<span class="mb-1.5 block text-[10px] font-semibold uppercase tracking-[0.18em] text-app-subtext">
-									Name
-								</span>
-								<input
-									bind:value={nameModalState.value}
-									type="text"
-									class="min-w-0 w-full rounded-lg border border-app-border/60 bg-app-bg px-3 py-2 text-sm text-app-text outline-none transition focus:border-app-primary/40"
-									placeholder={nameModalState.kind === 'create-project' ? 'Project name' : 'Name'}
-									use:focusOnMount
-									on:keydown={(event: KeyboardEvent) => {
-										if (event.key === 'Escape') nameModalState = null;
-									}}
-								/>
-							</label>
-							<div class="mt-4 flex items-center justify-end gap-2">
-								<button
-									type="button"
-									class="rounded-lg border border-app-border/40 px-3 py-2 text-sm text-app-subtext transition hover:text-app-text"
-									on:click={() => (nameModalState = null)}
-								>
-									Cancel
-								</button>
-								<button
-									type="submit"
-									disabled={!nameModalState.value.trim()}
-									class="rounded-lg bg-app-primary px-3 py-2 text-sm font-semibold text-white transition hover:bg-app-primary-hover disabled:opacity-40"
-								>
-									{nameModalState.kind.startsWith('create') ? 'Create' : 'Save'}
-								</button>
-							</div>
-						</form>
+											? 'Rename Board'
+											: 'Rename Page'}
+						</p>
+						<p class="mt-1 text-sm text-app-subtext">
+							{nameModalState.kind === 'create-project'
+								? 'Name the new board space so it is easy to find later.'
+								: nameModalState.kind === 'create-board'
+									? 'Choose a name for this board view.'
+									: nameModalState.kind === 'create-page'
+										? 'Choose a name for this markdown page.'
+										: 'Update the name shown across the workspace.'}
+						</p>
 					</div>
+					<form class="px-5 py-4" on:submit|preventDefault={handleNameModalSubmit}>
+						<label class="block">
+							<span
+								class="mb-1.5 block text-[10px] font-semibold uppercase tracking-[0.18em] text-app-subtext"
+							>
+								Name
+							</span>
+							<input
+								bind:value={nameModalState.value}
+								type="text"
+								class="min-w-0 w-full rounded-lg border border-app-border/60 bg-app-bg px-3 py-2 text-sm text-app-text outline-none transition focus:border-app-primary/40"
+								placeholder={nameModalState.kind === 'create-project' ? 'Project name' : 'Name'}
+								use:focusOnMount
+								on:keydown={(event: KeyboardEvent) => {
+									if (event.key === 'Escape') nameModalState = null;
+								}}
+							/>
+						</label>
+						<div class="mt-4 flex items-center justify-end gap-2">
+							<button
+								type="button"
+								class="rounded-lg border border-app-border/40 px-3 py-2 text-sm text-app-subtext transition hover:text-app-text"
+								on:click={() => (nameModalState = null)}
+							>
+								Cancel
+							</button>
+							<button
+								type="submit"
+								disabled={!nameModalState.value.trim()}
+								class="rounded-lg bg-app-primary px-3 py-2 text-sm font-semibold text-white transition hover:bg-app-primary-hover disabled:opacity-40"
+							>
+								{nameModalState.kind.startsWith('create') ? 'Create' : 'Save'}
+							</button>
+						</div>
+					</form>
 				</div>
-			{/if}
+			</div>
+		{/if}
 
 		{#if showProjectSheet}
 			<ProjectSheet

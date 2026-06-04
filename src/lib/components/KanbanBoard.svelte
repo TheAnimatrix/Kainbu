@@ -5,6 +5,7 @@
 	import {
 		Check,
 		ArrowDownToLine,
+		ArrowUpToLine,
 		CheckSquare,
 		ChevronDown,
 		ClipboardCopy,
@@ -44,10 +45,7 @@
 		MIN_COLUMN_WIDTH,
 		SURFACE_TONE_OPTIONS
 	} from '$lib/kainbu/constants';
-	import {
-		filterColumnsForBoardSearch,
-		normalizeBoardSearchQuery
-	} from '$lib/kainbu/boardSearch';
+	import { filterColumnsForBoardSearch, normalizeBoardSearchQuery } from '$lib/kainbu/boardSearch';
 	import { rewriteTaskTitle } from '$lib/kainbu/ai';
 	import { computeKanbanDiff, diffWords, type DiffColumn, type DiffTask } from '$lib/kainbu/diff';
 	import { createId } from '$lib/kainbu/id';
@@ -156,9 +154,10 @@
 	export let onActiveTaskChange: (
 		payload: { taskId?: string; columnId?: string } | null
 	) => void = () => {};
-	export let onTaskReferenceNavigate: (
-		payload: { taskId: string; columnId: string }
-	) => void = () => {};
+	export let onTaskReferenceNavigate: (payload: {
+		taskId: string;
+		columnId: string;
+	}) => void = () => {};
 	export let onAddAttachments: (attachments: ChatAttachment[]) => void = () => {};
 	export let onDockedEditorChange: (isDocked: boolean) => void = () => {};
 	export let boardSearchActive = false;
@@ -185,6 +184,8 @@
 	let assignMenuOpen: { colId: string; taskId: string } | null = null;
 	let taskTagMenuOpen: TaskMenuState | null = null;
 	let taskInfoMenuOpen: TaskMenuState | null = null;
+	let boardScrollViewport: HTMLDivElement | null = null;
+	let activeTaskDragColumnId: string | null = null;
 	let expandedDiffTaskId: string | null = null;
 	let boardLayoutMode: BoardLayoutMode = 'columns';
 	let linkViewAnchorId: string | null = null;
@@ -502,11 +503,7 @@
 		linkOverlayRedrawToken += 1;
 	};
 
-	const openTaskLinkPicker = (
-		columnId: string,
-		taskId: string,
-		trigger: HTMLButtonElement
-	) => {
+	const openTaskLinkPicker = (columnId: string, taskId: string, trigger: HTMLButtonElement) => {
 		taskLinkPicker = {
 			sourceColId: columnId,
 			sourceTaskId: taskId,
@@ -671,9 +668,7 @@
 		}
 
 		const task = boardData.flatMap((column) => column.tasks).find((entry) => entry.id === taskId);
-		const menuHeight = task?.hasCheckbox
-			? TASK_INFO_MENU_HEIGHT_CHECKABLE
-			: TASK_INFO_MENU_HEIGHT;
+		const menuHeight = task?.hasCheckbox ? TASK_INFO_MENU_HEIGHT_CHECKABLE : TASK_INFO_MENU_HEIGHT;
 
 		taskInfoMenuOpen = {
 			colId,
@@ -782,6 +777,39 @@
 		});
 	};
 
+	const scrollDragViewportIfNeeded = (event: PointerEvent) => {
+		if (!activeTaskDragColumnId || isLocked || isDiffMode) return;
+
+		const columnViewport = document.querySelector<HTMLElement>(
+			`[data-column-viewport="${activeTaskDragColumnId}"]`
+		);
+		if (columnViewport) {
+			const rect = columnViewport.getBoundingClientRect();
+			const edge = 72;
+			const maxStep = 28;
+			if (event.clientY > rect.bottom - edge) {
+				const ratio = 1 - Math.max(0, rect.bottom - event.clientY) / edge;
+				columnViewport.scrollBy({ top: Math.ceil(maxStep * ratio), behavior: 'auto' });
+			} else if (event.clientY < rect.top + edge) {
+				const ratio = 1 - Math.max(0, event.clientY - rect.top) / edge;
+				columnViewport.scrollBy({ top: -Math.ceil(maxStep * ratio), behavior: 'auto' });
+			}
+		}
+
+		if (boardScrollViewport) {
+			const rect = boardScrollViewport.getBoundingClientRect();
+			const edge = 96;
+			const maxStep = 32;
+			if (event.clientX > rect.right - edge) {
+				const ratio = 1 - Math.max(0, rect.right - event.clientX) / edge;
+				boardScrollViewport.scrollBy({ left: Math.ceil(maxStep * ratio), behavior: 'auto' });
+			} else if (event.clientX < rect.left + edge) {
+				const ratio = 1 - Math.max(0, event.clientX - rect.left) / edge;
+				boardScrollViewport.scrollBy({ left: -Math.ceil(maxStep * ratio), behavior: 'auto' });
+			}
+		}
+	};
+
 	const handleTaskReferenceNavigation = (payload: { taskId: string; columnId: string }) => {
 		editingTask = null;
 		closeMenus();
@@ -797,6 +825,27 @@
 					}
 				: column
 		);
+
+	const withoutDndShadowTasks = (tasks: Task[]) => tasks.filter((task) => !isShadowItem(task));
+
+	const withFinalizedDndColumnTasks = (columns: KanbanData, columnId: string, tasks: Task[]) => {
+		const finalizedTasks = withoutDndShadowTasks(tasks);
+		const finalizedIds = new Set(finalizedTasks.map((task) => task.id));
+
+		return columns.map((column) => {
+			if (column.id === columnId) {
+				return {
+					...column,
+					tasks: finalizedTasks
+				};
+			}
+
+			return {
+				...column,
+				tasks: withoutDndShadowTasks(column.tasks).filter((task) => !finalizedIds.has(task.id))
+			};
+		});
+	};
 
 	const updateColumnTasks = (columnId: string, tasks: Task[]) => {
 		emitBoardChange(withUpdatedColumnTasks(boardData, columnId, tasks));
@@ -985,6 +1034,17 @@
 		if (!task) return;
 
 		updateColumnTasks(columnId, [...column.tasks.filter((entry) => entry.id !== taskId), task]);
+		closeMenus();
+	};
+
+	const moveTaskToTop = (columnId: string, taskId: string) => {
+		const column = boardData.find((entry) => entry.id === columnId);
+		if (!column) return;
+
+		const task = column.tasks.find((entry) => entry.id === taskId);
+		if (!task) return;
+
+		updateColumnTasks(columnId, [task, ...column.tasks.filter((entry) => entry.id !== taskId)]);
 		closeMenus();
 	};
 
@@ -1277,9 +1337,12 @@
 		const taskId = info.id;
 
 		if (phase === 'consider') {
-			emitBoardChange(withUpdatedColumnTasks(boardData, columnId, items as Task[]));
+			activeTaskDragColumnId = columnId;
+			boardData = withUpdatedColumnTasks(boardData, columnId, items as Task[]);
 			return;
 		}
+
+		activeTaskDragColumnId = null;
 
 		// Cross-column pointer drops finalize the origin zone with DROPPED_INTO_ANOTHER.
 		if (info.trigger === TRIGGERS.DROPPED_INTO_ANOTHER) {
@@ -1288,7 +1351,7 @@
 				(column) => column.id !== fromColumnId && column.tasks.some((task) => task.id === taskId)
 			)?.id;
 
-			emitBoardChange(withUpdatedColumnTasks(boardData, columnId, items as Task[]));
+			emitBoardChange(withFinalizedDndColumnTasks(boardData, columnId, items as Task[]));
 
 			if (toColumnId) {
 				recordLastColumnMove(fromColumnId, toColumnId);
@@ -1297,7 +1360,7 @@
 		}
 
 		const fromColumnId = findTaskColumnId(boardData, taskId);
-		const nextBoard = withUpdatedColumnTasks(boardData, columnId, items as Task[]);
+		const nextBoard = withFinalizedDndColumnTasks(boardData, columnId, items as Task[]);
 		const toColumnId = findTaskColumnId(nextBoard, taskId);
 
 		emitBoardChange(nextBoard);
@@ -1312,8 +1375,7 @@
 		const isLinkClusterMember = Boolean(
 			linkViewAnchorId && !isDiffMode && linkViewComponentIds.has(task.id)
 		);
-		const isReferenceHighlight =
-			!linkViewAnchorId && effectiveHighlightedTaskIds.includes(task.id);
+		const isReferenceHighlight = !linkViewAnchorId && effectiveHighlightedTaskIds.includes(task.id);
 
 		let result =
 			'group relative shrink-0 overflow-hidden rounded-lg p-2 shadow-sm transition duration-200 hover:-translate-y-0.5 hover:shadow-lg';
@@ -1321,8 +1383,7 @@
 		if (task._status === 'added') result += ' border border-emerald-500/40 bg-emerald-500/10';
 		else if (task._status === 'removed')
 			result += ' border border-rose-500/40 bg-rose-500/10 opacity-80';
-		else if (task._status === 'modified')
-			result += ' border border-amber-500/40 bg-amber-500/10';
+		else if (task._status === 'modified') result += ' border border-amber-500/40 bg-amber-500/10';
 		else {
 			result += ' bg-app-surface';
 			if (isDiffMode) result += ' border border-app-border grayscale opacity-50';
@@ -1431,6 +1492,7 @@
 	bind:innerWidth={viewportWidth}
 	onclick={handleWindowClick}
 	onkeydown={handleWindowKeydown}
+	onpointermove={scrollDragViewportIfNeeded}
 	onresize={closeMenus}
 />
 
@@ -1438,6 +1500,7 @@
 	<section class="absolute inset-0 flex overflow-hidden" data-kanban-board-root>
 		{#if !showFullscreenTaskEditor}
 			<div
+				bind:this={boardScrollViewport}
 				class="flex h-full min-h-0 min-w-0 flex-1 flex-col overflow-x-auto overflow-y-hidden py-1 lg:py-2"
 				onscroll={() => {
 					closeMenus();
@@ -1446,84 +1509,84 @@
 			>
 				{#if !isDiffMode}
 					<div class="flex h-full min-h-0 min-w-min flex-col">
-					<div class="flex shrink-0 min-w-max items-center gap-2 px-3 pb-2">
-						<button
-							type="button"
-							class={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-[11px] font-semibold transition ${
-								boardLayoutMode === 'link-groups'
-									? 'border-app-primary/40 bg-app-primary/10 text-app-primary'
-									: 'border-app-border bg-app-surface text-app-subtext hover:text-app-text'
-							}`}
-							onclick={toggleBoardLayoutMode}
-						>
-							<Network size={13} />
-							Link groups
-						</button>
-						<BoardViewersPill viewers={boardPresenceViewers} />
-						<ShareWorkspaceLinkButton url={shareUrl} />
-						<button
-							type="button"
-							class={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-[11px] font-semibold transition ${
-								boardSearchActive
-									? 'border-app-primary/40 bg-app-primary/10 text-app-primary'
-									: 'border-app-border bg-app-surface text-app-subtext hover:text-app-text'
-							}`}
-							title="Search cards (Ctrl+F)"
-							aria-label="Search cards"
-							onclick={() => {
-								if (boardSearchActive) {
-									closeBoardSearch();
-									return;
-								}
-								void openBoardSearch();
-							}}
-						>
-							<Search size={13} />
-							Search
-						</button>
-						{#if boardSearchActive}
-							<div class="flex min-w-[12rem] max-w-sm flex-1 items-center gap-1.5">
-								<input
-									bind:this={boardSearchInput}
-									bind:value={boardSearchQuery}
-									type="search"
-									class="w-full min-w-0 rounded-full border border-app-border bg-app-bg px-3 py-1.5 text-[11px] text-app-text outline-none placeholder:text-app-subtext/60 focus:border-app-primary/50"
-									placeholder="Filter by card name…"
-									aria-label="Filter cards by name"
-									onkeydown={(event) => {
-										if (event.key === 'Escape') {
-											event.preventDefault();
-											closeBoardSearch();
-										}
-									}}
-								/>
-								<button
-									type="button"
-									class="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-app-subtext transition hover:bg-app-element hover:text-app-text"
-									title="Close search"
-									aria-label="Close search"
-									onclick={closeBoardSearch}
-								>
-									<X size={14} />
-								</button>
-							</div>
-						{/if}
-						{#if linkViewAnchorId}
+						<div class="flex shrink-0 min-w-max items-center gap-2 px-3 pb-2">
 							<button
 								type="button"
-								class="inline-flex items-center gap-1.5 rounded-full border border-app-border bg-app-surface px-3 py-1.5 text-[11px] font-semibold text-app-subtext transition hover:text-app-text"
-								onclick={clearLinkView}
+								class={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-[11px] font-semibold transition ${
+									boardLayoutMode === 'link-groups'
+										? 'border-app-primary/40 bg-app-primary/10 text-app-primary'
+										: 'border-app-border bg-app-surface text-app-subtext hover:text-app-text'
+								}`}
+								onclick={toggleBoardLayoutMode}
 							>
-								<Unlink size={13} />
-								Clear link view
+								<Network size={13} />
+								Link groups
 							</button>
-						{/if}
-					</div>
-					<div class="flex min-h-0 flex-1 min-w-max items-start gap-3">
-						<div class="w-2 shrink-0"></div>
-						<div
-							class="flex h-full min-h-0 min-w-max items-start gap-3"
-							use:dragHandleZone={{
+							<BoardViewersPill viewers={boardPresenceViewers} />
+							<ShareWorkspaceLinkButton url={shareUrl} />
+							<button
+								type="button"
+								class={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-[11px] font-semibold transition ${
+									boardSearchActive
+										? 'border-app-primary/40 bg-app-primary/10 text-app-primary'
+										: 'border-app-border bg-app-surface text-app-subtext hover:text-app-text'
+								}`}
+								title="Search cards (Ctrl+F)"
+								aria-label="Search cards"
+								onclick={() => {
+									if (boardSearchActive) {
+										closeBoardSearch();
+										return;
+									}
+									void openBoardSearch();
+								}}
+							>
+								<Search size={13} />
+								Search
+							</button>
+							{#if boardSearchActive}
+								<div class="flex min-w-[12rem] max-w-sm flex-1 items-center gap-1.5">
+									<input
+										bind:this={boardSearchInput}
+										bind:value={boardSearchQuery}
+										type="search"
+										class="w-full min-w-0 rounded-full border border-app-border bg-app-bg px-3 py-1.5 text-[11px] text-app-text outline-none placeholder:text-app-subtext/60 focus:border-app-primary/50"
+										placeholder="Filter by card name…"
+										aria-label="Filter cards by name"
+										onkeydown={(event) => {
+											if (event.key === 'Escape') {
+												event.preventDefault();
+												closeBoardSearch();
+											}
+										}}
+									/>
+									<button
+										type="button"
+										class="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-app-subtext transition hover:bg-app-element hover:text-app-text"
+										title="Close search"
+										aria-label="Close search"
+										onclick={closeBoardSearch}
+									>
+										<X size={14} />
+									</button>
+								</div>
+							{/if}
+							{#if linkViewAnchorId}
+								<button
+									type="button"
+									class="inline-flex items-center gap-1.5 rounded-full border border-app-border bg-app-surface px-3 py-1.5 text-[11px] font-semibold text-app-subtext transition hover:text-app-text"
+									onclick={clearLinkView}
+								>
+									<Unlink size={13} />
+									Clear link view
+								</button>
+							{/if}
+						</div>
+						<div class="flex min-h-0 flex-1 min-w-max items-start gap-3">
+							<div class="w-2 shrink-0"></div>
+							<div
+								class="flex h-full min-h-0 min-w-max items-start gap-3"
+								use:dragHandleZone={{
 									items: boardLayoutMode === 'link-groups' ? [] : boardData,
 									type: 'column',
 									flipDurationMs,
@@ -1534,234 +1597,233 @@
 								onconsider={(event) => handleColumnDnd(event as CustomEvent)}
 								onfinalize={(event) => handleColumnDnd(event as CustomEvent)}
 							>
-							{#each visibleDisplayColumns as column (getDndKey(column))}
-								<div
-									animate:flip={{ duration: flipDurationMs }}
-									data-is-dnd-shadow-item-hint={isShadowItem(column)}
-									class={`flex h-full max-h-full min-h-0 shrink-0 flex-col overflow-hidden rounded-lg border bg-app-surface/82 ${
-										column.isLinkGroup
-											? 'border-app-primary/35 ring-1 ring-app-primary/15'
-											: 'border-app-border'
-									}`}
-									style={getBoardColumnStyle(column)}
-								>
+								{#each visibleDisplayColumns as column (getDndKey(column))}
 									<div
-										class="flex items-center justify-between gap-3 border-b border-app-border px-3 py-2.5"
-										style={getColumnHeaderToneStyle(column.color)}
+										animate:flip={{ duration: flipDurationMs }}
+										data-is-dnd-shadow-item-hint={isShadowItem(column)}
+										class={`flex h-full max-h-full min-h-0 shrink-0 flex-col overflow-hidden rounded-lg border bg-app-surface/82 ${
+											column.isLinkGroup
+												? 'border-app-primary/35 ring-1 ring-app-primary/15'
+												: 'border-app-border'
+										}`}
+										style={getBoardColumnStyle(column)}
 									>
-										<div class="min-w-0 flex-1">
-											{#if editingColumnId === column.id}
-												<div class="flex min-w-0 items-center gap-2">
-													<input
-														bind:value={editingColumnTitle}
-														class="w-full rounded-lg border border-app-primary/40 bg-app-bg px-2 py-1 text-sm font-semibold text-app-text outline-none"
-														onclick={(event) => event.stopPropagation()}
-														onblur={() => renameColumn(column.id, editingColumnTitle)}
-														onkeydown={(event) => {
-															if (event.key === 'Enter')
-																renameColumn(column.id, editingColumnTitle);
-															if (event.key === 'Escape') editingColumnId = null;
-														}}
-													/>
-												</div>
-											{:else if column.isLinkGroup}
-												<div class="flex min-w-0 items-center gap-2 rounded-xl px-1 py-1 text-left">
-													<div class="min-w-0 flex-1">
-														<div class="flex min-w-0 items-center gap-2">
-															<h3 class="min-w-0 flex-1 truncate font-semibold text-app-text">
-																{column.title}
-															</h3>
-															<span
-																class={COLUMN_TASK_COUNT_CLASS}
-																aria-label="{column.tasks.length} cards"
-															>
-																{column.tasks.length}
-															</span>
-														</div>
-														{#if column.linkGroupSubtitle}
-															<p class="truncate text-[11px] text-app-subtext">
-																{column.linkGroupSubtitle}
-															</p>
-														{/if}
-														<p class="text-[10px] text-app-subtext">View only</p>
+										<div
+											class="flex items-center justify-between gap-3 border-b border-app-border px-3 py-2.5"
+											style={getColumnHeaderToneStyle(column.color)}
+										>
+											<div class="min-w-0 flex-1">
+												{#if editingColumnId === column.id}
+													<div class="flex min-w-0 items-center gap-2">
+														<input
+															bind:value={editingColumnTitle}
+															class="w-full rounded-lg border border-app-primary/40 bg-app-bg px-2 py-1 text-sm font-semibold text-app-text outline-none"
+															onclick={(event) => event.stopPropagation()}
+															onblur={() => renameColumn(column.id, editingColumnTitle)}
+															onkeydown={(event) => {
+																if (event.key === 'Enter')
+																	renameColumn(column.id, editingColumnTitle);
+																if (event.key === 'Escape') editingColumnId = null;
+															}}
+														/>
 													</div>
-												</div>
-											{:else}
-												<div
-													use:dragHandle
-													aria-label={`Drag column ${column.title}`}
-													class="flex min-w-0 cursor-grab items-center gap-2 rounded-xl px-1 py-1 text-left active:cursor-grabbing"
-												>
-													<GripVertical size={15} class="shrink-0 text-app-subtext" />
-													<h3 class="min-w-0 flex-1 truncate font-semibold text-app-text">
-														{column.title}
-													</h3>
-													<span
-														class={COLUMN_TASK_COUNT_CLASS}
-														aria-label="{column.tasks.length} cards"
+												{:else if column.isLinkGroup}
+													<div
+														class="flex min-w-0 items-center gap-2 rounded-xl px-1 py-1 text-left"
 													>
-														{column.tasks.length}
-													</span>
+														<div class="min-w-0 flex-1">
+															<div class="flex min-w-0 items-center gap-2">
+																<h3 class="min-w-0 flex-1 truncate font-semibold text-app-text">
+																	{column.title}
+																</h3>
+																<span
+																	class={COLUMN_TASK_COUNT_CLASS}
+																	aria-label="{column.tasks.length} cards"
+																>
+																	{column.tasks.length}
+																</span>
+															</div>
+															{#if column.linkGroupSubtitle}
+																<p class="truncate text-[11px] text-app-subtext">
+																	{column.linkGroupSubtitle}
+																</p>
+															{/if}
+															<p class="text-[10px] text-app-subtext">View only</p>
+														</div>
+													</div>
+												{:else}
+													<div
+														use:dragHandle
+														aria-label={`Drag column ${column.title}`}
+														class="flex min-w-0 cursor-grab items-center gap-2 rounded-xl px-1 py-1 text-left active:cursor-grabbing"
+													>
+														<GripVertical size={15} class="shrink-0 text-app-subtext" />
+														<h3 class="min-w-0 flex-1 truncate font-semibold text-app-text">
+															{column.title}
+														</h3>
+														<span
+															class={COLUMN_TASK_COUNT_CLASS}
+															aria-label="{column.tasks.length} cards"
+														>
+															{column.tasks.length}
+														</span>
+													</div>
+												{/if}
+											</div>
+
+											{#if !column.isLinkGroup}
+												<div class="relative flex items-center gap-1">
+													<button
+														type="button"
+														class={`text-app-subtext transition hover:bg-app-element hover:text-app-text ${
+															isMobile ? 'min-h-10 min-w-10 rounded-lg p-2.5' : 'rounded-xl p-2'
+														}`}
+														onclick={async (event) => {
+															event.stopPropagation();
+															await addTask(column.id, 'top');
+														}}
+													>
+														<Plus size={isMobile ? 18 : 16} />
+													</button>
+													<button
+														type="button"
+														class={`text-app-subtext transition hover:bg-app-element hover:text-app-text ${
+															isMobile ? 'min-h-10 min-w-10 rounded-lg p-2.5' : 'rounded-xl p-2'
+														}`}
+														onclick={(event) => {
+															event.stopPropagation();
+															toggleColumnMenu(column.id, event.currentTarget as HTMLButtonElement);
+														}}
+													>
+														<Ellipsis size={isMobile ? 18 : 16} />
+													</button>
 												</div>
 											{/if}
 										</div>
 
-										{#if !column.isLinkGroup}
-											<div class="relative flex items-center gap-1">
-												<button
-													type="button"
-													class={`text-app-subtext transition hover:bg-app-element hover:text-app-text ${
-														isMobile ? 'min-h-10 min-w-10 rounded-lg p-2.5' : 'rounded-xl p-2'
-													}`}
-													onclick={async (event) => {
-														event.stopPropagation();
-														await addTask(column.id, 'top');
-													}}
-												>
-													<Plus size={isMobile ? 18 : 16} />
-												</button>
-												<button
-													type="button"
-													class={`text-app-subtext transition hover:bg-app-element hover:text-app-text ${
-														isMobile ? 'min-h-10 min-w-10 rounded-lg p-2.5' : 'rounded-xl p-2'
-													}`}
-													onclick={(event) => {
-														event.stopPropagation();
-														toggleColumnMenu(column.id, event.currentTarget as HTMLButtonElement);
-													}}
-												>
-													<Ellipsis size={isMobile ? 18 : 16} />
-												</button>
-											</div>
-										{/if}
-									</div>
-
-									<div class="flex min-h-0 flex-1 flex-col overflow-hidden p-2">
-										<div
-											data-column-viewport={column.id}
-											class="flex min-h-0 flex-1 flex-col overflow-y-auto"
-											onscroll={() => {
-												closeMenus();
-												bumpLinkOverlay();
-											}}
-										>
+										<div class="flex min-h-0 flex-1 flex-col overflow-hidden p-2">
 											<div
-												class="flex min-h-16 flex-1 flex-col gap-1.5"
-												use:dndzone={{
-													items: column.tasks,
-													type: 'task',
-													flipDurationMs: taskFlipDurationMs(),
-													dragDisabled:
-														isLocked ||
-														Boolean(column.isLinkGroup) ||
-														boardSearchFiltering,
-													delayTouchStart: isMobile ? 220 : true,
-													morphDisabled: isMobile,
-													centreDraggedOnCursor: isMobile,
-													useCursorForDetection: isMobile,
-													dropAnimationDisabled: false
-												}}
-												onconsider={(event) => {
-													if (column.isLinkGroup) return;
-													handleTaskDnd(column.id, event as CustomEvent, 'consider');
-												}}
-												onfinalize={(event) => {
-													if (column.isLinkGroup) return;
-													handleTaskDnd(column.id, event as CustomEvent, 'finalize');
+												data-column-viewport={column.id}
+												class="flex min-h-0 flex-1 flex-col overflow-y-auto"
+												onscroll={() => {
+													closeMenus();
 													bumpLinkOverlay();
 												}}
 											>
-												{#each column.tasks as task (getDndKey(task))}
-													{@const taskColumnId = getTaskColumnId(task.id, column.id)}
-													{@const isLinkDimmedCard =
-														Boolean(linkViewAnchorId) &&
-														!isDiffMode &&
-														!linkViewComponentIds.has(task.id)}
-													{@const isLinkClusterCard =
-														Boolean(linkViewAnchorId) &&
-														!isDiffMode &&
-														linkViewComponentIds.has(task.id)}
-													{@const isLinkHighlightedCard =
-														isLinkClusterCard || linkViewAnchorId === task.id}
-													<div
-														animate:flip={{ duration: taskFlipDurationMs() }}
-														data-is-dnd-shadow-item-hint={isShadowItem(task)}
-														data-task-id={task.id}
-														class={[
-															cardClasses(task as DiffTask, { linkDimmed: isLinkDimmedCard }),
-															isLinkDimmedCard &&
-																'!opacity-[0.35] saturate-[0.4] brightness-[0.78] hover:!opacity-[0.5] hover:!translate-y-0 hover:!shadow-none'
-														]
-															.filter(Boolean)
-															.join(' ')}
-														style={getTaskCardStyle(task as DiffTask, isLinkHighlightedCard)}
-														role="button"
-														tabindex="0"
-														onclick={() => handleTaskCardActivate(column, task)}
-														onkeydown={(event) => {
-															if (event.key === 'Enter' || event.key === ' ') {
-																event.preventDefault();
-																handleTaskCardActivate(column, task);
-															}
-														}}
-													>
-														<div class="flex items-start gap-2">
-															{#if task.hasCheckbox}
-																<button
-																	type="button"
-																	class="mt-0.5 text-app-subtext transition hover:text-app-primary"
-																	onclick={(event) => {
-																		event.stopPropagation();
-																		toggleChecked(taskColumnId, task.id);
-																	}}
-																>
-																	{#if task.checked}
-																		<CheckSquare size={17} />
-																	{:else}
-																		<Square size={17} />
-																	{/if}
-																</button>
-															{/if}
-
-															<div class="min-w-0 flex-1">
-																{#if editingTaskTitle?.columnId === taskColumnId && editingTaskTitle?.taskId === task.id}
-																	<textarea
-																		bind:this={taskTitleInput}
-																		bind:value={editingTaskTitleValue}
-																		rows="10"
-																		class="w-full resize-none rounded-lg border border-app-primary/40 bg-app-bg px-2 py-1 text-sm font-medium text-app-text outline-none"
-																		onclick={(event) => event.stopPropagation()}
-																		onblur={saveTaskTitleEdit}
-																		onkeydown={(event) => {
+												<div
+													class="flex min-h-16 flex-1 flex-col gap-1.5"
+													use:dndzone={{
+														items: column.tasks,
+														type: 'task',
+														flipDurationMs: taskFlipDurationMs(),
+														dragDisabled:
+															isLocked || Boolean(column.isLinkGroup) || boardSearchFiltering,
+														delayTouchStart: isMobile ? 220 : true,
+														morphDisabled: isMobile,
+														centreDraggedOnCursor: isMobile,
+														useCursorForDetection: isMobile,
+														dropAnimationDisabled: false
+													}}
+													onconsider={(event) => {
+														if (column.isLinkGroup) return;
+														handleTaskDnd(column.id, event as CustomEvent, 'consider');
+													}}
+													onfinalize={(event) => {
+														if (column.isLinkGroup) return;
+														handleTaskDnd(column.id, event as CustomEvent, 'finalize');
+														bumpLinkOverlay();
+													}}
+												>
+													{#each column.tasks as task (getDndKey(task))}
+														{@const taskColumnId = getTaskColumnId(task.id, column.id)}
+														{@const isLinkDimmedCard =
+															Boolean(linkViewAnchorId) &&
+															!isDiffMode &&
+															!linkViewComponentIds.has(task.id)}
+														{@const isLinkClusterCard =
+															Boolean(linkViewAnchorId) &&
+															!isDiffMode &&
+															linkViewComponentIds.has(task.id)}
+														{@const isLinkHighlightedCard =
+															isLinkClusterCard || linkViewAnchorId === task.id}
+														<div
+															animate:flip={{ duration: taskFlipDurationMs() }}
+															data-is-dnd-shadow-item-hint={isShadowItem(task)}
+															data-task-id={task.id}
+															class={[
+																cardClasses(task as DiffTask, { linkDimmed: isLinkDimmedCard }),
+																isLinkDimmedCard &&
+																	'!opacity-[0.35] saturate-[0.4] brightness-[0.78] hover:!opacity-[0.5] hover:!translate-y-0 hover:!shadow-none'
+															]
+																.filter(Boolean)
+																.join(' ')}
+															style={getTaskCardStyle(task as DiffTask, isLinkHighlightedCard)}
+															role="button"
+															tabindex="0"
+															onclick={() => handleTaskCardActivate(column, task)}
+															onkeydown={(event) => {
+																if (event.key === 'Enter' || event.key === ' ') {
+																	event.preventDefault();
+																	handleTaskCardActivate(column, task);
+																}
+															}}
+														>
+															<div class="flex items-start gap-2">
+																{#if task.hasCheckbox}
+																	<button
+																		type="button"
+																		class="mt-0.5 text-app-subtext transition hover:text-app-primary"
+																		onclick={(event) => {
 																			event.stopPropagation();
-																			if (event.key === 'Enter' && !event.shiftKey) {
-																				event.preventDefault();
-																				saveTaskTitleEdit();
-																			}
-																			if (event.key === 'Escape') cancelTaskTitleEdit();
+																			toggleChecked(taskColumnId, task.id);
 																		}}
-																	></textarea>
-																{:else}
-																	<div
-																		class="min-w-0 cursor-text rounded-md"
-																		role="presentation"
-																		onclick={(event) => event.stopPropagation()}
-																		ondblclick={(event) => {
-																			event.stopPropagation();
-																			void startTaskTitleEdit(taskColumnId, task);
-																		}}
-																		onpointerup={(event) =>
-																			handleTaskTitlePointerUp(
-																				event as PointerEvent,
-																				taskColumnId,
-																				task
-																			)}
 																	>
-																		<RichText
-																			value={getRenderedTaskTitle(task)}
-																			className={`kainbu-prose prose-tight text-sm font-medium ${task.checked ? 'opacity-70' : ''}`}
-																			onCheckboxToggle={
-																				isLocked
+																		{#if task.checked}
+																			<CheckSquare size={17} />
+																		{:else}
+																			<Square size={17} />
+																		{/if}
+																	</button>
+																{/if}
+
+																<div class="min-w-0 flex-1">
+																	{#if editingTaskTitle?.columnId === taskColumnId && editingTaskTitle?.taskId === task.id}
+																		<textarea
+																			bind:this={taskTitleInput}
+																			bind:value={editingTaskTitleValue}
+																			rows="10"
+																			class="w-full resize-none rounded-lg border border-app-primary/40 bg-app-bg px-2 py-1 text-sm font-medium text-app-text outline-none"
+																			onclick={(event) => event.stopPropagation()}
+																			onblur={saveTaskTitleEdit}
+																			onkeydown={(event) => {
+																				event.stopPropagation();
+																				if (event.key === 'Enter' && !event.shiftKey) {
+																					event.preventDefault();
+																					saveTaskTitleEdit();
+																				}
+																				if (event.key === 'Escape') cancelTaskTitleEdit();
+																			}}
+																		></textarea>
+																	{:else}
+																		<div
+																			class="min-w-0 cursor-text rounded-md"
+																			role="presentation"
+																			onclick={(event) => event.stopPropagation()}
+																			ondblclick={(event) => {
+																				event.stopPropagation();
+																				void startTaskTitleEdit(taskColumnId, task);
+																			}}
+																			onpointerup={(event) =>
+																				handleTaskTitlePointerUp(
+																					event as PointerEvent,
+																					taskColumnId,
+																					task
+																				)}
+																		>
+																			<RichText
+																				value={getRenderedTaskTitle(task)}
+																				className={`kainbu-prose prose-tight text-sm font-medium ${task.checked ? 'opacity-70' : ''}`}
+																				onCheckboxToggle={isLocked
 																					? undefined
 																					: (index, checked) =>
 																							toggleTaskTitleCheckbox(
@@ -1769,306 +1831,313 @@
 																								task.id,
 																								index,
 																								checked
-																							)
-																			}
-																		/>
-																	</div>
-																{/if}
-																{#if column.isLinkGroup && column.taskColumnTitles?.[task.id]}
-																	<p class="mt-1 text-[10px] text-app-subtext">
-																		{column.taskColumnTitles[task.id]}
-																	</p>
-																{/if}
-																{#if task.description?.trim()}
-																	<div
-																		class="mt-1 inline-flex items-center gap-1 text-[10px] text-app-subtext"
-																	>
-																		<FileText size={13} />
-																		<span>Markdown description attached</span>
-																	</div>
-																{/if}
+																							)}
+																			/>
+																		</div>
+																	{/if}
+																	{#if column.isLinkGroup && column.taskColumnTitles?.[task.id]}
+																		<p class="mt-1 text-[10px] text-app-subtext">
+																			{column.taskColumnTitles[task.id]}
+																		</p>
+																	{/if}
+																	{#if task.description?.trim()}
+																		<div
+																			class="mt-1 inline-flex items-center gap-1 text-[10px] text-app-subtext"
+																		>
+																			<FileText size={13} />
+																			<span>Markdown description attached</span>
+																		</div>
+																	{/if}
+																</div>
 															</div>
-														</div>
 
-														{#if task.tags?.length || getTaskLinkCount(task) > 0}
-															<div class="mt-1.5 flex flex-wrap gap-1">
-																{#if getTaskLinkCount(task) > 0}
+															{#if task.tags?.length || getTaskLinkCount(task) > 0}
+																<div class="mt-1.5 flex flex-wrap gap-1">
+																	{#if getTaskLinkCount(task) > 0}
+																		<span
+																			class="inline-flex items-center gap-1 rounded-full border border-app-primary/30 bg-app-primary/10 px-1.5 py-px text-[9px] font-semibold uppercase tracking-[0.14em] text-app-primary"
+																		>
+																			<Link2 size={10} />
+																			{getTaskLinkCount(task)}
+																			{getTaskLinkCount(task) === 1 ? 'link' : 'links'}
+																		</span>
+																	{/if}
+																	{#each task.tags || [] as tag (tag.id)}
+																		<span
+																			class={`rounded-full px-1.5 py-px text-[9px] font-semibold uppercase tracking-[0.14em] ${getTagToneClasses(tag.color)}`}
+																		>
+																			{tag.label}
+																		</span>
+																	{/each}
+																</div>
+															{/if}
+
+															{#if getTaskDueAt(task) !== null}
+																<div class="mt-1.5 flex flex-wrap gap-1">
 																	<span
-																		class="inline-flex items-center gap-1 rounded-full border border-app-primary/30 bg-app-primary/10 px-1.5 py-px text-[9px] font-semibold uppercase tracking-[0.14em] text-app-primary"
+																		class="inline-flex items-center gap-1 rounded-full border border-app-border bg-app-surface/80 px-2 py-0.5 text-[9px] font-semibold uppercase tracking-[0.16em] text-app-subtext"
 																	>
-																		<Link2 size={10} />
-																		{getTaskLinkCount(task)}
-																		{getTaskLinkCount(task) === 1 ? 'link' : 'links'}
+																		<Clock3 size={12} />
+																		{formatTimingLabel(task)}
 																	</span>
-																{/if}
-																{#each task.tags || [] as tag (tag.id)}
-																	<span
-																		class={`rounded-full px-1.5 py-px text-[9px] font-semibold uppercase tracking-[0.14em] ${getTagToneClasses(tag.color)}`}
-																	>
-																		{tag.label}
-																	</span>
-																{/each}
-															</div>
-														{/if}
+																</div>
+															{/if}
 
-														{#if getTaskDueAt(task) !== null}
-															<div class="mt-1.5 flex flex-wrap gap-1">
-																<span
-																	class="inline-flex items-center gap-1 rounded-full border border-app-border bg-app-surface/80 px-2 py-0.5 text-[9px] font-semibold uppercase tracking-[0.16em] text-app-subtext"
-																>
-																	<Clock3 size={12} />
-																	{formatTimingLabel(task)}
-																</span>
-															</div>
-														{/if}
-
-														<div
-															class="mt-2 flex items-end justify-between gap-2 border-t border-app-border/70 pt-1.5"
-														>
 															<div
-																class="min-w-0 flex items-center gap-2 text-[9px] text-app-subtext"
+																class="mt-2 flex items-end justify-between gap-2 border-t border-app-border/70 pt-1.5"
 															>
-																{#if isCollaborative}
-																	<div class="relative">
-																		{#if task.assignedTo && getAssignedMemberLabel(task)}
-																			<button
-																				type="button"
-																				class="inline-flex items-center gap-1 rounded-md border border-app-primary/30 bg-app-primary/10 px-1.5 py-0.5 text-[9px] font-semibold text-app-primary transition hover:bg-app-primary/20"
-																				onclick={(event) => {
-																					event.stopPropagation();
-																					toggleAssignMenu(taskColumnId, task.id);
-																				}}
-																			>
-																				<span
-																					class="inline-block h-3 w-3 rounded-full border border-app-primary/40 bg-app-primary/20 text-center text-[7px] font-bold leading-3 text-app-primary"
+																<div
+																	class="min-w-0 flex items-center gap-2 text-[9px] text-app-subtext"
+																>
+																	{#if isCollaborative}
+																		<div class="relative">
+																			{#if task.assignedTo && getAssignedMemberLabel(task)}
+																				<button
+																					type="button"
+																					class="inline-flex items-center gap-1 rounded-md border border-app-primary/30 bg-app-primary/10 px-1.5 py-0.5 text-[9px] font-semibold text-app-primary transition hover:bg-app-primary/20"
+																					onclick={(event) => {
+																						event.stopPropagation();
+																						toggleAssignMenu(taskColumnId, task.id);
+																					}}
 																				>
-																					{(getAssignedMemberLabel(task) || '?')[0].toUpperCase()}
-																				</span>
-																				{getAssignedMemberLabel(task)}
-																			</button>
-																		{:else}
-																			<button
-																				type="button"
-																				aria-label="Assign"
-																				class="inline-flex items-center rounded-md border border-dashed border-app-border p-0.5 text-app-subtext transition hover:border-app-primary/40 hover:text-app-primary"
-																				onclick={(event) => {
-																					event.stopPropagation();
-																					toggleAssignMenu(taskColumnId, task.id);
-																				}}
-																			>
-																				<UserPlus size={12} />
-																			</button>
-																		{/if}
-																		{#if assignMenuOpen?.colId === taskColumnId && assignMenuOpen?.taskId === task.id}
-																			<div
-																				role="menu"
-																				tabindex="-1"
-																				class="absolute bottom-full left-0 z-50 mb-1 min-w-[140px] rounded-lg border border-app-border bg-app-surface p-1 shadow-xl"
-																				onclick={(event) => event.stopPropagation()}
-																				onkeydown={(event) => event.stopPropagation()}
-																			>
-																				{#each members as member (member.userId)}
-																					<button
-																						type="button"
-																						class="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-[11px] transition {task.assignedTo ===
-																						member.userId
-																							? 'bg-app-primary/15 font-semibold text-app-primary'
-																							: 'text-app-text hover:bg-app-element'}"
-																						onclick={(event) => {
-																							event.stopPropagation();
-																							assignTask(
-																								taskColumnId,
-																								task.id,
-																								task.assignedTo === member.userId
-																									? undefined
-																									: member.userId
-																							);
-																						}}
+																					<span
+																						class="inline-block h-3 w-3 rounded-full border border-app-primary/40 bg-app-primary/20 text-center text-[7px] font-bold leading-3 text-app-primary"
 																					>
-																						<span
-																							class="inline-block h-4 w-4 shrink-0 rounded-full border border-app-border bg-app-element text-center text-[8px] font-bold leading-4 text-app-subtext"
-																						>
-																							{getMemberLabel(member)[0].toUpperCase()}
-																						</span>
-																						<span class="truncate">{getMemberLabel(member)}</span>
-																						{#if member.isCurrentUser}
-																							<span class="text-[9px] text-app-subtext">(you)</span>
-																						{/if}
-																					</button>
-																				{/each}
-																				{#if task.assignedTo}
-																					<div class="border-t border-app-border mt-1 pt-1">
+																						{(getAssignedMemberLabel(task) || '?')[0].toUpperCase()}
+																					</span>
+																					{getAssignedMemberLabel(task)}
+																				</button>
+																			{:else}
+																				<button
+																					type="button"
+																					aria-label="Assign"
+																					class="inline-flex items-center rounded-md border border-dashed border-app-border p-0.5 text-app-subtext transition hover:border-app-primary/40 hover:text-app-primary"
+																					onclick={(event) => {
+																						event.stopPropagation();
+																						toggleAssignMenu(taskColumnId, task.id);
+																					}}
+																				>
+																					<UserPlus size={12} />
+																				</button>
+																			{/if}
+																			{#if assignMenuOpen?.colId === taskColumnId && assignMenuOpen?.taskId === task.id}
+																				<div
+																					role="menu"
+																					tabindex="-1"
+																					class="absolute bottom-full left-0 z-50 mb-1 min-w-[140px] rounded-lg border border-app-border bg-app-surface p-1 shadow-xl"
+																					onclick={(event) => event.stopPropagation()}
+																					onkeydown={(event) => event.stopPropagation()}
+																				>
+																					{#each members as member (member.userId)}
 																						<button
 																							type="button"
-																							class="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-[11px] text-app-subtext transition hover:bg-app-element"
+																							class="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-[11px] transition {task.assignedTo ===
+																							member.userId
+																								? 'bg-app-primary/15 font-semibold text-app-primary'
+																								: 'text-app-text hover:bg-app-element'}"
 																							onclick={(event) => {
 																								event.stopPropagation();
-																								assignTask(taskColumnId, task.id, undefined);
+																								assignTask(
+																									taskColumnId,
+																									task.id,
+																									task.assignedTo === member.userId
+																										? undefined
+																										: member.userId
+																								);
 																							}}
 																						>
-																							Unassign
+																							<span
+																								class="inline-block h-4 w-4 shrink-0 rounded-full border border-app-border bg-app-element text-center text-[8px] font-bold leading-4 text-app-subtext"
+																							>
+																								{getMemberLabel(member)[0].toUpperCase()}
+																							</span>
+																							<span class="truncate">{getMemberLabel(member)}</span>
+																							{#if member.isCurrentUser}
+																								<span class="text-[9px] text-app-subtext"
+																									>(you)</span
+																								>
+																							{/if}
 																						</button>
-																					</div>
-																				{/if}
-																			</div>
-																		{/if}
-																	</div>
-																{/if}
-															</div>
+																					{/each}
+																					{#if task.assignedTo}
+																						<div class="border-t border-app-border mt-1 pt-1">
+																							<button
+																								type="button"
+																								class="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-[11px] text-app-subtext transition hover:bg-app-element"
+																								onclick={(event) => {
+																									event.stopPropagation();
+																									assignTask(taskColumnId, task.id, undefined);
+																								}}
+																							>
+																								Unassign
+																							</button>
+																						</div>
+																					{/if}
+																				</div>
+																			{/if}
+																		</div>
+																	{/if}
+																</div>
 
-															<div class="group/task-actions flex items-center">
-																<div
-																	class={`flex items-center ${
-																		isMobile
-																			? ''
-																			: 'w-0 overflow-hidden opacity-0 transition-all duration-150 group-hover/task-actions:w-auto group-hover/task-actions:opacity-100'
-																	}`}
-																>
-																	<button
-																		type="button"
-																		class={`transition ${
-																			linkViewAnchorId === task.id
-																				? 'text-app-primary'
-																				: 'text-app-subtext hover:bg-app-element hover:text-app-primary'
-																		} ${isMobile ? 'min-h-8 min-w-8 rounded-lg p-1.5' : 'rounded-md p-1.5'}`}
-																		title="View links"
-																		disabled={isLocked || isDiffMode}
-																		onclick={(event) => {
-																			event.stopPropagation();
-																			toggleLinkView(task.id);
-																		}}
+																<div class="group/task-actions flex items-center">
+																	<div
+																		class={`flex items-center ${
+																			isMobile
+																				? ''
+																				: 'w-0 overflow-hidden opacity-0 transition-all duration-150 group-hover/task-actions:w-auto group-hover/task-actions:opacity-100'
+																		}`}
 																	>
-																		<Link2 size={isMobile ? 18 : 16} />
-																	</button>
-																	<button
-																		type="button"
-																		class={`transition ${
-																			taskInfoMenuOpen?.colId === taskColumnId &&
-																			taskInfoMenuOpen?.taskId === task.id
-																				? 'text-app-primary'
-																				: 'text-app-subtext hover:bg-app-element hover:text-app-text'
-																		} ${isMobile ? 'min-h-8 min-w-8 rounded-lg p-1.5' : 'rounded-md p-1.5'}`}
-																		title="Card info"
-																		aria-label="Card info"
-																		aria-expanded={taskInfoMenuOpen?.colId === taskColumnId &&
-																			taskInfoMenuOpen?.taskId === task.id}
-																		onclick={(event) => {
-																			event.stopPropagation();
-																			toggleTaskInfoMenu(
-																				taskColumnId,
-																				task.id,
-																				event.currentTarget as HTMLButtonElement
-																			);
-																		}}
-																	>
-																		<Info size={isMobile ? 18 : 16} />
-																	</button>
-																	<div class="relative">
 																		<button
 																			type="button"
-																			class={`text-app-subtext transition hover:bg-app-element hover:text-app-text ${
-																				isMobile ? 'min-h-8 min-w-8 rounded-lg p-1.5' : 'rounded-md p-1.5'
-																			}`}
-																			title="Quick tags"
+																			class={`transition ${
+																				linkViewAnchorId === task.id
+																					? 'text-app-primary'
+																					: 'text-app-subtext hover:bg-app-element hover:text-app-primary'
+																			} ${isMobile ? 'min-h-8 min-w-8 rounded-lg p-1.5' : 'rounded-md p-1.5'}`}
+																			title="View links"
+																			disabled={isLocked || isDiffMode}
 																			onclick={(event) => {
 																				event.stopPropagation();
-																				toggleTaskTagMenu(
+																				toggleLinkView(task.id);
+																			}}
+																		>
+																			<Link2 size={isMobile ? 18 : 16} />
+																		</button>
+																		<button
+																			type="button"
+																			class={`transition ${
+																				taskInfoMenuOpen?.colId === taskColumnId &&
+																				taskInfoMenuOpen?.taskId === task.id
+																					? 'text-app-primary'
+																					: 'text-app-subtext hover:bg-app-element hover:text-app-text'
+																			} ${isMobile ? 'min-h-8 min-w-8 rounded-lg p-1.5' : 'rounded-md p-1.5'}`}
+																			title="Card info"
+																			aria-label="Card info"
+																			aria-expanded={taskInfoMenuOpen?.colId === taskColumnId &&
+																				taskInfoMenuOpen?.taskId === task.id}
+																			onclick={(event) => {
+																				event.stopPropagation();
+																				toggleTaskInfoMenu(
 																					taskColumnId,
 																					task.id,
 																					event.currentTarget as HTMLButtonElement
 																				);
 																			}}
 																		>
-																			<TagIcon size={isMobile ? 18 : 16} />
+																			<Info size={isMobile ? 18 : 16} />
+																		</button>
+																		<div class="relative">
+																			<button
+																				type="button"
+																				class={`text-app-subtext transition hover:bg-app-element hover:text-app-text ${
+																					isMobile
+																						? 'min-h-8 min-w-8 rounded-lg p-1.5'
+																						: 'rounded-md p-1.5'
+																				}`}
+																				title="Quick tags"
+																				onclick={(event) => {
+																					event.stopPropagation();
+																					toggleTaskTagMenu(
+																						taskColumnId,
+																						task.id,
+																						event.currentTarget as HTMLButtonElement
+																					);
+																				}}
+																			>
+																				<TagIcon size={isMobile ? 18 : 16} />
+																			</button>
+																		</div>
+																		<button
+																			type="button"
+																			class={`text-app-subtext transition hover:bg-app-element hover:text-app-text ${
+																				isMobile
+																					? 'min-h-8 min-w-8 rounded-lg p-1.5'
+																					: 'rounded-md p-1.5'
+																			}`}
+																			title="Copy title"
+																			aria-label="Copy title"
+																			onclick={(event) => {
+																				event.stopPropagation();
+																				void copyTaskTitle(taskColumnId, task.id);
+																			}}
+																		>
+																			<Copy size={isMobile ? 18 : 16} />
+																		</button>
+																		<button
+																			type="button"
+																			class={`text-app-subtext transition hover:bg-app-element hover:text-app-accent ${
+																				isMobile
+																					? 'min-h-8 min-w-8 rounded-lg p-1.5'
+																					: 'rounded-md p-1.5'
+																			}`}
+																			title="Queue for chat"
+																			onclick={(event) => {
+																				event.stopPropagation();
+																				onSendToChat({ task, column });
+																				closeMenus();
+																			}}
+																		>
+																			<MessageSquarePlus size={isMobile ? 18 : 16} />
 																		</button>
 																	</div>
-																	<button
-																		type="button"
-																		class={`text-app-subtext transition hover:bg-app-element hover:text-app-text ${
-																			isMobile ? 'min-h-8 min-w-8 rounded-lg p-1.5' : 'rounded-md p-1.5'
-																		}`}
-																		title="Copy title"
-																		aria-label="Copy title"
-																		onclick={(event) => {
-																			event.stopPropagation();
-																			void copyTaskTitle(taskColumnId, task.id);
-																		}}
-																	>
-																		<Copy size={isMobile ? 18 : 16} />
-																	</button>
-																	<button
-																		type="button"
-																		class={`text-app-subtext transition hover:bg-app-element hover:text-app-accent ${
-																			isMobile ? 'min-h-8 min-w-8 rounded-lg p-1.5' : 'rounded-md p-1.5'
-																		}`}
-																		title="Queue for chat"
-																		onclick={(event) => {
-																			event.stopPropagation();
-																			onSendToChat({ task, column });
-																			closeMenus();
-																		}}
-																	>
-																		<MessageSquarePlus size={isMobile ? 18 : 16} />
-																	</button>
-																</div>
 
-																<div class="relative">
-																	<button
-																		type="button"
-																		class={`text-app-subtext transition hover:bg-app-element hover:text-app-text ${
-																			isMobile
-																				? 'min-h-8 min-w-8 rounded-lg p-1.5'
-																				: 'rounded-md p-1.5'
-																		}`}
-																		title="More actions"
-																		aria-label="More actions"
-																		onclick={(event) => {
-																			event.stopPropagation();
-																			toggleTaskMenu(
-																				taskColumnId,
-																				task.id,
-																				event.currentTarget as HTMLButtonElement
-																			);
-																		}}
-																	>
-																		<Ellipsis size={isMobile ? 18 : 16} />
-																	</button>
+																	<div class="relative">
+																		<button
+																			type="button"
+																			class={`text-app-subtext transition hover:bg-app-element hover:text-app-text ${
+																				isMobile
+																					? 'min-h-8 min-w-8 rounded-lg p-1.5'
+																					: 'rounded-md p-1.5'
+																			}`}
+																			title="More actions"
+																			aria-label="More actions"
+																			onclick={(event) => {
+																				event.stopPropagation();
+																				toggleTaskMenu(
+																					taskColumnId,
+																					task.id,
+																					event.currentTarget as HTMLButtonElement
+																				);
+																			}}
+																		>
+																			<Ellipsis size={isMobile ? 18 : 16} />
+																		</button>
+																	</div>
 																</div>
 															</div>
 														</div>
-													</div>
-												{/each}
+													{/each}
+												</div>
 											</div>
+											{#if !column.isLinkGroup}
+												<button
+													type="button"
+													class="mt-2 inline-flex w-full shrink-0 items-center justify-center gap-2 rounded-md border border-dashed border-app-border bg-app-bg/45 px-3 py-2.5 text-sm font-semibold text-app-subtext transition hover:border-app-primary/40 hover:text-app-primary"
+													onclick={async (event) => {
+														event.stopPropagation();
+														await addTask(column.id, 'bottom');
+													}}
+												>
+													<Plus size={isMobile ? 15 : 14} />
+													New task
+												</button>
+											{/if}
 										</div>
-										{#if !column.isLinkGroup}
-											<button
-												type="button"
-												class="mt-2 inline-flex w-full shrink-0 items-center justify-center gap-2 rounded-md border border-dashed border-app-border bg-app-bg/45 px-3 py-2.5 text-sm font-semibold text-app-subtext transition hover:border-app-primary/40 hover:text-app-primary"
-												onclick={async (event) => {
-													event.stopPropagation();
-													await addTask(column.id, 'bottom');
-												}}
-											>
-												<Plus size={isMobile ? 15 : 14} />
-												New task
-											</button>
-										{/if}
 									</div>
-								</div>
-							{/each}
-							{#if boardLayoutMode === 'columns'}
-								<button
-									type="button"
-									class="inline-flex shrink-0 items-center justify-center gap-2 self-start rounded-lg border border-dashed border-app-border bg-app-surface/40 px-4 py-2.5 text-sm font-semibold text-app-subtext transition hover:border-app-primary/40 hover:text-app-primary"
-									onclick={addColumn}
-								>
-									<Plus size={16} />
-									Add column
-								</button>
-							{/if}
+								{/each}
+								{#if boardLayoutMode === 'columns'}
+									<button
+										type="button"
+										class="inline-flex shrink-0 items-center justify-center gap-2 self-start rounded-lg border border-dashed border-app-border bg-app-surface/40 px-4 py-2.5 text-sm font-semibold text-app-subtext transition hover:border-app-primary/40 hover:text-app-primary"
+										onclick={addColumn}
+									>
+										<Plus size={16} />
+										Add column
+									</button>
+								{/if}
+							</div>
+							<div class="w-2 shrink-0"></div>
 						</div>
-						<div class="w-2 shrink-0"></div>
-					</div>
 					</div>
 				{:else}
 					<div class="flex h-full min-h-0 min-w-max gap-3">
@@ -2097,10 +2166,7 @@
 										<h3 class="min-w-0 flex-1 truncate font-semibold text-app-text">
 											{column.title}
 										</h3>
-										<span
-											class={COLUMN_TASK_COUNT_CLASS}
-											aria-label="{column.tasks.length} cards"
-										>
+										<span class={COLUMN_TASK_COUNT_CLASS} aria-label="{column.tasks.length} cards">
 											{column.tasks.length}
 										</span>
 									</div>
@@ -2184,18 +2250,26 @@
 												{#if task._status === 'modified' && task._originalTask}
 													<div class="mt-3 grid gap-2 lg:grid-cols-2">
 														<div class="rounded-lg border border-app-border bg-app-bg/55 p-3">
-															<p class="mb-2 text-[10px] font-bold uppercase tracking-[0.18em] text-app-subtext">
+															<p
+																class="mb-2 text-[10px] font-bold uppercase tracking-[0.18em] text-app-subtext"
+															>
 																Before
 															</p>
-															<div class="whitespace-pre-wrap font-mono text-[11px] leading-relaxed text-app-subtext">
+															<div
+																class="whitespace-pre-wrap font-mono text-[11px] leading-relaxed text-app-subtext"
+															>
 																{formatDiffTaskSnapshot(task._originalTask)}
 															</div>
 														</div>
 														<div class="rounded-lg border border-app-border bg-app-bg/55 p-3">
-															<p class="mb-2 text-[10px] font-bold uppercase tracking-[0.18em] text-app-subtext">
+															<p
+																class="mb-2 text-[10px] font-bold uppercase tracking-[0.18em] text-app-subtext"
+															>
 																After
 															</p>
-															<div class="whitespace-pre-wrap font-mono text-[11px] leading-relaxed text-app-text">
+															<div
+																class="whitespace-pre-wrap font-mono text-[11px] leading-relaxed text-app-text"
+															>
 																{formatDiffTaskSnapshot(task)}
 															</div>
 														</div>
@@ -2401,10 +2475,7 @@
 							/>
 						</button>
 						{#if columnTonePickerOpen}
-							<div
-								role="group"
-								class="mt-1 rounded-xl border border-app-border bg-app-bg/80 p-3"
-							>
+							<div role="group" class="mt-1 rounded-xl border border-app-border bg-app-bg/80 p-3">
 								<div class="grid grid-cols-5 place-items-center gap-2.5">
 									{#each SURFACE_TONE_OPTIONS as tone}
 										<button
@@ -2496,7 +2567,11 @@
 						class="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm text-app-text transition hover:bg-app-element"
 						onclick={(event) => {
 							event.stopPropagation();
-							openTaskLinkPicker(menuColumn.id, menuTask.id, event.currentTarget as HTMLButtonElement);
+							openTaskLinkPicker(
+								menuColumn.id,
+								menuTask.id,
+								event.currentTarget as HTMLButtonElement
+							);
 						}}
 					>
 						<Link2 size={14} />
@@ -2515,7 +2590,9 @@
 					</button>
 					{#if normalizeLinkedTaskIds(menuTask.linkedTaskIds).length || getDescriptionReferencedPlacements(boardData, menuTask.id).length}
 						<div class="my-1 border-t border-app-border pt-1">
-							<p class="px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-app-subtext">
+							<p
+								class="px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-app-subtext"
+							>
 								Manage links
 							</p>
 							{#each getExplicitLinkedTasks(boardData, menuTask.id) as linkedPlacement (linkedPlacement.task.id)}
@@ -2585,6 +2662,17 @@
 							</span>
 						</button>
 					{/if}
+					<button
+						type="button"
+						class="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm text-app-text transition hover:bg-app-element"
+						onclick={(event) => {
+							event.stopPropagation();
+							moveTaskToTop(menuColumn.id, menuTask.id);
+						}}
+					>
+						<ArrowUpToLine size={14} />
+						Send to Top
+					</button>
 					<button
 						type="button"
 						class="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm text-app-text transition hover:bg-app-element"
@@ -2689,7 +2777,9 @@
 				>
 					{#if existingTags.length}
 						{#each existingTags.slice(0, 10) as quickTag (quickTag.id)}
-							{@const hasTag = (menuTask.tags || []).some((entry) => entry.label.trim().toLowerCase() === quickTag.label.trim().toLowerCase())}
+							{@const hasTag = (menuTask.tags || []).some(
+								(entry) => entry.label.trim().toLowerCase() === quickTag.label.trim().toLowerCase()
+							)}
 							<button
 								type="button"
 								class={`flex w-full items-center justify-between gap-2 rounded-lg px-2.5 py-2 text-left text-[11px] transition ${

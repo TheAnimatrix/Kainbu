@@ -167,11 +167,7 @@ const isMailConfiguredRecord = (
 		return Boolean(settingsText(record, 'resend_api_key'));
 	}
 	if (provider === 'smtp') {
-		return (
-			smtp?.enabled === true &&
-			typeof smtp.host === 'string' &&
-			smtp.host.trim().length > 0
-		);
+		return smtp?.enabled === true && typeof smtp.host === 'string' && smtp.host.trim().length > 0;
 	}
 	return false;
 };
@@ -179,10 +175,7 @@ const isMailConfiguredRecord = (
 const toBool = (value: unknown, fallback: boolean) =>
 	typeof value === 'boolean' ? value : fallback;
 
-const syncUsersAuthCollectionSettings = async (
-	emailConfigured: boolean,
-	appUrl = ''
-) => {
+const syncUsersAuthCollectionSettings = async (emailConfigured: boolean, appUrl = '') => {
 	const pb = await createAdminPb();
 	const templates =
 		emailConfigured && appUrl
@@ -234,8 +227,7 @@ const publicAuthSettingsFromRecord = (
 	};
 };
 
-const randomPassword = () =>
-	`${randomBytes(18).toString('base64url')}A1!`.slice(0, 24);
+const randomPassword = () => `${randomBytes(18).toString('base64url')}A1!`.slice(0, 24);
 
 const resolveSettingsRecordId = async (pb: PocketBase) => {
 	const existing = await getSettingsRecord();
@@ -243,10 +235,9 @@ const resolveSettingsRecordId = async (pb: PocketBase) => {
 		return existing.id;
 	}
 	try {
-		const row = await pb.collection('app_settings').getFirstListItem(
-			`singleton = "${APP_SETTINGS_SINGLETON}"`,
-			{ fields: 'id' }
-		);
+		const row = await pb
+			.collection('app_settings')
+			.getFirstListItem(`singleton = "${APP_SETTINGS_SINGLETON}"`, { fields: 'id' });
 		return typeof row?.id === 'string' ? row.id : '';
 	} catch {
 		return '';
@@ -336,10 +327,9 @@ export const handleAuthSignup = async (c: Context) => {
 		) {
 			return c.json(
 				{
-					error:
-						'An account with this email already exists. Sign in instead, or use Forgot password if you were invited.'
+					error: 'An account with that email already exists. Sign in instead.'
 				},
-				400
+				409
 			);
 		}
 		return c.json({ error: message }, status as 400 | 403 | 500);
@@ -574,8 +564,7 @@ export const handleAdminPutAuthEmailSettings = async (c: Context) => {
 		});
 
 		const saved = await upsertSettingsRecord(patch);
-		const updated =
-			settingsRecordAsData(saved) ?? settingsRecordAsData(await getSettingsRecord());
+		const updated = settingsRecordAsData(saved) ?? settingsRecordAsData(await getSettingsRecord());
 		const pbSettingsAfter = await pb.settings.getAll();
 		const smtpAfter = (pbSettingsAfter.smtp || {}) as Record<string, unknown>;
 		const emailConfigured = isMailConfiguredRecord(updated, smtpAfter);
@@ -711,7 +700,9 @@ export const handleAdminUsageByUser = async (c: Context) => {
 		}
 
 		const users = [...byUser.values()].sort(
-			(left, right) => right.requestCount - left.requestCount || right.lastActivity.localeCompare(left.lastActivity)
+			(left, right) =>
+				right.requestCount - left.requestCount ||
+				right.lastActivity.localeCompare(left.lastActivity)
 		);
 
 		return c.json({ days, users });
@@ -783,7 +774,9 @@ export const handleAdminCreateUser = async (c: Context) => {
 				is_admin_field: user.is_admin === true,
 				disabled: user.disabled === true,
 				created: user.created,
-				on_allowlist: isEmailOnAdminAllowlist(typeof user.email === 'string' ? user.email : undefined)
+				on_allowlist: isEmailOnAdminAllowlist(
+					typeof user.email === 'string' ? user.email : undefined
+				)
 			}
 		});
 	} catch (error) {
@@ -902,7 +895,8 @@ export const handleAdminUsageByModel = async (c: Context) => {
 		>();
 
 		for (const event of events) {
-			const model = typeof event.model === 'string' && event.model.trim() ? event.model.trim() : '(unknown)';
+			const model =
+				typeof event.model === 'string' && event.model.trim() ? event.model.trim() : '(unknown)';
 			const entry =
 				byModel.get(model) ||
 				({

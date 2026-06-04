@@ -74,7 +74,9 @@
 		cursor: pointer;
 		position: relative;
 		flex-shrink: 0;
-		transition: background-color 0.15s, border-color 0.15s;
+		transition:
+			background-color 0.15s,
+			border-color 0.15s;
 	}
 
 	input[type='checkbox']:checked {
@@ -510,6 +512,48 @@
 		margin: 0;
 	}
 
+	.markdown-editor__prosemirror table {
+		width: max-content;
+		min-width: min(100%, 24rem);
+		max-width: 100%;
+		border-collapse: collapse;
+		font-size: 0.92em;
+		overflow: hidden;
+	}
+
+	.markdown-editor__prosemirror th,
+	.markdown-editor__prosemirror td {
+		position: relative;
+		min-width: 7rem;
+		max-width: 18rem;
+		border: 1px solid var(--color-app-border);
+		padding: 0.4rem 0.65rem;
+		text-align: left;
+		vertical-align: top;
+		white-space: normal;
+		overflow-wrap: anywhere;
+		word-break: break-word;
+	}
+
+	.markdown-editor__prosemirror th {
+		background: rgba(255, 255, 255, 0.04);
+		font-weight: 650;
+	}
+
+	.markdown-editor__prosemirror .selectedCell::after {
+		pointer-events: none;
+		content: '';
+		position: absolute;
+		inset: 0;
+		background: color-mix(in oklab, var(--color-app-primary) 18%, transparent);
+	}
+
+	.markdown-editor__prosemirror .tableWrapper {
+		max-width: 100%;
+		overflow-x: auto;
+		-webkit-overflow-scrolling: touch;
+	}
+
 	/* Page notes: clearer separation between top-level blocks */
 	.markdown-editor--page .block-editor-prose > * + * {
 		margin-top: 0.5rem;
@@ -538,7 +582,11 @@
 		margin-top: 0.5rem;
 	}
 
-	.markdown-editor--page .markdown-editor__prosemirror ul[data-type='taskList'] > li[data-checked] + li[data-checked] {
+	.markdown-editor--page
+		.markdown-editor__prosemirror
+		ul[data-type='taskList']
+		> li[data-checked]
+		+ li[data-checked] {
 		margin-top: 0.35rem;
 	}
 
@@ -567,7 +615,9 @@
 
 	.markdown-editor__prosemirror.is-editor-empty:first-child::before,
 	.markdown-editor__prosemirror p.is-editor-empty:first-child::before,
-	.markdown-editor__prosemirror .is-editor-empty:first-child > p.is-editor-empty:first-child::before,
+	.markdown-editor__prosemirror
+		.is-editor-empty:first-child
+		> p.is-editor-empty:first-child::before,
 	.markdown-editor__prosemirror.ProseMirror-focused p.is-empty::before {
 		content: attr(data-placeholder);
 		float: left;
@@ -690,8 +740,12 @@
 		z-index: 11;
 		height: 2px;
 		border-radius: 999px;
-		background:
-			linear-gradient(90deg, rgba(251, 146, 60, 0.18), rgba(251, 146, 60, 0.95), rgba(251, 191, 36, 0.18));
+		background: linear-gradient(
+			90deg,
+			rgba(251, 146, 60, 0.18),
+			rgba(251, 146, 60, 0.95),
+			rgba(251, 191, 36, 0.18)
+		);
 		box-shadow: 0 0 0 1px rgba(251, 146, 60, 0.15);
 		transform: translateY(-50%);
 		pointer-events: none;
@@ -1148,10 +1202,8 @@
 
 	.chat-orb__icon {
 		color: rgba(207, 128, 101, 0.85);
-		filter:
-			drop-shadow(0 -0.5px 0 rgba(220, 175, 130, 0.5))
-			drop-shadow(0 1px 0 rgba(0, 0, 0, 0.75))
-			drop-shadow(0 2px 2.5px rgba(0, 0, 0, 0.5));
+		filter: drop-shadow(0 -0.5px 0 rgba(220, 175, 130, 0.5))
+			drop-shadow(0 1px 0 rgba(0, 0, 0, 0.75)) drop-shadow(0 2px 2.5px rgba(0, 0, 0, 0.5));
 		animation: chat-orb-icon-spin 16s ease-in-out infinite;
 		transform-origin: center;
 	}
