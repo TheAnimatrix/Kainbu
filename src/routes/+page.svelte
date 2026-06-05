@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { onDestroy, onMount } from 'svelte';
+	import { browser } from '$app/environment';
 	import { fade } from 'svelte/transition';
 	import { page } from '$app/stores';
 	import { replaceState } from '$app/navigation';
@@ -15,21 +16,19 @@
 		email?: string;
 	};
 	import {
-		LayoutDashboard,
+		LayoutPanelTop,
 		LoaderCircle,
-		LogOut,
 		Menu,
 		MessageSquare,
 		NotebookPen,
 		Redo2,
 		Search,
-		Settings2,
-		Sparkles,
 		Undo2
 	} from 'lucide-svelte';
 	import Icon from '@iconify/svelte';
 	import AuthView from '$lib/components/AuthView.svelte';
 	import BrandMark from '$lib/components/BrandMark.svelte';
+	import ChatOrb from '$lib/components/ChatOrb.svelte';
 	import ChatPane from '$lib/components/ChatPane.svelte';
 	import DashboardView from '$lib/components/DashboardView.svelte';
 	import KanbanBoard from '$lib/components/KanbanBoard.svelte';
@@ -45,6 +44,7 @@
 		BACKGROUND_SIGNED_URL_TTL_SECONDS,
 		getBackgroundThemeKey,
 		getBackgroundUploadError,
+		getChatOrbStyle,
 		isImageBackgroundTheme
 	} from '$lib/kainbu/backgrounds';
 	import {
@@ -52,6 +52,7 @@
 		deleteBackgroundImage,
 		uploadBackgroundImage
 	} from '$lib/kainbu/backgroundStorage';
+	import { applyColorMode, readStoredColorMode } from '$lib/kainbu/colorMode';
 	import {
 		DEFAULT_CHAT_HISTORY,
 		DEFAULT_SETTINGS,
@@ -201,11 +202,22 @@
 		future: Project['kanbanData'][];
 	};
 
+	const createInitialSettings = (): UserSettings => {
+		const nextSettings = structuredClone(DEFAULT_SETTINGS);
+		if (browser) {
+			const storedColorMode = readStoredColorMode();
+			if (storedColorMode) {
+				nextSettings.colorMode = storedColorMode;
+			}
+		}
+		return nextSettings;
+	};
+
 	let user: AuthUser | null = null;
 	let projects: Project[] = [];
 	let incomingInvites: ProjectInvite[] = [];
 	let currentProjectId = '';
-	let settings: UserSettings = structuredClone(DEFAULT_SETTINGS);
+	let settings: UserSettings = createInitialSettings();
 	let aiModels: AiModelConfig[] = structuredClone(DEFAULT_AI_MODEL_CONFIGS);
 	let aiVisionFallback: AiVisionFallbackConfig | null = null;
 	let aiThinkingLevel: import('$lib/kainbu/types').AiThinkingLevel = 'none';
@@ -243,6 +255,7 @@
 	let showProjectSheet = false;
 	let desktopChatWidth = DESKTOP_CHAT_WIDTH;
 	let desktopChatCollapsed = true;
+	let chatOrbExitAnimating = false;
 	let composerDraft = '';
 	let queuedAttachments: ChatAttachment[] = [];
 	let queuedTaskCards: ChatTaskCard[] = [];
@@ -329,6 +342,7 @@
 	>();
 
 	$: isMobile = viewportWidth > 0 && viewportWidth < 768;
+	$: applyColorMode(settings.colorMode);
 	$: currentProject = projects.find((project) => project.id === currentProjectId) || null;
 	$: activeAiSession = currentProject ? getActiveProjectAiSession(currentProject) : null;
 	$: activeAiModelId =
@@ -440,6 +454,11 @@
 	$: activeBackgroundImageUrl = boardBackgroundActive
 		? projectBackgroundImageUrl
 		: personalBackgroundImageUrl;
+	$: chatOrbStyle = getChatOrbStyle(
+		activeBackgroundTheme,
+		activeBackgroundImageUrl ?? '',
+		settings.colorMode
+	);
 	$: profileEmail = profile?.email || user?.email || null;
 	$: scratchpadReferenceOptions = (() => {
 		if (!currentProject) return [] as TaskReferenceOption[];
@@ -1216,7 +1235,7 @@
 		projects = [];
 		incomingInvites = [];
 		currentProjectId = '';
-		settings = structuredClone(DEFAULT_SETTINGS);
+		settings = createInitialSettings();
 		profile = null;
 		profileLoaded = false;
 		settingsSection = 'appearance';
@@ -2207,6 +2226,16 @@
 
 		window.addEventListener('pointermove', handlePointerMove);
 		window.addEventListener('pointerup', stopResizing);
+	};
+
+	const openDesktopChatSidebar = () => {
+		if (isMobile || !desktopChatCollapsed) return;
+		chatOrbExitAnimating = true;
+		desktopChatCollapsed = false;
+	};
+
+	const handleChatOrbExitComplete = () => {
+		chatOrbExitAnimating = false;
 	};
 
 	const clearProjectProposalState = (projectId: string) => {
@@ -3700,6 +3729,12 @@
 					modelId: aiSessionSnapshot.modelId,
 					thinkingLevel: aiThinkingLevel,
 					history: historyForModel,
+					...(aiSessionSnapshot.contextSummary !== undefined
+						? { contextSummary: aiSessionSnapshot.contextSummary }
+						: {}),
+					...(aiSessionSnapshot.summarizedUpToMessageId
+						? { summarizedUpToMessageId: aiSessionSnapshot.summarizedUpToMessageId }
+						: {}),
 					scope: {
 						currentTab: visibleWorkspaceTab,
 						selectedTaskIds,
@@ -3768,6 +3803,15 @@
 				updateActiveProjectAiSession(project, (session) => ({
 					...session,
 					history: [...session.history, assistantMessage, ...extraQuestionMessages],
+					...(response.compacted
+						? {
+								contextSummary: response.contextSummary,
+								summarizedUpToMessageId: response.summarizedUpToMessageId ?? null
+							}
+						: {}),
+					...(typeof response.contextTokens === 'number'
+						? { contextTokens: response.contextTokens }
+						: {}),
 					updatedAt: assistantMessage.timestamp,
 					lastMessageAt: assistantMessage.timestamp
 				}))
@@ -4333,7 +4377,11 @@
 	<div
 		class="relative h-[100dvh] overflow-hidden bg-app-bg pt-[var(--safe-top)] pl-[var(--safe-left)] pr-[var(--safe-right)] text-app-text"
 	>
-		<ThemedBackdrop theme={activeBackgroundTheme} imageUrl={activeBackgroundImageUrl} />
+		<ThemedBackdrop
+			theme={activeBackgroundTheme}
+			imageUrl={activeBackgroundImageUrl}
+			colorMode={settings.colorMode}
+		/>
 
 		<div class="relative flex h-full min-h-0">
 			<ProjectRail
@@ -4373,7 +4421,7 @@
 							{#if isMobile}
 								<button
 									type="button"
-									class="inline-flex h-10 w-10 items-center justify-center rounded-md border border-app-border bg-app-element text-app-text transition hover:border-app-primary/35 hover:text-app-primary"
+									class="inline-flex items-center justify-center p-1.5 text-app-text transition hover:text-app-primary"
 									on:click={() => (showProjectSheet = true)}
 									aria-label="Open workspace menu"
 									title="Open workspace menu"
@@ -4513,14 +4561,12 @@
 							{/if}
 
 							{#if showBoardHistoryControls}
-								<div
-									class="inline-flex items-center rounded-lg border border-app-border bg-app-element/80 p-1"
-								>
+								<div class="inline-flex items-center">
 									<button
 										type="button"
-										class={`inline-flex h-8 w-8 items-center justify-center rounded-md transition ${
+										class={`inline-flex items-center justify-center p-1.5 transition ${
 											canUndoBoardHistory && proposalPreviewTarget !== 'kanban'
-												? 'text-app-subtext hover:bg-app-bg/80 hover:text-app-text'
+												? 'text-app-subtext hover:text-app-text'
 												: 'cursor-not-allowed text-app-subtext/40'
 										}`}
 										on:click={handleKanbanUndo}
@@ -4536,9 +4582,9 @@
 									</button>
 									<button
 										type="button"
-										class={`inline-flex h-8 w-8 items-center justify-center rounded-md transition ${
+										class={`inline-flex items-center justify-center p-1.5 transition ${
 											canRedoBoardHistory && proposalPreviewTarget !== 'kanban'
-												? 'text-app-subtext hover:bg-app-bg/80 hover:text-app-text'
+												? 'text-app-subtext hover:text-app-text'
 												: 'cursor-not-allowed text-app-subtext/40'
 										}`}
 										on:click={handleKanbanRedo}
@@ -4556,16 +4602,6 @@
 							{/if}
 
 							<SyncBadge status={syncStatus} compact={true} hint={syncErrorMessage || undefined} />
-
-							{#if isMobile}
-								<button
-									type="button"
-									class="inline-flex h-10 w-10 items-center justify-center rounded-md border border-app-border bg-app-element text-app-text"
-									on:click={handleSignOut}
-								>
-									<LogOut size={16} />
-								</button>
-							{/if}
 						</div>
 					</header>
 
@@ -4650,6 +4686,7 @@
 													activeTaskId={activeTaskContext?.taskId}
 													isLocked={proposalPreviewTarget === 'kanban'}
 													defaultShowCheckbox={settings.defaultShowCheckbox}
+													colorMode={settings.colorMode}
 													active={mobileTab === 'kanban'}
 													members={currentProject.members}
 													bind:boardSearchActive
@@ -4828,6 +4865,7 @@
 													activeTaskId={activeTaskContext?.taskId}
 													isLocked={proposalPreviewTarget === 'kanban'}
 													defaultShowCheckbox={settings.defaultShowCheckbox}
+													colorMode={settings.colorMode}
 													active={desktopWorkspaceTab === 'kanban'}
 													members={currentProject.members}
 													bind:boardSearchActive
@@ -4923,39 +4961,27 @@
 
 					{#if isMobile}
 						{@const mobileTabs = [
-							{ id: 'dashboard', label: 'Home', Icon: LayoutDashboard },
-							{ id: 'kanban', label: 'Kanban', Icon: Sparkles },
+							{ id: 'kanban', label: 'Board', Icon: LayoutPanelTop },
 							{ id: 'scratchpad', label: 'Pages', Icon: NotebookPen },
-							{ id: 'chat', label: 'Chat', Icon: MessageSquare },
-							{ id: 'settings', label: 'Settings', Icon: Settings2 }
+							{ id: 'chat', label: 'Chat', Icon: MessageSquare }
 						]}
-						{@const activeMobileIndex = Math.max(
-							0,
-							mobileTabs.findIndex((t) => t.id === mobileTab)
-						)}
 						<nav
-							class="mx-3 mb-[calc(0.5rem+var(--safe-bottom))] mt-2 rounded-2xl border border-app-border/80 bg-app-surface/75 px-1.5 py-1.5 shadow-[0_8px_30px_-12px_rgba(0,0,0,0.65)] backdrop-blur-xl"
+							class="shrink-0 border-t border-app-border/80 bg-app-surface/92 backdrop-blur-xl pb-[var(--safe-bottom)]"
 						>
-							<div class="relative grid grid-cols-5">
-								<div
-									class="pointer-events-none absolute inset-y-0 left-0 w-1/5 px-1 transition-transform duration-300 ease-[cubic-bezier(.4,0,.2,1)]"
-									style={`transform: translateX(${activeMobileIndex * 100}%);`}
-								>
-									<div
-										class="h-full w-full rounded-xl border border-app-primary/40 bg-app-primary/15"
-									></div>
-								</div>
+							<div class="grid grid-cols-3">
 								{#each mobileTabs as tab (tab.id)}
 									{@const isActive = tab.id === mobileTab}
 									<button
 										type="button"
-										class={`relative z-10 inline-flex flex-col items-center justify-center gap-1 rounded-xl px-1 py-1.5 text-[10px] font-semibold transition-colors ${
+										class={`inline-flex items-center justify-center p-2 transition-colors ${
 											isActive ? 'text-app-primary' : 'text-app-subtext hover:text-app-text'
 										}`}
 										on:click={() => setWorkspaceTab(tab.id as WorkspaceTab)}
+										aria-label={tab.label}
+										title={tab.label}
+										aria-current={isActive ? 'page' : undefined}
 									>
 										<svelte:component this={tab.Icon} size={18} />
-										{tab.label}
 									</button>
 								{/each}
 							</div>
@@ -4964,40 +4990,34 @@
 				</div>
 
 				{#if !isMobile && currentProject && desktopWorkspaceTab !== 'settings'}
-					{#if desktopChatCollapsed}
-						<button
-							type="button"
-							class="chat-orb group absolute bottom-5 right-5 z-20 grid h-16 w-16 place-items-center overflow-hidden rounded-full text-white transition-transform duration-200 hover:scale-[1.06]"
-							on:click={() => (desktopChatCollapsed = false)}
-							aria-label="Open chat sidebar"
-							title="Open chat sidebar"
-						>
-							<span class="chat-orb__blob chat-orb__blob--a" aria-hidden="true"></span>
-							<span class="chat-orb__blob chat-orb__blob--b" aria-hidden="true"></span>
-							<span class="chat-orb__blob chat-orb__blob--c" aria-hidden="true"></span>
-							<Icon
-								icon="gravity-ui:circles-concentric"
-								class="chat-orb__icon relative z-10 h-7 w-7"
-							/>
-						</button>
+					{#if desktopChatCollapsed || chatOrbExitAnimating}
+						<ChatOrb
+							style={chatOrbStyle}
+							on:click={openDesktopChatSidebar}
+							on:exitComplete={handleChatOrbExitComplete}
+						/>
 					{/if}
 					<div
-						class:hidden={desktopChatCollapsed}
-						class="relative h-full min-w-0 shrink-0 border-l border-app-border bg-app-surface/92 backdrop-blur-xl"
+						class="desktop-chat-sidebar relative h-full shrink-0 overflow-hidden border-l border-app-border bg-app-surface/92 backdrop-blur-xl"
+						class:desktop-chat-sidebar--collapsed={desktopChatCollapsed}
 						aria-hidden={desktopChatCollapsed}
-						style={`width:${desktopChatWidth}rem;`}
+						style={`width:${desktopChatCollapsed ? '0' : `${desktopChatWidth}rem`};`}
 					>
 						<div
-							class="absolute left-0 top-0 z-60 h-full w-2 cursor-col-resize transition hover:bg-app-primary/20"
-							on:pointerdown={handleDesktopChatResizeStart}
-						></div>
-						{#key currentProjectId}
+							class="desktop-chat-sidebar__panel relative h-full"
+							style={`width:${desktopChatWidth}rem;`}
+						>
 							<div
-								class="absolute inset-0"
-								in:fade={projectSwitchFadeIn}
-								out:fade={projectSwitchFadeOut}
-							>
-								<ChatPane
+								class="absolute left-0 top-0 z-60 h-full w-2 cursor-col-resize transition hover:bg-app-primary/20"
+								on:pointerdown={handleDesktopChatResizeStart}
+							></div>
+							{#key currentProjectId}
+								<div
+									class="absolute inset-0"
+									in:fade={projectSwitchFadeIn}
+									out:fade={projectSwitchFadeOut}
+								>
+									<ChatPane
 									history={currentProject.chatHistory}
 									bind:draft={composerDraft}
 									{queuedAttachments}
@@ -5034,10 +5054,14 @@
 									onRejectProposal={handleRejectProposal}
 									onAnswerQuestion={handleAnswerQuestion}
 									onAnswerQuestions={handleAnswerQuestions}
-									onCollapseSidebar={() => (desktopChatCollapsed = true)}
+									onCollapseSidebar={() => {
+										desktopChatCollapsed = true;
+										chatOrbExitAnimating = false;
+									}}
 								/>
 							</div>
 						{/key}
+						</div>
 					</div>
 				{/if}
 			</div>

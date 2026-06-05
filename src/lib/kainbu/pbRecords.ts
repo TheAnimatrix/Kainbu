@@ -177,6 +177,12 @@ export const mapAiSessionRecord = (
 	title: String(record.title || ''),
 	model_id: String(record.model_id || ''),
 	history: Array.isArray(record.history) ? record.history : [],
+	context_summary: record.context_summary ?? null,
+	summarized_up_to_message_id:
+		typeof record.summarized_up_to_message_id === 'string'
+			? record.summarized_up_to_message_id
+			: null,
+	context_tokens: typeof record.context_tokens === 'number' ? record.context_tokens : null,
 	created_at: iso(record.created),
 	updated_at: iso(record.updated),
 	last_message_at: iso(record.last_message_at, iso(record.updated))
@@ -193,6 +199,8 @@ export const mapProfileRecord = (record: PbRecord, userId: string): ProfileRow =
 	preferred_model_preset:
 		record.preferred_model_preset === 'smart' ? 'smart' : 'fast',
 	background_theme: (record.background_theme as ProfileRow['background_theme']) ?? null,
+	color_mode:
+		record.color_mode === 'light' || record.color_mode === 'dark' ? record.color_mode : null,
 	created_at: iso(record.created),
 	updated_at: iso(record.updated)
 });

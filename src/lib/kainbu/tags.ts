@@ -1,21 +1,4 @@
-const TAG_TONE_CLASSES = {
-	red: 'border-red-400/25 bg-red-500/18 text-red-100',
-	orange: 'border-orange-400/25 bg-orange-500/18 text-orange-100',
-	amber: 'border-amber-400/25 bg-amber-500/18 text-amber-100',
-	green: 'border-green-400/25 bg-green-500/18 text-green-100',
-	emerald: 'border-emerald-400/25 bg-emerald-500/18 text-emerald-100',
-	teal: 'border-teal-400/25 bg-teal-500/18 text-teal-100',
-	cyan: 'border-cyan-400/25 bg-cyan-500/18 text-cyan-100',
-	blue: 'border-blue-400/25 bg-blue-500/18 text-blue-100',
-	indigo: 'border-indigo-400/25 bg-indigo-500/18 text-indigo-100',
-	violet: 'border-violet-400/25 bg-violet-500/18 text-violet-100',
-	purple: 'border-purple-400/25 bg-purple-500/18 text-purple-100',
-	fuchsia: 'border-fuchsia-400/25 bg-fuchsia-500/18 text-fuchsia-100',
-	pink: 'border-pink-400/25 bg-pink-500/18 text-pink-100',
-	rose: 'border-rose-400/25 bg-rose-500/18 text-rose-100',
-	slate: 'border-slate-300/20 bg-slate-500/18 text-slate-100',
-	neutral: 'border-white/10 bg-white/8 text-app-text'
-} as const;
+import type { ColorMode } from '$lib/kainbu/types';
 
 const TONE_RGB = {
 	red: '248 113 113',
@@ -36,9 +19,64 @@ const TONE_RGB = {
 	neutral: '113 113 122'
 } as const;
 
-const KNOWN_TONES = Object.keys(TAG_TONE_CLASSES).filter(
+const SURFACE_BASE_RGB: Record<ColorMode, string> = {
+	dark: '24 24 27',
+	light: '255 255 255'
+};
+
+const COLUMN_SURFACE_BASE_RGB: Record<ColorMode, string> = {
+	dark: '19 19 22',
+	light: '255 255 255'
+};
+
+const HEADER_BASE_RGB: Record<ColorMode, string> = {
+	dark: '9 9 11',
+	light: '250 250 250'
+};
+
+const MODAL_BASE_RGB: Record<ColorMode, string> = {
+	dark: '24 24 27',
+	light: '255 255 255'
+};
+
+const SURFACE_TONE_OPTIONS = {
+	card: {
+		dark: {
+			borderAlpha: 0.22,
+			topAlpha: 0.18,
+			midAlpha: 0.08,
+			baseAlpha: 0.95,
+			midStop: 38
+		},
+		light: {
+			borderAlpha: 0.38,
+			topAlpha: 0.24,
+			midAlpha: 0.12,
+			baseAlpha: 0.98,
+			midStop: 38
+		}
+	},
+	column: {
+		dark: {
+			borderAlpha: 0.18,
+			topAlpha: 0.12,
+			midAlpha: 0.05,
+			baseAlpha: 1,
+			midStop: 32
+		},
+		light: {
+			borderAlpha: 0.32,
+			topAlpha: 0.18,
+			midAlpha: 0.08,
+			baseAlpha: 0.96,
+			midStop: 32
+		}
+	}
+} as const;
+
+const KNOWN_TONES = Object.keys(TONE_RGB).filter(
 	(tone) => tone !== 'neutral'
-) as Array<Exclude<keyof typeof TAG_TONE_CLASSES, 'neutral'>>;
+) as Array<Exclude<keyof typeof TONE_RGB, 'neutral'>>;
 
 const resolveTone = (serializedColor = '') => {
 	const normalized = serializedColor.toLowerCase();
@@ -48,23 +86,26 @@ const resolveTone = (serializedColor = '') => {
 const rgbValue = (rgb: string, alpha?: number) =>
 	alpha === undefined ? `rgb(${rgb})` : `rgb(${rgb} / ${alpha})`;
 
+export const getToneSurfaceClass = (serializedColor = '') =>
+	resolveTone(serializedColor) !== 'neutral' ? 'kainbu-tone-surface' : '';
+
 export const getTagToneClasses = (serializedColor = '') => {
 	const matchedTone = resolveTone(serializedColor);
 
-	return `border shadow-[inset_0_1px_0_rgba(255,255,255,0.06)] ${
-		TAG_TONE_CLASSES[matchedTone || 'neutral']
-	}`;
+	return `kainbu-tag-tone kainbu-tag-tone--${matchedTone || 'neutral'}`;
 };
 
 const buildToneSurfaceStyle = (
 	serializedColor = '',
+	colorMode: ColorMode = 'dark',
 	options: {
 		borderAlpha: number;
 		topAlpha: number;
 		midAlpha: number;
 		baseAlpha: number;
 		midStop: number;
-	}
+	},
+	baseRgb: string = SURFACE_BASE_RGB[colorMode]
 ) => {
 	const tone = resolveTone(serializedColor);
 	if (tone === 'neutral') return '';
@@ -76,39 +117,41 @@ const buildToneSurfaceStyle = (
 		`background: linear-gradient(180deg, ${rgbValue(rgb, options.topAlpha)} 0%, ${rgbValue(
 			rgb,
 			options.midAlpha
-		)} ${options.midStop}%, ${rgbValue('24 24 27', options.baseAlpha)} 100%), ${rgbValue(
-			'24 24 27',
+		)} ${options.midStop}%, ${rgbValue(baseRgb, options.baseAlpha)} 100%), ${rgbValue(
+			baseRgb,
 			options.baseAlpha
 		)}`
 	].join('; ');
 };
 
-export const getCardToneStyle = (serializedColor = '') =>
-	buildToneSurfaceStyle(serializedColor, {
-		borderAlpha: 0.22,
-		topAlpha: 0.18,
-		midAlpha: 0.08,
-		baseAlpha: 0.95,
-		midStop: 38
-	});
+export const getCardToneStyle = (serializedColor = '', colorMode: ColorMode = 'dark') =>
+	buildToneSurfaceStyle(serializedColor, colorMode, SURFACE_TONE_OPTIONS.card[colorMode]);
 
-export const getColumnToneStyle = (serializedColor = '') =>
-	buildToneSurfaceStyle(serializedColor, {
-		borderAlpha: 0.18,
-		topAlpha: 0.12,
-		midAlpha: 0.05,
-		baseAlpha: 0.9,
-		midStop: 32
-	});
+export const getColumnToneStyle = (serializedColor = '', colorMode: ColorMode = 'dark') =>
+	buildToneSurfaceStyle(
+		serializedColor,
+		colorMode,
+		SURFACE_TONE_OPTIONS.column[colorMode],
+		COLUMN_SURFACE_BASE_RGB[colorMode]
+	);
 
-export const getColumnHeaderToneStyle = (serializedColor = '') => {
+export const getColumnHeaderToneStyle = (
+	serializedColor = '',
+	colorMode: ColorMode = 'dark'
+) => {
 	const tone = resolveTone(serializedColor);
 	if (tone === 'neutral') return '';
 
 	const rgb = TONE_RGB[tone];
+	const headerBase = HEADER_BASE_RGB[colorMode];
+	const topAlpha = colorMode === 'light' ? 0.22 : 0.16;
+	const bottomAlpha = colorMode === 'light' ? 0.08 : 0.06;
+	const baseAlpha = colorMode === 'light' ? 0.72 : 0.38;
+	const borderAlpha = colorMode === 'light' ? 0.28 : 0.16;
+
 	return [
-		`border-color: ${rgbValue(rgb, 0.16)}`,
-		`background: linear-gradient(180deg, ${rgbValue(rgb, 0.16)} 0%, ${rgbValue(rgb, 0.06)} 100%), ${rgbValue('9 9 11', 0.38)}`
+		`border-color: ${rgbValue(rgb, borderAlpha)}`,
+		`background: linear-gradient(180deg, ${rgbValue(rgb, topAlpha)} 0%, ${rgbValue(rgb, bottomAlpha)} 100%), ${rgbValue(headerBase, baseAlpha)}`
 	].join('; ');
 };
 
@@ -120,13 +163,19 @@ export const getColumnDotStyle = (serializedColor = '') => {
 	return `background: ${rgbValue(rgb)}`;
 };
 
-export const getModalToneStyle = (serializedColor = '') => {
+export const getModalToneStyle = (serializedColor = '', colorMode: ColorMode = 'dark') => {
 	const tone = resolveTone(serializedColor);
 	if (tone === 'neutral') return '';
 
 	const rgb = TONE_RGB[tone];
+	const modalBase = MODAL_BASE_RGB[colorMode];
+	const borderAlpha = colorMode === 'light' ? 0.32 : 0.22;
+	const glowAlpha = colorMode === 'light' ? 0.16 : 0.22;
+	const washAlpha = colorMode === 'light' ? 0.1 : 0.08;
+	const baseAlpha = colorMode === 'light' ? 0.99 : 0.97;
+
 	return [
-		`border-color: ${rgbValue(rgb, 0.22)}`,
-		`background: radial-gradient(circle at top right, ${rgbValue(rgb, 0.22)}, transparent 24rem), linear-gradient(180deg, ${rgbValue(rgb, 0.08)} 0%, ${rgbValue('24 24 27', 0.97)} 42%), ${rgbValue('24 24 27', 0.97)}`
+		`border-color: ${rgbValue(rgb, borderAlpha)}`,
+		`background: radial-gradient(circle at top right, ${rgbValue(rgb, glowAlpha)}, transparent 24rem), linear-gradient(180deg, ${rgbValue(rgb, washAlpha)} 0%, ${rgbValue(modalBase, baseAlpha)} 42%), ${rgbValue(modalBase, baseAlpha)}`
 	].join('; ');
 };

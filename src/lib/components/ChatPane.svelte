@@ -88,6 +88,12 @@
 		: (['none'] as const);
 	$: showThinkingSelect = thinkingChoices.some((level) => level !== 'none');
 
+	// The orb pulses while we're waiting (preparing, tools, idle) and holds steady
+	// once text is actively streaming, so the motion reads as "thinking" not "stalled".
+	$: isStreamingText =
+		processingEvents.at(-1)?.kind === 'thinking' ||
+		processingEvents.at(-1)?.kind === 'assistant_draft';
+
 	let fileInput: HTMLInputElement | null = null;
 	let historyViewport: HTMLDivElement | null = null;
 	let previewViewport: HTMLDivElement | null = null;
@@ -306,6 +312,7 @@
 	let previewDragOriginX = 0;
 	let previewDragOriginY = 0;
 	let questionDrafts: Record<string, string> = {};
+	let stagedOptionByQuestion: Record<string, string | undefined> = {};
 	let activeOpenQuestionIndex = 0;
 	let copiedMessageId = '';
 	let copiedMessageTimeout: ReturnType<typeof setTimeout> | null = null;
@@ -322,6 +329,12 @@
 	}
 	$: activeOpenQuestion = openQuestions[activeOpenQuestionIndex] || null;
 	$: showQuestionCarousel = openQuestions.length > 0;
+	$: questionStaged = (questionId: string) =>
+		Boolean(stagedOptionByQuestion[questionId]) ||
+		Boolean((questionDrafts[questionId] || '').trim());
+	$: stagedQuestionCount = openQuestions.filter((question) => questionStaged(question.id)).length;
+	$: allQuestionsStaged =
+		openQuestions.length > 0 && stagedQuestionCount === openQuestions.length;
 
 	$: if (!active && previewAttachment) {
 		previewAttachment = null;
@@ -588,9 +601,6 @@
 		applyPreviewTransform(2);
 	};
 
-	const attachmentLabel = (attachment: ChatAttachment) =>
-		attachment.kind === 'image' ? 'Image attachment' : 'File attachment';
-
 	const attachmentExcerpt = (attachment: ChatAttachment, maxLength = 84) => {
 		if (attachment.kind !== 'text') {
 			return 'Preview ready';
@@ -642,11 +652,11 @@
 		};
 	};
 
-	const submitQuestionFreeform = (questionId: string) => {
-		const value = questionDrafts[questionId]?.trim();
-		if (!value) return;
-		onAnswerQuestion(questionId, undefined, value);
-		setQuestionDraft(questionId, '');
+	const toggleStagedOption = (questionId: string, optionId: string) => {
+		stagedOptionByQuestion = {
+			...stagedOptionByQuestion,
+			[questionId]: stagedOptionByQuestion[questionId] === optionId ? undefined : optionId
+		};
 	};
 
 	const showPreviousOpenQuestion = () => {
@@ -659,9 +669,24 @@
 		activeOpenQuestionIndex += 1;
 	};
 
-	const answerOpenQuestion = (questionId: string, optionId?: string, text?: string) => {
-		onAnswerQuestion(questionId, optionId, text);
-		setQuestionDraft(questionId, '');
+	const submitStagedAnswers = () => {
+		if (isProcessing || !openQuestions.length) return;
+		const answers = openQuestions.map((question) => {
+			const optionId = stagedOptionByQuestion[question.id];
+			const text = (questionDrafts[question.id] || '').trim();
+			return {
+				questionId: question.id,
+				...(optionId ? { optionId } : {}),
+				...(text ? { text } : {})
+			};
+		});
+		// Every open question must carry an option or freeform answer; the batch
+		// handler rejects partial submissions.
+		if (!answers.every((answer) => answer.optionId || answer.text)) return;
+		onAnswerQuestions(answers);
+		stagedOptionByQuestion = {};
+		questionDrafts = {};
+		activeOpenQuestionIndex = 0;
 	};
 
 	const copyMessageText = async (message: ChatMessage) => {
@@ -687,7 +712,6 @@
 		!message.metadata &&
 		!message.usage;
 
-	const latestProgressEvent = (events: AiProgressEvent[] = []) => events.at(-1);
 	const summarizeProgressEvent = (event: AiProgressEvent) => {
 		const baseMessage = summarize(
 			event.message.trim() || 'Thinking…',
@@ -948,48 +972,8 @@
 					<Plus size={16} />
 				</button>
 
-				<button
-					type="button"
-					disabled={!activeSession}
-					class={`rounded-md text-app-subtext transition hover:bg-app-element hover:text-app-text disabled:cursor-not-allowed disabled:opacity-45 ${
-						isMobileChrome ? 'p-1' : 'p-1.5'
-					}`}
-					on:click={requestSessionRename}
-					title="Rename chat"
-					aria-label="Rename chat"
-				>
-					<Pencil size={16} />
-				</button>
-
-				<button
-					type="button"
-					disabled={!activeSession || !onClearHistory}
-					class={`rounded-md text-app-subtext transition hover:bg-app-element hover:text-app-text disabled:cursor-not-allowed disabled:opacity-45 ${
-						isMobileChrome ? 'p-1' : 'p-1.5'
-					}`}
-					on:click={() => onClearHistory && onClearHistory()}
-					title="Clear messages"
-					aria-label="Clear messages"
-				>
-					<XCircle size={16} />
-				</button>
-
-				<button
-					type="button"
-					disabled={!activeSession}
-					class={`rounded-md text-app-subtext transition hover:bg-app-element hover:text-rose-300 disabled:cursor-not-allowed disabled:opacity-45 ${
-						isMobileChrome ? 'p-1' : 'p-1.5'
-					}`}
-					on:click={requestSessionDelete}
-					title="Delete chat"
-					aria-label="Delete chat"
-				>
-					<Trash2 size={16} />
-				</button>
-
-				<div class="mx-0.5 h-4 w-px bg-app-border"></div>
-
 				{#if isSidebar && onCollapseSidebar}
+					<div class="mx-0.5 h-4 w-px bg-app-border"></div>
 					<button
 						type="button"
 						class={`rounded-md text-app-subtext transition hover:bg-app-element hover:text-app-text ${
@@ -1035,11 +1019,6 @@
 									{compactProgress}
 								</div>
 							{/if}
-						{:else if message.role === 'assistant' && latestProgressEvent(message.progressEvents || [])}
-							{@const compactProgress = latestProgressText(message.progressEvents || [])}
-							<div class="mb-1.5 px-1 text-[11px] text-app-subtext/70">
-								{compactProgress}
-							</div>
 						{:else if (message.progressEvents?.length || 0) > 0}
 							<div class="mb-2">
 								<AiActivityTrace events={message.progressEvents || []} />
@@ -1047,10 +1026,25 @@
 						{/if}
 
 						{#if !isCompactStatusMessage(message)}
+							{@const hasMessageText = Boolean(message.text?.trim())}
+							{@const imageAttachments =
+								message.attachments?.filter((attachment) => attachment.kind === 'image') ?? []}
+							{@const fileAttachments =
+								message.attachments?.filter((attachment) => attachment.kind !== 'image') ?? []}
+							{@const imageOnlyBubble =
+								message.role === 'user' &&
+								imageAttachments.length > 0 &&
+								!hasMessageText &&
+								!fileAttachments.length &&
+								!(message.taskCards?.length || 0)}
 							<div
 								class={message.role === 'user'
 									? `max-w-[96%] border ${
-											isMobileChrome ? 'rounded-lg px-3 py-2.5' : 'rounded-lg px-3.5 py-3'
+											imageOnlyBubble
+												? 'rounded-lg p-1.5'
+												: isMobileChrome
+													? 'rounded-lg px-3 py-2.5'
+													: 'rounded-lg px-3.5 py-3'
 										} border-app-border bg-app-element text-app-text`
 									: `max-w-[min(100%,46rem)] text-app-text ${
 											isMobileChrome ? 'px-0 py-0' : 'px-0 py-0'
@@ -1098,70 +1092,56 @@
 									</div>
 								{/if}
 
-								{#if message.attachments?.length}
-									<div class="mb-3 space-y-2">
-										{#each message.attachments as attachment (attachment.id)}
-											{#if attachment.kind === 'image'}
+								{#if imageAttachments.length || fileAttachments.length}
+									{#if imageAttachments.length}
+										<div
+											class={`flex flex-wrap gap-1.5 ${hasMessageText || fileAttachments.length ? 'mb-2' : ''}`}
+										>
+											{#each imageAttachments as attachment (attachment.id)}
 												<button
 													type="button"
-													class="flex w-full items-center gap-3 rounded-lg border border-app-border bg-app-surface/85 px-3 py-2.5 text-left transition hover:border-app-primary/35 hover:bg-app-surface"
+													class="block max-w-full overflow-hidden rounded-md border border-app-border/60 transition hover:border-app-primary/40"
 													on:click={() => openAttachmentPreview(attachment)}
-													aria-label={`Open image preview for ${attachment.name}`}
+													aria-label={`Open ${attachment.name}`}
 												>
 													<img
 														src={attachment.content}
 														alt={attachment.name}
-														class="h-14 w-14 shrink-0 rounded-lg border border-app-border object-cover"
+														class="block max-h-56 max-w-full object-contain"
 													/>
-													<div class="min-w-0 flex-1">
-														<p class="truncate text-xs font-semibold text-app-text">
-															{attachment.name}
-														</p>
-														<p
-															class="mt-1 text-[10px] font-semibold uppercase tracking-[0.18em] text-app-subtext"
-														>
-															{attachmentLabel(attachment)}
-														</p>
-													</div>
-													<span
-														class="rounded-full border border-app-primary/20 bg-app-primary/10 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-app-primary"
-													>
-														Preview
-													</span>
 												</button>
-											{:else}
+											{/each}
+										</div>
+									{/if}
+
+									{#if fileAttachments.length}
+										<div class={`space-y-2 ${hasMessageText ? 'mb-2' : ''}`}>
+											{#each fileAttachments as attachment (attachment.id)}
 												<div
 													class="flex items-center gap-3 rounded-lg border border-app-border bg-app-surface/85 px-3 py-2.5"
 												>
 													<div
-														class="flex h-14 w-14 shrink-0 items-center justify-center rounded-lg border border-app-border bg-app-element text-app-subtext"
+														class="flex h-10 w-10 shrink-0 items-center justify-center rounded-md border border-app-border bg-app-element text-app-subtext"
 													>
-														<Paperclip size={16} />
+														<Paperclip size={15} />
 													</div>
 													<div class="min-w-0 flex-1">
-														<p class="truncate text-xs font-semibold text-app-text">
+														<p class="truncate text-xs font-medium text-app-text">
 															{attachment.name}
-														</p>
-														<p
-															class="mt-1 text-[10px] font-semibold uppercase tracking-[0.18em] text-app-subtext"
-														>
-															{attachmentLabel(attachment)}
 														</p>
 													</div>
 												</div>
-											{/if}
-										{/each}
-									</div>
+											{/each}
+										</div>
+									{/if}
 								{/if}
 
 								{#if message.role === 'assistant'}
 									<RichText
 										value={message.text}
-										className={isMobileChrome
-											? 'kainbu-prose kainbu-chat-prose text-[13px]'
-											: 'kainbu-prose kainbu-chat-prose'}
+										className={`kainbu-prose kainbu-chat-prose${isMobileChrome ? ' kainbu-chat-prose--mobile' : ''}`}
 									/>
-								{:else}
+								{:else if hasMessageText}
 									<p
 										class={`whitespace-pre-wrap leading-relaxed ${isMobileChrome ? 'text-[13px]' : 'text-sm'}`}
 									>
@@ -1265,11 +1245,18 @@
 						{/if}
 						<div class="mt-2 flex flex-wrap gap-1.5">
 							{#each activeOpenQuestion.options as option (option.id)}
+								{@const isStaged = stagedOptionByQuestion[activeOpenQuestion.id] === option.id}
 								<button
 									type="button"
 									disabled={isProcessing}
-									class="rounded-lg border border-app-border bg-app-element px-2.5 py-1.5 text-left text-xs font-medium text-app-text transition hover:border-app-primary/35 hover:text-app-primary disabled:cursor-not-allowed disabled:opacity-45"
-									on:click={() => answerOpenQuestion(activeOpenQuestion.id, option.id)}
+									aria-pressed={isStaged}
+									class={[
+										'rounded-lg border px-2.5 py-1.5 text-left text-xs font-medium transition disabled:cursor-not-allowed disabled:opacity-45',
+										isStaged
+											? 'border-app-primary bg-app-primary/15 text-app-primary'
+											: 'border-app-border bg-app-element text-app-text hover:border-app-primary/35 hover:text-app-primary'
+									].join(' ')}
+									on:click={() => toggleStagedOption(activeOpenQuestion.id, option.id)}
 								>
 									<span>{option.label}</span>
 									{#if option.description}
@@ -1281,30 +1268,32 @@
 							{/each}
 						</div>
 						{#if activeOpenQuestion.allowFreeform}
-							<div class="mt-2 flex items-end gap-1.5">
-								<textarea
-									rows={2}
-									disabled={isProcessing}
-									class="min-h-14 flex-1 resize-none rounded-lg border border-app-border bg-app-bg px-2.5 py-1.5 text-xs text-app-text outline-none placeholder:text-app-subtext/50 disabled:cursor-not-allowed disabled:opacity-60"
-									placeholder="Add your own answer…"
-									value={questionDrafts[activeOpenQuestion.id] || ''}
-									on:input={(event) =>
-										setQuestionDraft(
-											activeOpenQuestion.id,
-											(event.currentTarget as HTMLTextAreaElement).value
-										)}
-								></textarea>
-								<button
-									type="button"
-									disabled={isProcessing ||
-										!(questionDrafts[activeOpenQuestion.id] || '').trim().length}
-									class="rounded-lg bg-app-primary px-2.5 py-1.5 text-xs font-semibold text-white transition disabled:cursor-not-allowed disabled:opacity-45"
-									on:click={() => submitQuestionFreeform(activeOpenQuestion.id)}
-								>
-									Send
-								</button>
-							</div>
+							<textarea
+								rows={2}
+								disabled={isProcessing}
+								class="mt-2 min-h-14 w-full resize-none rounded-lg border border-app-border bg-app-bg px-2.5 py-1.5 text-xs text-app-text outline-none placeholder:text-app-subtext/50 disabled:cursor-not-allowed disabled:opacity-60"
+								placeholder="Add your own answer…"
+								value={questionDrafts[activeOpenQuestion.id] || ''}
+								on:input={(event) =>
+									setQuestionDraft(
+										activeOpenQuestion.id,
+										(event.currentTarget as HTMLTextAreaElement).value
+									)}
+							></textarea>
 						{/if}
+						<div class="mt-3 flex items-center justify-between gap-2">
+							<p class="text-[10px] font-medium text-app-subtext">
+								{stagedQuestionCount} of {openQuestions.length} answered
+							</p>
+							<button
+								type="button"
+								disabled={isProcessing || !allQuestionsStaged}
+								class="rounded-lg bg-app-primary px-3 py-1.5 text-xs font-semibold text-white transition disabled:cursor-not-allowed disabled:opacity-45"
+								on:click={submitStagedAnswers}
+							>
+								{openQuestions.length > 1 ? 'Submit answers' : 'Submit'}
+							</button>
+						</div>
 					</div>
 				{/if}
 
@@ -1314,7 +1303,13 @@
 							class="mt-1 grid h-5 w-5 shrink-0 place-items-center rounded-full bg-app-primary/15 shadow-[0_0_18px_color-mix(in_oklab,var(--color-app-primary)_55%,transparent)]"
 							aria-hidden="true"
 						>
-							<span class="ai-stream-orb h-2.5 w-2.5 rounded-full bg-app-primary"></span>
+							<span
+							class="ai-stream-orb h-2.5 w-2.5 rounded-full bg-app-primary"
+							class:ai-stream-orb--steady={isStreamingText}
+						></span>
+						</div>
+						<div class="min-w-0 flex-1 pt-0.5">
+							<AiActivityTrace events={processingEvents} isLive />
 						</div>
 					</div>
 				{/if}
@@ -1450,50 +1445,36 @@
 				<div class={`${isMobileChrome ? 'space-y-2 px-3 pb-1' : 'mb-3 space-y-2'}`}>
 					{#each queuedAttachments as attachment (attachment.id)}
 						<div
-							class="relative flex items-center gap-3 rounded-lg border border-app-border bg-app-surface/90 px-3 py-2.5 pr-10"
+							class="relative flex items-center gap-2.5 rounded-lg border border-app-border bg-app-surface/90 py-2 pl-2.5 pr-10"
 						>
 							{#if attachment.kind === 'image'}
 								<button
 									type="button"
-									class="flex min-w-0 flex-1 items-center gap-3 text-left"
+									class="shrink-0 overflow-hidden rounded-md border border-app-border/60 transition hover:border-app-primary/40"
 									on:click={() => openAttachmentPreview(attachment)}
-									aria-label={`Open image preview for ${attachment.name}`}
+									aria-label={`Open ${attachment.name}`}
 								>
 									<img
 										src={attachment.content}
 										alt={attachment.name}
-										class="h-14 w-14 shrink-0 rounded-lg border border-app-border object-cover"
+										class="h-14 w-14 object-cover"
 									/>
-									<div class="min-w-0 flex-1">
-										<p class="truncate text-sm font-semibold text-app-text">{attachment.name}</p>
-										<p
-											class="mt-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-app-subtext"
-										>
-											{attachmentLabel(attachment)}
-										</p>
-										<p class="mt-1 text-xs leading-relaxed text-app-subtext">
-											{attachmentExcerpt(attachment, isMobileChrome ? 56 : 92)}
-										</p>
-									</div>
 								</button>
 							{:else}
 								<div
-									class="flex h-14 w-14 shrink-0 items-center justify-center rounded-lg border border-app-border bg-app-element text-app-subtext"
+									class="flex h-14 w-14 shrink-0 items-center justify-center rounded-md border border-app-border bg-app-element text-app-subtext"
 								>
 									<Paperclip size={16} />
 								</div>
-								<div class="min-w-0 flex-1">
-									<p class="truncate text-sm font-semibold text-app-text">{attachment.name}</p>
-									<p
-										class="mt-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-app-subtext"
-									>
-										{attachmentLabel(attachment)}
-									</p>
-									<p class="mt-1 text-xs leading-relaxed text-app-subtext">
+							{/if}
+							<div class="min-w-0 flex-1">
+								<p class="truncate text-sm text-app-text">{attachment.name}</p>
+								{#if attachment.kind !== 'image'}
+									<p class="mt-0.5 truncate text-xs text-app-subtext">
 										{attachmentExcerpt(attachment, isMobileChrome ? 56 : 92)}
 									</p>
-								</div>
-							{/if}
+								{/if}
+							</div>
 							<button
 								type="button"
 								class="absolute right-2 top-2 z-10 rounded-full bg-rose-500 p-1 text-white shadow-lg"
@@ -1702,7 +1683,7 @@
 {/if}
 
 {#if previewAttachment}
-	<div class="fixed inset-0 z-[90] flex bg-black/82 backdrop-blur-xl">
+	<div class="fixed inset-0 z-[90] flex bg-black/88">
 		<button
 			type="button"
 			class="absolute inset-0"
@@ -1713,46 +1694,34 @@
 		<div
 			role="dialog"
 			aria-modal="true"
-			aria-label="Image preview"
-			class={`relative z-10 flex h-full w-full flex-col ${
-				isMobileChrome
-					? 'px-3 pt-[max(0.9rem,var(--safe-top))] pb-[max(1rem,var(--safe-bottom))]'
-					: 'p-5'
-			}`}
+			aria-label={`Image preview: ${previewAttachment.name}`}
+			class="relative z-10 h-full w-full"
 		>
 			<div
-				class="mb-3 flex items-center justify-between gap-3 rounded-xl border border-white/10 bg-app-surface/92 px-4 py-3 shadow-kainbu-xl backdrop-blur-xl"
+				class={`pointer-events-none absolute inset-x-0 top-0 z-20 flex items-start justify-end gap-1 ${
+					isMobileChrome
+						? 'p-3 pt-[max(0.75rem,var(--safe-top))]'
+						: 'p-4'
+				}`}
 			>
-				<div class="min-w-0">
-					<p class="text-[10px] font-bold uppercase tracking-[0.28em] text-app-subtext">
-						Image Preview
-					</p>
-					<p class="mt-1 truncate text-sm font-semibold text-app-text">
-						{previewAttachment.name}
-					</p>
-					<p class="mt-1 text-[11px] uppercase tracking-[0.18em] text-app-subtext">
-						Pinch or scroll to zoom
-					</p>
-				</div>
-				<div class="flex items-center gap-2">
-					<button
-						type="button"
-						class="rounded-full border border-app-border bg-app-element p-2 text-app-subtext transition hover:border-app-primary/35 hover:text-app-text"
-						on:click={openPreviewInNewTab}
-						aria-label="Open image in full screen"
-						title="Open full screen"
-					>
-						<ExternalLink size={16} />
-					</button>
-					<button
-						type="button"
-						class="rounded-full border border-app-border bg-app-element p-2 text-app-subtext transition hover:border-app-primary/35 hover:text-app-text"
-						on:click={closeAttachmentPreview}
-						aria-label="Close image preview"
-					>
-						<X size={18} />
-					</button>
-				</div>
+				<button
+					type="button"
+					class="pointer-events-auto rounded-md p-1.5 text-white/75 transition hover:bg-white/10 hover:text-white"
+					on:click={openPreviewInNewTab}
+					aria-label="Open image in full screen"
+					title="Open full screen"
+				>
+					<ExternalLink size={16} />
+				</button>
+				<button
+					type="button"
+					class="pointer-events-auto rounded-md p-1.5 text-white/75 transition hover:bg-white/10 hover:text-white"
+					on:click={closeAttachmentPreview}
+					aria-label="Close image preview"
+					title="Close"
+				>
+					<X size={18} />
+				</button>
 			</div>
 
 			<div
@@ -1760,7 +1729,7 @@
 				role="button"
 				tabindex="0"
 				aria-label={`Zoom image preview for ${previewAttachment.name}`}
-				class="relative flex min-h-0 flex-1 items-center justify-center overflow-hidden rounded-xl border border-white/10 bg-app-bg/85 p-3 shadow-kainbu-xl"
+				class="flex h-full w-full items-center justify-center overflow-hidden"
 				style="touch-action: none;"
 				on:pointerdown={handlePreviewPointerDown}
 				on:pointermove={handlePreviewPointerMove}
@@ -1780,7 +1749,7 @@
 					src={previewAttachment.content}
 					alt={previewAttachment.name}
 					draggable="false"
-					class={`max-h-full max-w-full rounded-lg object-contain shadow-[0_24px_60px_-28px_rgba(0,0,0,0.78)] transition-transform duration-150 ease-out ${
+					class={`max-h-full max-w-full object-contain transition-transform duration-150 ease-out ${
 						previewScale > PREVIEW_MIN_SCALE
 							? previewIsDragging
 								? 'cursor-grabbing'
@@ -1812,6 +1781,13 @@
 			opacity: 1;
 			transform: scale(1.18);
 		}
+	}
+
+	/* While text is streaming, hold the orb steady so the pulse signals "waiting". */
+	.ai-stream-orb--steady {
+		animation: none;
+		opacity: 1;
+		transform: scale(1);
 	}
 
 	@media (prefers-reduced-motion: reduce) {

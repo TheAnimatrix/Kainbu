@@ -369,6 +369,9 @@ const mapAiSessionRow = (row: ProjectAiSessionRow): ProjectAiSession => ({
 	title: row.title?.trim() || DEFAULT_AI_SESSION_TITLE,
 	modelId: normalizeAiModelId(row.model_id),
 	history: normalizeChatHistory(row.history),
+	contextSummary: row.context_summary ?? undefined,
+	summarizedUpToMessageId: row.summarized_up_to_message_id ?? null,
+	...(typeof row.context_tokens === 'number' ? { contextTokens: row.context_tokens } : {}),
 	createdAt: new Date(row.created_at).getTime(),
 	updatedAt: new Date(row.updated_at).getTime(),
 	lastMessageAt: new Date(row.last_message_at).getTime()
@@ -380,7 +383,8 @@ const mapSettingsRow = (row: ProfileRow | null): UserSettings =>
 			? {
 					defaultShowCheckbox: row.default_show_checkbox,
 					preferredAiModelId: row.preferred_ai_model_id || row.preferred_model_preset,
-					backgroundTheme: row.background_theme
+					backgroundTheme: row.background_theme,
+					colorMode: row.color_mode
 				}
 			: null
 	);
@@ -534,6 +538,9 @@ const mapAiSessionUpsertRow = (projectId: string, userId: string, session: Proje
 	title: session.title,
 	model_id: normalizeAiModelId(session.modelId),
 	history: session.history,
+	context_summary: session.contextSummary ?? null,
+	summarized_up_to_message_id: session.summarizedUpToMessageId ?? null,
+	context_tokens: typeof session.contextTokens === 'number' ? session.contextTokens : null,
 	created_at: new Date(session.createdAt).toISOString(),
 	updated_at: new Date(session.updatedAt).toISOString(),
 	last_message_at: new Date(session.lastMessageAt).toISOString()
@@ -1714,11 +1721,27 @@ export const updateUsername = async (userId: string, username: string) => {
 
 export const upsertUserSettings = async (userId: string, settings: UserSettings) => {
 	const pb = getPb();
-	await pb.collection('users').update(userId, {
+	const payload = {
 		default_show_checkbox: settings.defaultShowCheckbox,
 		preferred_ai_model_id: settings.preferredAiModelId,
-		background_theme: settings.backgroundTheme
-	});
+		background_theme: settings.backgroundTheme,
+		color_mode: settings.colorMode
+	};
+
+	try {
+		await pb.collection('users').update(userId, payload);
+	} catch (error) {
+		const { color_mode: _colorMode, ...withoutColorMode } = payload;
+		if (_colorMode) {
+			try {
+				await pb.collection('users').update(userId, withoutColorMode);
+				return;
+			} catch {
+				// fall through to original error
+			}
+		}
+		throw error;
+	}
 };
 
 export const subscribeToWorkspaceChanges = (_userId: string, onChange: () => void) => {

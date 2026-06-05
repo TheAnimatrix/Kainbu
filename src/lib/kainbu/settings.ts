@@ -1,9 +1,22 @@
 import { DEFAULT_SETTINGS } from '$lib/kainbu/constants';
 import { normalizeBackgroundTheme } from '$lib/kainbu/backgrounds';
-import type { UserSettings } from '$lib/kainbu/types';
+import { readStoredColorMode } from '$lib/kainbu/colorMode';
+import type { ColorMode, UserSettings } from '$lib/kainbu/types';
 
 const isObject = (value: unknown): value is Record<string, unknown> =>
 	typeof value === 'object' && value !== null;
+
+const resolveColorMode = (value: Record<string, unknown>): ColorMode => {
+	if (value.colorMode === 'light' || value.colorMode === 'dark') {
+		return value.colorMode;
+	}
+
+	if (value.color_mode === 'light' || value.color_mode === 'dark') {
+		return value.color_mode;
+	}
+
+	return readStoredColorMode() ?? DEFAULT_SETTINGS.colorMode;
+};
 
 export const normalizeUserSettings = (value: unknown): UserSettings => {
 	if (!isObject(value)) {
@@ -24,6 +37,7 @@ export const normalizeUserSettings = (value: unknown): UserSettings => {
 		backgroundTheme: normalizeBackgroundTheme(
 			value.backgroundTheme,
 			DEFAULT_SETTINGS.backgroundTheme
-		)
+		),
+		colorMode: resolveColorMode(value)
 	};
 };

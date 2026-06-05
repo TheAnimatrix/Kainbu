@@ -52,6 +52,7 @@
 	import { getModalToneStyle, getTagToneClasses } from '$lib/kainbu/tags';
 	import type {
 		ChatAttachment,
+		ColorMode,
 		Column,
 		ProjectMembership,
 		Tag,
@@ -63,6 +64,7 @@
 
 	export let task: Task;
 	export let projectId = '';
+	export let colorMode: ColorMode = 'dark';
 	export let columns: Column[] = [];
 	export let members: ProjectMembership[] = [];
 	export let columnTitle = '';
@@ -840,7 +842,7 @@
 		aria-modal="true"
 		aria-label="Task editor"
 		class={`relative z-10 flex w-full flex-col overflow-hidden bg-app-surface shadow-kainbu-xl transition-[max-width,max-height,border-radius] duration-200 ${dialogLayoutClass}`}
-		style={getModalToneStyle(draft.color)}
+		style={getModalToneStyle(draft.color, colorMode)}
 	>
 		<div
 			class={`flex items-center justify-between gap-3 border-b border-app-border bg-app-surface ${chromePaddingClass}`}

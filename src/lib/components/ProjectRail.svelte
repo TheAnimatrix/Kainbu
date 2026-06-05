@@ -59,6 +59,10 @@
 	let restoreInput: HTMLInputElement | null = null;
 	let expandedProjectIds: string[] = [];
 	let autoExpandedForProject = '';
+	let hovering = false;
+
+	// When the sidebar is pinned open, the floating hover state is irrelevant.
+	$: if (!compact) hovering = false;
 
 	const beginRename = (project: Project) => {
 		editingId = project.id;
@@ -171,121 +175,52 @@
 </script>
 
 <aside
-	class={`hidden h-screen shrink-0 overflow-hidden border-r border-app-border/40 bg-app-bg transition-[width,opacity,padding] duration-300 lg:flex ${
-		visible
-			? compact
-				? 'w-[4.75rem] px-0 py-0 opacity-100'
-				: 'w-66 px-0 py-0 opacity-100'
-			: 'w-0 border-transparent px-0 py-0 opacity-0 pointer-events-none'
+	class={`relative hidden h-screen shrink-0 overflow-visible bg-app-bg transition-[width] duration-300 md:flex ${
+		!visible
+			? 'w-0 pointer-events-none opacity-0'
+			: compact
+				? 'w-0'
+				: 'w-66 border-r border-app-border/40'
 	}`}
 >
 	{#if visible}
-		<div class="flex min-h-0 flex-1 flex-col">
-			{#if compact}
-				<div class="flex min-h-0 flex-1 flex-col items-center gap-3 px-2 py-3">
-					<div class="flex w-full flex-col items-center gap-2">
-						<button
-							type="button"
-							class="inline-flex h-10 w-10 items-center justify-center rounded-xl border border-app-border/50 bg-app-element/30 text-app-text transition hover:border-app-primary/35 hover:text-app-primary"
-							on:click={onToggleCompact}
-							aria-label="Expand sidebar"
-							title="Expand sidebar"
-						>
-							<PanelLeftOpen size={16} />
-						</button>
-						<button
-							type="button"
-							class="inline-flex h-10 w-10 items-center justify-center rounded-xl text-app-text transition hover:bg-app-element/40"
-							on:click={onCreate}
-							aria-label="New project"
-							title="New project"
-						>
-							<FolderPlus size={16} />
-						</button>
-						<div class="scale-90">
-							<SyncBadge status={syncStatus} compact={true} />
-						</div>
-					</div>
+		{#if compact}
+			<!-- Left-edge hover zone: slides the floating sidebar out when the cursor nears the edge. -->
+			<!-- svelte-ignore a11y-no-static-element-interactions -->
+			<div
+				class="absolute inset-y-0 left-0 z-40 w-3"
+				role="presentation"
+				on:mouseenter={() => (hovering = true)}
+			></div>
+		{/if}
 
-					<div class="flex min-h-0 w-full flex-1 flex-col items-center gap-2 overflow-y-auto pb-1">
-						{#each projects as project (project.id)}
-							<button
-								type="button"
-								class={`grid h-10 w-10 shrink-0 place-items-center rounded-xl border text-[10px] font-bold uppercase tracking-[0.12em] transition-all duration-200 ease-out motion-reduce:transition-none ${
-									project.id === currentProjectId
-										? 'scale-100 border-app-primary/45 bg-app-primary/16 text-app-text shadow-[0_0_0_1px_rgba(194,65,12,0.28)]'
-										: 'scale-[0.94] border-transparent bg-app-element/25 text-app-subtext hover:scale-[0.98] hover:border-app-border/50 hover:text-app-text'
-								}`}
-								on:click={() => onOpenBoard(project.id, project.activeBoardId)}
-								aria-label={`Open ${project.name}`}
-								title={project.name}
-							>
-								{initialsFor(project.name)}
-							</button>
-						{/each}
-					</div>
-
-					<div class="flex w-full flex-col items-center gap-2 border-t border-app-border/40 pt-3">
-						<button
-							type="button"
-							class="inline-flex h-10 w-10 items-center justify-center rounded-xl text-app-text transition hover:bg-app-element/40"
-							on:click={onOpenAccount}
-							aria-label={profileLabel}
-							title={profileLabel}
-						>
-							<div class="grid h-8 w-8 place-items-center rounded-lg bg-app-element/60 text-[10px] font-bold uppercase text-app-subtext">
-								{initialsFor(profileLabel)}
-							</div>
-						</button>
-						<button
-							type="button"
-							class="inline-flex h-10 w-10 items-center justify-center rounded-xl text-app-subtext transition hover:bg-app-element/40 hover:text-app-text"
-							on:click={onOpenSettings}
-							aria-label="Settings"
-							title="Settings"
-						>
-							<Settings2 size={16} />
-						</button>
-						<button
-							type="button"
-							class="inline-flex h-10 w-10 items-center justify-center rounded-xl text-app-subtext transition hover:bg-app-element/40 hover:text-app-text"
-							on:click={onExport}
-							aria-label="Backup"
-							title="Backup"
-						>
-							<Download size={16} />
-						</button>
-						<button
-							type="button"
-							class="inline-flex h-10 w-10 items-center justify-center rounded-xl text-app-subtext transition hover:bg-app-element/40 hover:text-app-text"
-							on:click={() => restoreInput?.click()}
-							aria-label="Restore"
-							title="Restore"
-						>
-							<RotateCcw size={16} />
-						</button>
-						<button
-							type="button"
-							class="inline-flex h-10 w-10 items-center justify-center rounded-xl text-app-subtext transition hover:bg-app-element/40 hover:text-rose-400"
-							on:click={onSignOut}
-							aria-label="Sign out"
-							title="Sign out"
-						>
-							<LogOut size={16} />
-						</button>
-					</div>
-				</div>
-			{:else}
+		<!-- svelte-ignore a11y-no-static-element-interactions -->
+		<div
+			class={`flex min-h-0 flex-col bg-app-bg ${
+				compact
+					? `absolute inset-y-0 left-0 z-50 w-66 border-r border-app-border/40 shadow-2xl shadow-black/40 transition-transform duration-300 ease-out ${
+							hovering ? 'translate-x-0' : '-translate-x-full'
+						}`
+					: 'h-full w-full flex-1'
+			}`}
+			on:mouseleave={() => {
+				if (compact) hovering = false;
+			}}
+		>
 				<div class="flex items-center justify-between gap-2 px-4 pb-2 pt-4">
 					<div class="flex min-w-0 items-center gap-2">
 						<button
 							type="button"
 							class="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-app-border/50 bg-app-element/25 text-app-text transition hover:border-app-primary/35 hover:text-app-primary"
 							on:click={onToggleCompact}
-							aria-label="Compact sidebar"
-							title="Compact sidebar"
+							aria-label={compact ? 'Pin sidebar open' : 'Collapse sidebar'}
+							title={compact ? 'Pin sidebar open' : 'Collapse sidebar'}
 						>
-							<PanelLeftClose size={15} />
+							{#if compact}
+								<PanelLeftOpen size={15} />
+							{:else}
+								<PanelLeftClose size={15} />
+							{/if}
 						</button>
 						<BrandMark size={24} framed={false} alt="{BRAND_NAME} logo" />
 						<p class="text-sm font-bold tracking-tight text-app-text">
@@ -629,8 +564,6 @@
 						</button>
 					</div>
 				</div>
-			{/if}
-
 			<input
 				bind:this={restoreInput}
 				type="file"

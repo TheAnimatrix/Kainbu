@@ -33,6 +33,9 @@ const normalizeProjectAiSession = (
 				? session.modelId.trim()
 				: DEFAULT_AI_MODEL_ID,
 		history,
+		contextSummary: session.contextSummary ?? undefined,
+		summarizedUpToMessageId: session.summarizedUpToMessageId ?? null,
+		...(typeof session.contextTokens === 'number' ? { contextTokens: session.contextTokens } : {}),
 		createdAt,
 		updatedAt: normalizeTimestamp(session.updatedAt, lastMessageAt),
 		lastMessageAt
@@ -68,6 +71,8 @@ export const createProjectAiSession = ({
 		title,
 		modelId,
 		history: nextHistory,
+		contextSummary: undefined,
+		summarizedUpToMessageId: null,
 		createdAt: now,
 		updatedAt: now,
 		lastMessageAt

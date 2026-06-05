@@ -1,4 +1,5 @@
 import {
+    WORKSPACE_AI_CACHE_BREAKPOINT_KEY,
     WORKSPACE_AI_MAX_TOKENS,
     WORKSPACE_AI_PROMPT_CACHE_ENABLED,
     WORKSPACE_AI_STREAM_DELTA_THROTTLE_MS,
@@ -139,31 +140,70 @@ export const extractUsageFromResponse = (response: unknown): OpenRouterUsage => 
     };
 };
 
-/** Apply cache_control to the first system message only (stable prefix). */
+const CACHE_CONTROL = { type: "ephemeral" } as const;
+
+/** Remove the transient cache-breakpoint marker so it never reaches the wire. */
+const stripCacheMarker = (message: OpenRouterMessage): OpenRouterMessage => {
+    if (!(WORKSPACE_AI_CACHE_BREAKPOINT_KEY in message)) return message;
+    const rest = { ...message };
+    delete rest[WORKSPACE_AI_CACHE_BREAKPOINT_KEY];
+    return rest;
+};
+
+/** Attach a prompt-cache breakpoint to a message by moving cache_control into its content. */
+const withCacheBreakpoint = (message: OpenRouterMessage): OpenRouterMessage => {
+    const rest = { ...message };
+    delete rest[WORKSPACE_AI_CACHE_BREAKPOINT_KEY];
+
+    if (typeof rest.content === "string") {
+        return {
+            ...rest,
+            content: [{ type: "text", text: rest.content, cache_control: CACHE_CONTROL }],
+        };
+    }
+
+    if (Array.isArray(rest.content) && rest.content.length > 0) {
+        const parts = rest.content.slice();
+        const lastIndex = parts.length - 1;
+        const lastPart = parts[lastIndex];
+        if (lastPart && typeof lastPart === "object") {
+            parts[lastIndex] = { ...(lastPart as Record<string, unknown>), cache_control: CACHE_CONTROL };
+            return { ...rest, content: parts };
+        }
+    }
+
+    // Cannot place a marker on this shape — return without one (marker already removed).
+    return rest;
+};
+
+/**
+ * Apply cache_control to the first system message (static prefix) and to any message tagged
+ * with the transient breakpoint marker (end of the stable history prefix). The marker is always
+ * stripped, even when caching is disabled, so it never leaks onto the wire.
+ */
 export const prepareMessagesForOpenRouter = (
     messages: OpenRouterMessage[],
     options: { promptCache?: boolean } = {}
 ): OpenRouterMessage[] => {
-    if (!options.promptCache || !WORKSPACE_AI_PROMPT_CACHE_ENABLED) {
-        return messages;
+    const cacheEnabled = Boolean(options.promptCache) && WORKSPACE_AI_PROMPT_CACHE_ENABLED;
+
+    if (!cacheEnabled) {
+        return messages.map(stripCacheMarker);
     }
 
     let cachedStatic = false;
     return messages.map((message) => {
-        if (cachedStatic || message.role !== "system") return message;
-        if (typeof message.content !== "string") return message;
-
-        cachedStatic = true;
-        return {
-            role: "system",
-            content: [
-                {
-                    type: "text",
-                    text: message.content,
-                    cache_control: { type: "ephemeral" },
-                },
-            ],
-        };
+        if (message[WORKSPACE_AI_CACHE_BREAKPOINT_KEY]) {
+            return withCacheBreakpoint(message);
+        }
+        if (!cachedStatic && message.role === "system" && typeof message.content === "string") {
+            cachedStatic = true;
+            return {
+                role: "system",
+                content: [{ type: "text", text: message.content, cache_control: CACHE_CONTROL }],
+            };
+        }
+        return message;
     });
 };
 

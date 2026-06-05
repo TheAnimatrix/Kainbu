@@ -74,9 +74,35 @@ export const transcribeVisionImages = async (
 			}
 		];
 
-		const { response } = await fetchCompletionJson(messages, false, modelConfig);
 		void options.userId;
-		const text = completionText(response);
+		let text = '';
+		try {
+			const { response } = await fetchCompletionJson(messages, false, modelConfig);
+			text = completionText(response);
+			if (!text) {
+				// The fallback model replied with no usable text. Surface the raw shape so
+				// we can tell a refusal/empty completion from a transport error.
+				console.error('[vision-transcribe] Empty transcription from fallback model', {
+					provider: modelConfig.provider,
+					model: modelConfig.model,
+					image: image.name,
+					responseSnippet: JSON.stringify(response).slice(0, 400)
+				});
+			}
+		} catch (error) {
+			console.error('[vision-transcribe] Fallback model request failed', {
+				provider: modelConfig.provider,
+				model: modelConfig.model,
+				image: image.name,
+				error: error instanceof Error ? error.message : String(error)
+			});
+			throw new Error(
+				`Vision fallback model (${modelConfig.provider}/${modelConfig.model}) failed to transcribe "${image.name}": ${
+					error instanceof Error ? error.message : 'unknown error'
+				}`
+			);
+		}
+
 		if (text) {
 			results[image.id] = text;
 		}

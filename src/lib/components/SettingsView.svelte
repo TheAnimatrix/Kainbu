@@ -1,7 +1,8 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { Check, ImageUp, RefreshCcw, Trash2 } from 'lucide-svelte';
+	import { ImageUp, Moon, RefreshCcw, Sun, Trash2 } from 'lucide-svelte';
 	import AccountIdentityForm from '$lib/components/AccountIdentityForm.svelte';
+	import BackgroundSwatch from '$lib/components/BackgroundSwatch.svelte';
 	import { fetchAdminMe } from '$lib/kainbu/adminApi';
 	import { pocketbase } from '$lib/pocketbaseClient';
 	import { formatPocketBaseError } from '$lib/pocketbaseErrors';
@@ -9,10 +10,12 @@
 		BACKGROUND_GRADIENT_OPTIONS,
 		BACKGROUND_SOLID_OPTIONS,
 		getBackgroundImagePreviewStyle,
+		getBackgroundSwatch,
 		getBackgroundThemeKey
 	} from '$lib/kainbu/backgrounds';
 	import type {
 		BackgroundTheme,
+		ColorMode,
 		Project,
 		SettingsSection,
 		UserSettings,
@@ -74,6 +77,11 @@
 		currentTheme: BackgroundTheme | null | undefined,
 		nextTheme: BackgroundTheme
 	) => getBackgroundThemeKey(currentTheme) === getBackgroundThemeKey(nextTheme);
+
+	const setColorMode = (colorMode: ColorMode) => {
+		if (settings.colorMode === colorMode) return;
+		onSettingsChange({ ...settings, colorMode });
+	};
 
 	const readSelectedFile = (event: Event, handler: (file: File) => void | Promise<void>) => {
 		const input = event.currentTarget as HTMLInputElement;
@@ -248,54 +256,41 @@
 						<div class="mt-3 flex flex-wrap gap-2">
 							{#each BACKGROUND_GRADIENT_OPTIONS as option (option.id)}
 								{@const theme = gradientTheme(option.id)}
-								<button
-									type="button"
-									class={`relative h-12 w-12 rounded-lg border transition sm:h-14 sm:w-14 ${isSelected(settings.backgroundTheme, theme) ? 'border-white ring-1 ring-white/20' : 'border-app-border/50 hover:border-app-subtext/40'}`}
-									style={`background:${option.swatch};`}
-									aria-label={`Use ${option.label} gradient`}
+								<BackgroundSwatch
+									size="lg"
+									swatch={getBackgroundSwatch(option, settings.colorMode)}
+									selected={isSelected(settings.backgroundTheme, theme)}
+									ariaLabel={`Use ${option.label} gradient`}
 									title={option.label}
 									on:click={() => onSelectPersonalBackground(theme)}
-								>
-									{#if isSelected(settings.backgroundTheme, theme)}
-										<span class="absolute right-1 top-1 inline-flex h-4 w-4 items-center justify-center rounded-full bg-black/40 text-white">
-											<Check size={10} />
-										</span>
-									{/if}
-								</button>
+								/>
 							{/each}
 						</div>
 
 						<div class="mt-2 flex flex-wrap gap-2">
 							{#each BACKGROUND_SOLID_OPTIONS as option (option.id)}
 								{@const theme = solidTheme(option.id)}
-								<button
-									type="button"
-									class={`relative h-10 w-10 rounded-lg border transition sm:h-12 sm:w-12 ${isSelected(settings.backgroundTheme, theme) ? 'border-white ring-1 ring-white/20' : 'border-app-border/50 hover:border-app-subtext/40'}`}
-									style={`background:${option.swatch};`}
-									aria-label={`Use ${option.label} solid color`}
+								<BackgroundSwatch
+									size="sm"
+									swatch={getBackgroundSwatch(option, settings.colorMode)}
+									selected={isSelected(settings.backgroundTheme, theme)}
+									ariaLabel={`Use ${option.label} solid color`}
 									title={option.label}
 									on:click={() => onSelectPersonalBackground(theme)}
-								>
-									{#if isSelected(settings.backgroundTheme, theme)}
-										<span class="absolute right-0.5 top-0.5 inline-flex h-3.5 w-3.5 items-center justify-center rounded-full bg-black/40 text-white">
-											<Check size={9} />
-										</span>
-									{/if}
-								</button>
+								/>
 							{/each}
 
-							<button
-								type="button"
-								class={`relative h-10 w-10 rounded-lg border border-dashed transition sm:h-12 sm:w-12 ${settings.backgroundTheme.kind === 'image' ? 'border-white ring-1 ring-white/20' : 'border-app-border/50 hover:border-app-subtext/40'}`}
-								style={getBackgroundImagePreviewStyle(personalImageUrl)}
-								aria-label={settings.backgroundTheme.kind === 'image' ? 'Personal uploaded image selected' : 'Upload personal background image'}
+							<BackgroundSwatch
+								size="sm"
+								variant="image"
+								previewStyle={getBackgroundImagePreviewStyle(personalImageUrl, settings.colorMode)}
+								selected={settings.backgroundTheme.kind === 'image'}
+								ariaLabel={settings.backgroundTheme.kind === 'image'
+									? 'Personal uploaded image selected'
+									: 'Upload personal background image'}
 								title={settings.backgroundTheme.kind === 'image' ? 'Uploaded image' : 'Upload image'}
 								on:click={() => personalUploadInput?.click()}
-							>
-								<span class="absolute inset-0 inline-flex items-center justify-center rounded bg-black/20 text-white">
-									<ImageUp size={14} />
-								</span>
-							</button>
+							/>
 						</div>
 					</div>
 
@@ -337,54 +332,41 @@
 							<div class="mt-3 flex flex-wrap gap-2">
 								{#each BACKGROUND_GRADIENT_OPTIONS as option (option.id)}
 									{@const theme = gradientTheme(option.id)}
-									<button
-										type="button"
-										class={`relative h-12 w-12 rounded-lg border transition sm:h-14 sm:w-14 ${isSelected(currentProject.backgroundTheme, theme) ? 'border-white ring-1 ring-white/20' : 'border-app-border/50 hover:border-app-subtext/40'}`}
-										style={`background:${option.swatch};`}
-										aria-label={`Set board background to ${option.label}`}
+									<BackgroundSwatch
+										size="lg"
+										swatch={getBackgroundSwatch(option, settings.colorMode)}
+										selected={isSelected(currentProject.backgroundTheme, theme)}
+										ariaLabel={`Set board background to ${option.label}`}
 										title={option.label}
 										on:click={() => onSelectBoardBackground(theme)}
-									>
-										{#if isSelected(currentProject.backgroundTheme, theme)}
-											<span class="absolute right-1 top-1 inline-flex h-4 w-4 items-center justify-center rounded-full bg-black/40 text-white">
-												<Check size={10} />
-											</span>
-										{/if}
-									</button>
+									/>
 								{/each}
 							</div>
 
 							<div class="mt-2 flex flex-wrap gap-2">
 								{#each BACKGROUND_SOLID_OPTIONS as option (option.id)}
 									{@const theme = solidTheme(option.id)}
-									<button
-										type="button"
-										class={`relative h-10 w-10 rounded-lg border transition sm:h-12 sm:w-12 ${isSelected(currentProject.backgroundTheme, theme) ? 'border-white ring-1 ring-white/20' : 'border-app-border/50 hover:border-app-subtext/40'}`}
-										style={`background:${option.swatch};`}
-										aria-label={`Set board background to ${option.label}`}
+									<BackgroundSwatch
+										size="sm"
+										swatch={getBackgroundSwatch(option, settings.colorMode)}
+										selected={isSelected(currentProject.backgroundTheme, theme)}
+										ariaLabel={`Set board background to ${option.label}`}
 										title={option.label}
 										on:click={() => onSelectBoardBackground(theme)}
-									>
-										{#if isSelected(currentProject.backgroundTheme, theme)}
-											<span class="absolute right-0.5 top-0.5 inline-flex h-3.5 w-3.5 items-center justify-center rounded-full bg-black/40 text-white">
-												<Check size={9} />
-											</span>
-										{/if}
-									</button>
+									/>
 								{/each}
 
-								<button
-									type="button"
-									class={`relative h-10 w-10 rounded-lg border border-dashed transition sm:h-12 sm:w-12 ${currentProject.backgroundTheme?.kind === 'image' ? 'border-white ring-1 ring-white/20' : 'border-app-border/50 hover:border-app-subtext/40'}`}
-									style={getBackgroundImagePreviewStyle(boardImageUrl)}
-									aria-label={currentProject.backgroundTheme?.kind === 'image' ? 'Board uploaded image selected' : 'Upload board background image'}
+								<BackgroundSwatch
+									size="sm"
+									variant="image"
+									previewStyle={getBackgroundImagePreviewStyle(boardImageUrl, settings.colorMode)}
+									selected={currentProject.backgroundTheme?.kind === 'image'}
+									ariaLabel={currentProject.backgroundTheme?.kind === 'image'
+										? 'Board uploaded image selected'
+										: 'Upload board background image'}
 									title={currentProject.backgroundTheme?.kind === 'image' ? 'Uploaded image' : 'Upload image'}
 									on:click={() => boardUploadInput?.click()}
-								>
-									<span class="absolute inset-0 inline-flex items-center justify-center rounded bg-black/20 text-white">
-										<ImageUp size={14} />
-									</span>
-								</button>
+								/>
 							</div>
 
 							{#if !currentProject.backgroundTheme}
@@ -398,6 +380,29 @@
 				</div>
 
 				<div class="space-y-5">
+					<div>
+						<p class="text-xs font-semibold text-app-text">Interface theme</p>
+						<p class="mt-1 text-sm text-app-subtext">Choose light or dark for panels, text, and controls.</p>
+						<div class="mt-2 inline-flex items-center gap-1 rounded-lg border border-app-border/50 p-0.5">
+							<button
+								type="button"
+								class={`inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium transition ${settings.colorMode === 'dark' ? 'bg-app-element text-app-text' : 'text-app-subtext hover:text-app-text'}`}
+								on:click={() => setColorMode('dark')}
+							>
+								<Moon size={14} />
+								Dark
+							</button>
+							<button
+								type="button"
+								class={`inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium transition ${settings.colorMode === 'light' ? 'bg-app-element text-app-text' : 'text-app-subtext hover:text-app-text'}`}
+								on:click={() => setColorMode('light')}
+							>
+								<Sun size={14} />
+								Light
+							</button>
+						</div>
+					</div>
+
 					<div>
 						<p class="text-xs font-semibold text-app-text">Task defaults</p>
 						<label class="mt-2 flex items-center justify-between gap-3 rounded-lg border border-app-border/40 px-3 py-2.5">

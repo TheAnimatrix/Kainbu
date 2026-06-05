@@ -66,6 +66,28 @@ export const replaceImageAttachmentsWithTranscriptions = (
 	return changed ? next : attachments;
 };
 
+// Earlier-turn images are not re-transcribed: replace them with an honest text
+// note so a non-vision model never receives raw image parts and isn't blocked by
+// a stale image it can't process.
+const omitImageAttachmentsForModel = (
+	attachments: ChatAttachment[] | undefined
+): ChatAttachment[] | undefined => {
+	if (!attachments?.length) return attachments;
+	let changed = false;
+	const next = attachments.map((attachment): ChatAttachment => {
+		if (attachment.kind !== 'image') return attachment;
+		changed = true;
+		return {
+			id: attachment.id,
+			kind: 'text',
+			name: attachment.name,
+			mimeType: 'text/plain',
+			content: `(Earlier image attachment "${attachment.name}" is not visible to this model.)`
+		};
+	});
+	return changed ? next : attachments;
+};
+
 export const prepareChatHistoryForModel = async (
 	history: ChatMessage[],
 	modelConfig: AiModelConfig | undefined,
@@ -73,21 +95,33 @@ export const prepareChatHistoryForModel = async (
 ): Promise<ChatMessage[]> => {
 	if (modelConfig?.vision !== false) return history;
 
-	const imageAttachments = history.flatMap(
-		(message) => message.attachments?.filter((attachment) => attachment.kind === 'image') ?? []
+	// Only the current turn's images (those on the last user message) are
+	// transcribed. Re-scanning the whole history would re-transcribe — and
+	// re-fail on — stale images every turn, blocking plain text follow-ups.
+	const lastUserMessage = [...history].reverse().find((message) => message.role === 'user');
+	const currentImages =
+		lastUserMessage?.attachments?.filter((attachment) => attachment.kind === 'image') ?? [];
+	const hasOlderImages = history.some(
+		(message) =>
+			message.id !== lastUserMessage?.id &&
+			message.attachments?.some((attachment) => attachment.kind === 'image')
 	);
-	if (!imageAttachments.length) return history;
 
-	if (!visionFallback?.enabled) {
-		throw new Error(
-			'This model does not support images. Enable the vision fallback model in admin settings or choose a vision-capable model.'
-		);
-	}
+	if (!currentImages.length && !hasOlderImages) return history;
 
-	const transcriptions = await transcribeChatImages(imageAttachments);
-	const missing = imageAttachments.filter((attachment) => !transcriptions[attachment.id]?.trim());
-	if (missing.length) {
-		throw new Error('Image transcription failed. Try again or use a vision-capable model.');
+	let transcriptions: Record<string, string> = {};
+	if (currentImages.length) {
+		if (!visionFallback?.enabled) {
+			throw new Error(
+				'This model does not support images. Enable the vision fallback model in admin settings or choose a vision-capable model.'
+			);
+		}
+
+		transcriptions = await transcribeChatImages(currentImages);
+		const missing = currentImages.filter((attachment) => !transcriptions[attachment.id]?.trim());
+		if (missing.length) {
+			throw new Error('Image transcription failed. Try again or use a vision-capable model.');
+		}
 	}
 
 	return history.map((message) => {
@@ -96,7 +130,10 @@ export const prepareChatHistoryForModel = async (
 		}
 		return {
 			...message,
-			attachments: replaceImageAttachmentsWithTranscriptions(message.attachments, transcriptions)
+			attachments:
+				message.id === lastUserMessage?.id
+					? replaceImageAttachmentsWithTranscriptions(message.attachments, transcriptions)
+					: omitImageAttachmentsForModel(message.attachments)
 		};
 	});
 };

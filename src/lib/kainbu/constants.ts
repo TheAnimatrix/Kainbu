@@ -100,7 +100,8 @@ export const clampColumnWidth = (value: number) =>
 export const DEFAULT_SETTINGS: UserSettings = {
 	defaultShowCheckbox: true,
 	preferredAiModelId: DEFAULT_AI_MODEL_ID,
-	backgroundTheme: DEFAULT_BACKGROUND_THEME
+	backgroundTheme: DEFAULT_BACKGROUND_THEME,
+	colorMode: 'dark'
 };
 
 export const INITIAL_KANBAN: KanbanData = [

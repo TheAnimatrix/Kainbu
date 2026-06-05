@@ -10,10 +10,6 @@
 
 	let expanded = defaultExpanded;
 
-	$: if (isLive && !compact) {
-		expanded = true;
-	}
-
 	$: traceEvents = events.filter(
 		(event) =>
 			event.kind !== 'status' &&
@@ -40,7 +36,7 @@
 		if (latestLiveEvent?.kind === 'tool_call') return latestLiveEvent.message;
 		if (latestLiveEvent?.kind === 'thinking') {
 			const message = latestLiveEvent.message || '';
-			return message && message !== 'Thinking…' ? message : 'Thinking…';
+			return message && message !== 'Thinking…' ? streamingTail(message, 96) : 'Thinking…';
 		}
 		if (latestLiveEvent?.message) return latestLiveEvent.message;
 		return 'Working…';
@@ -55,12 +51,27 @@
 		return parts.length ? parts.join(' · ') : 'Working…';
 	})();
 
+	// While live, the collapsed header reads as a single shimmering status line
+	// ("Thinking…", a tool name, or "Writing reply…") rather than the full step list.
+	$: liveSummaryText = (() => {
+		if (!isLive) return summaryText;
+		if (draftEvent) return 'Writing reply…';
+		if (latestLiveEvent?.kind === 'tool_call') return latestLiveEvent.message;
+		if (latestLiveEvent?.kind === 'thinking') return 'Thinking…';
+		return summaryText || 'Working…';
+	})();
+
 	const toggleExpanded = () => {
 		expanded = !expanded;
 	};
 
 	const summarizeDetail = (detail = '', maxLength = 96) =>
 		detail.length > maxLength ? `${detail.slice(0, maxLength - 1).trimEnd()}…` : detail;
+
+	// While a thinking step is actively streaming, show the most recent text (tail)
+	// so it reads as a flowing stream instead of freezing on the first few words.
+	const streamingTail = (detail = '', maxLength = 96) =>
+		detail.length > maxLength ? `…${detail.slice(-(maxLength - 1)).trimStart()}` : detail;
 </script>
 
 {#if isLive && compact}
@@ -77,23 +88,23 @@
 	<div class="max-w-[min(100%,32rem)] text-[11px] text-app-subtext/70">
 		<button
 			type="button"
-			class="flex w-full items-center gap-1.5 rounded-md px-1 py-0.5 text-left transition hover:text-app-subtext"
+			class="relative flex w-full items-center gap-1.5 rounded-md px-1 py-0.5 text-left transition hover:text-app-subtext"
 			on:click={toggleExpanded}
 		>
-			{#if isLive}
-				<LoaderCircle size={12} class="shrink-0 animate-spin opacity-60" />
-			{:else}
-				<ChevronRight
-					size={12}
-					class={`shrink-0 opacity-60 transition-transform ${expanded ? 'rotate-90' : ''}`}
-				/>
+			{#if isLive && !expanded}
+				<div
+					class="animate-shimmer-subtle pointer-events-none absolute inset-0 rounded-sm opacity-40"
+				></div>
 			{/if}
-			<span class="min-w-0 flex-1 truncate font-normal">{summaryText || 'Working…'}</span>
-			{#if !isLive}
-				<ChevronRight
-					size={12}
-					class={`shrink-0 opacity-40 transition-transform ${expanded ? 'rotate-90' : ''}`}
-				/>
+			<ChevronRight
+				size={12}
+				class={`relative shrink-0 opacity-60 transition-transform ${expanded ? 'rotate-90' : ''}`}
+			/>
+			<span class="relative min-w-0 flex-1 truncate font-normal"
+				>{isLive ? liveSummaryText : summaryText || 'Working…'}</span
+			>
+			{#if isLive}
+				<LoaderCircle size={12} class="relative shrink-0 animate-spin opacity-50" />
 			{/if}
 		</button>
 
@@ -108,9 +119,14 @@
 						{/if}
 						<p class="relative truncate font-normal leading-snug">
 							{#if event.kind === 'thinking'}
+								{@const isStreaming = isLive && event === stepEvents[stepEvents.length - 1]}
 								<span class="text-app-subtext/55">Thinking</span>
 								{#if event.message && event.message !== 'Thinking…'}
-									<span class="text-app-subtext/50"> — {summarizeDetail(event.message, 72)}</span>
+									<span class="text-app-subtext/50">
+										{' — '}{isStreaming
+											? streamingTail(event.message, 72)
+											: summarizeDetail(event.message, 72)}</span
+									>
 								{/if}
 							{:else if event.kind === 'tool_call'}
 								{event.message}
@@ -120,17 +136,15 @@
 						</p>
 					</div>
 				{/each}
+			</div>
+		{/if}
 
-				{#if draftEvent && isLive}
-					<div class="relative min-w-0 pt-0.5">
-						<div
-							class="animate-shimmer-subtle pointer-events-none absolute inset-0 rounded-sm opacity-50"
-						></div>
-						<p class="relative text-[11px] font-normal leading-relaxed text-app-subtext/75">
-							{draftEvent.message || '…'}
-						</p>
-					</div>
-				{/if}
+		<!-- The streaming reply stays visible even while the thinking trace is collapsed. -->
+		{#if draftEvent && isLive}
+			<div class="relative mt-1 min-w-0 pl-2.5">
+				<p class="relative text-[11px] font-normal leading-relaxed text-app-subtext/75">
+					{draftEvent.message || '…'}
+				</p>
 			</div>
 		{/if}
 	</div>

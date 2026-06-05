@@ -1,16 +1,17 @@
 <script lang="ts">
 	import { fade } from 'svelte/transition';
 	import { getBackgroundScene, getBackgroundThemeKey } from '$lib/kainbu/backgrounds';
-	import type { BackgroundTheme } from '$lib/kainbu/types';
+	import type { BackgroundTheme, ColorMode } from '$lib/kainbu/types';
 
 	export let theme: BackgroundTheme;
 	export let imageUrl: string | null = null;
+	export let colorMode: ColorMode = 'dark';
 
 	const backdropFadeIn = { duration: 280 };
 	const backdropFadeOut = { duration: 220 };
 
-	$: sceneKey = `${getBackgroundThemeKey(theme)}::${imageUrl || ''}`;
-	$: scene = getBackgroundScene(theme, imageUrl || '');
+	$: sceneKey = `${getBackgroundThemeKey(theme)}::${imageUrl || ''}::${colorMode}`;
+	$: scene = getBackgroundScene(theme, imageUrl || '', colorMode);
 </script>
 
 <div class="pointer-events-none absolute inset-0 overflow-hidden" aria-hidden="true">

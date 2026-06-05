@@ -7,11 +7,14 @@ import type {
 } from './types.js';
 import { randomUUID } from 'crypto';
 import {
+	assembleWorkspaceMessages,
+	buildInstructionRefresh,
 	buildQueuedTaskCardsContext,
 	buildStaticSystemPrompt,
 	buildVariableSystemContext,
 	resolveMaxModelTurns
 } from './prompt.js';
+import { compactChatContextIfNeeded, estimateTokens } from './context-compaction.js';
 import { OpenRouterTools } from './tools.js';
 import {
 	cleanupMaterializedWorkspace,
@@ -20,6 +23,8 @@ import {
 } from './sync.js';
 import {
 	WORKSPACE_AI_BOARD_INDEX_MAX_LINES,
+	WORKSPACE_AI_CONTEXT_BUDGET_TOKENS,
+	WORKSPACE_AI_INSTRUCTION_REFRESH_RATIO,
 	WORKSPACE_AI_MAX_TOOL_CALLS,
 	WORKSPACE_AI_TURN_NOTE_MAX_CHARS
 } from './constants.js';
@@ -266,14 +271,44 @@ export const handleWorkspaceAiRequest = async (
 	});
 
 	const queuedCardsContext = buildQueuedTaskCardsContext(req.scope);
-	const historyMessages = buildHistoryMessages(req.history, {
-		...(queuedCardsContext ? { queuedCardsContext } : {})
-	});
 
-	let messages: OpenRouterMessage[] = [
+	// Volatile per-turn data lives in a <session_context> block placed right before the
+	// latest user message (not a leading system message), so the static system prompt and
+	// stable history stay byte-identical across turns and remain prompt-cacheable.
+	const sessionContextBody = [variableSystemContext, queuedCardsContext]
+		.filter((part) => part && part.trim())
+		.join('\n\n');
+
+	// Bound the live context: fold older history into a durable summary once over budget.
+	const estimatedStaticTokens =
+		estimateTokens(staticSystemPrompt) + estimateTokens(sessionContextBody);
+	const compaction = await compactChatContextIfNeeded({
+		history: req.history,
+		priorSummary: req.contextSummary ?? null,
+		summarizedUpToMessageId: req.summarizedUpToMessageId ?? null,
+		estimatedStaticTokens,
+		log
+	});
+	if (compaction.compacted) {
+		log('Context compacted', {
+			compactedCount: compaction.compactedCount,
+			contextTokens: compaction.contextTokens,
+			summarizedUpToMessageId: compaction.summarizedUpToMessageId
+		});
+	}
+
+	const historyMessages = buildHistoryMessages(compaction.history);
+	const refreshInstructions =
+		compaction.compacted ||
+		compaction.contextTokens >=
+			Math.floor(WORKSPACE_AI_CONTEXT_BUDGET_TOKENS * WORKSPACE_AI_INSTRUCTION_REFRESH_RATIO);
+
+	const messages: OpenRouterMessage[] = [
 		{ role: 'system', content: staticSystemPrompt },
-		...(variableSystemContext ? [{ role: 'system', content: variableSystemContext }] : []),
-		...historyMessages
+		...assembleWorkspaceMessages(historyMessages, sessionContextBody, {
+			summary: compaction.summary,
+			instructionRefresh: refreshInstructions ? buildInstructionRefresh() : null
+		})
 	];
 
 	let reply = '';
@@ -508,7 +543,11 @@ export const handleWorkspaceAiRequest = async (
 				.filter((proposal) => proposal.target === 'kanban')
 				.flatMap((proposal) => proposal.proposalSafety.touchedTaskIds),
 			annotations: [],
-			toolActions
+			toolActions,
+			contextSummary: compaction.summary,
+			summarizedUpToMessageId: compaction.summarizedUpToMessageId,
+			compacted: compaction.compacted,
+			contextTokens: compaction.contextTokens
 		};
 	} finally {
 		await cleanupMaterializedWorkspace(workspace);

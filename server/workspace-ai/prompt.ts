@@ -1,6 +1,7 @@
 import type { AiScopeHint } from './types.js';
 import {
 	WORKSPACE_AI_ADD_TASKS_MAX_TITLES,
+	WORKSPACE_AI_CACHE_BREAKPOINT_KEY,
 	WORKSPACE_AI_MAX_BOARD_MUTATIONS,
 	WORKSPACE_AI_MAX_MODEL_TURNS,
 	WORKSPACE_AI_MAX_MODEL_TURNS_LARGE_BOARD,
@@ -8,6 +9,7 @@ import {
 } from './constants.js';
 import { findColumn, findTask } from './kanban-ops.js';
 import type { KanbanData } from './types.js';
+import type { OpenRouterMessage } from './openrouter-stream.js';
 
 const TONE_COLORS_DOC =
 	'tone:red, tone:orange, tone:amber, tone:green, tone:emerald, tone:teal, tone:cyan, tone:blue, tone:indigo, tone:violet, tone:purple, tone:fuchsia, tone:pink, tone:rose';
@@ -162,3 +164,94 @@ export const buildQueuedTaskCardsContext = (scope?: AiScopeHint) => {
 
 export const resolveMaxModelTurns = (kanbanFullAllowed: boolean) =>
 	kanbanFullAllowed ? WORKSPACE_AI_MAX_MODEL_TURNS : WORKSPACE_AI_MAX_MODEL_TURNS_LARGE_BOARD;
+
+// ── Prompt-cache-friendly message layout ────────────────────────────────────
+// Volatile per-turn data (board index, scope, queued cards) is wrapped in a
+// <session_context> block placed immediately before the latest user message,
+// so the static system prompt and the stable conversation history both stay
+// byte-identical across turns and remain prompt-cacheable.
+
+export const SESSION_CONTEXT_OPEN = '<session_context>';
+export const SESSION_CONTEXT_CLOSE = '</session_context>';
+export const CONVERSATION_SUMMARY_OPEN = '<conversation_summary>';
+export const CONVERSATION_SUMMARY_CLOSE = '</conversation_summary>';
+export const INSTRUCTION_REFRESH_OPEN = '<instruction_refresh>';
+export const INSTRUCTION_REFRESH_CLOSE = '</instruction_refresh>';
+
+export const wrapSessionContext = (body: string): string =>
+	`${SESSION_CONTEXT_OPEN}\n${body.trim()}\n${SESSION_CONTEXT_CLOSE}`;
+
+export const wrapConversationSummary = (summary: unknown): string => {
+	const body = typeof summary === 'string' ? summary : JSON.stringify(summary, null, 2);
+	return `${CONVERSATION_SUMMARY_OPEN}\n${body.trim()}\n${CONVERSATION_SUMMARY_CLOSE}`;
+};
+
+/** Re-injected editing contract to fight instruction drift on long or compacted chats. */
+export const buildInstructionRefresh = (): string =>
+	[
+		INSTRUCTION_REFRESH_OPEN,
+		'Reminder of the editing contract:',
+		'- Use tools to change the board or pages. Plain text never stages or saves anything.',
+		'- Staged changes stay pending until the user applies them in the UI. They are not saved yet.',
+		'- Prefer batch tools (add_tasks, bulk_update_tasks) even for a single item.',
+		'- Never claim a board or page change was saved, added, updated, removed, or staged unless a tool returned a successful result in this turn.',
+		'- Internal refs (C1, T1, UUIDs) are for tools only. Never show them to the user; use titles and column names.',
+		INSTRUCTION_REFRESH_CLOSE
+	].join('\n');
+
+const SESSION_CONTEXT_PREFIX = `${SESSION_CONTEXT_OPEN}`;
+
+const isSessionContextMessage = (message: OpenRouterMessage): boolean =>
+	message.role === 'user' &&
+	typeof message.content === 'string' &&
+	message.content.trim().startsWith(SESSION_CONTEXT_PREFIX);
+
+/** Defensive: drop any stale <session_context> user blocks that leaked into history. */
+const stripSessionContextMessages = (history: OpenRouterMessage[]): OpenRouterMessage[] =>
+	history.filter((message) => !isSessionContextMessage(message));
+
+/**
+ * Assemble the per-turn message list for prefix caching:
+ *   [stable history] → [conversation summary?] → [instruction refresh?] → [session_context] → [last user]
+ *
+ * The static system prompt is prepended by the caller. The last stable-history message is
+ * tagged with a transient cache breakpoint so the history prefix is cacheable too.
+ */
+export const assembleWorkspaceMessages = (
+	historyMessages: OpenRouterMessage[],
+	sessionContextBody: string,
+	options: { summary?: unknown; instructionRefresh?: string | null } = {}
+): OpenRouterMessage[] => {
+	const core = stripSessionContextMessages(historyMessages);
+
+	const summaryPrefix: OpenRouterMessage[] = options.summary
+		? [{ role: 'user', content: wrapConversationSummary(options.summary) }]
+		: [];
+	const refresh: OpenRouterMessage[] = options.instructionRefresh
+		? [{ role: 'user', content: options.instructionRefresh }]
+		: [];
+	const sessionContext: OpenRouterMessage = {
+		role: 'user',
+		content: wrapSessionContext(sessionContextBody)
+	};
+
+	// Split off the trailing user message so volatile context sits right before it.
+	const last = core[core.length - 1];
+	const trailingUser = last && last.role === 'user' ? last : undefined;
+	const stableHistory = trailingUser ? core.slice(0, -1) : core;
+
+	// Mark the end of the stable, cacheable prefix (static system is marked separately).
+	const lastStable =
+		stableHistory.length > 0 ? stableHistory[stableHistory.length - 1] : undefined;
+	if (lastStable) {
+		lastStable[WORKSPACE_AI_CACHE_BREAKPOINT_KEY] = true;
+	}
+
+	return [
+		...stableHistory,
+		...summaryPrefix,
+		...refresh,
+		sessionContext,
+		...(trailingUser ? [trailingUser] : [])
+	];
+};

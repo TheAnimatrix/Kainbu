@@ -400,6 +400,9 @@ app.post('/api/workspace-ai/transcribe-images', async (c) => {
 		}
 
 		await getAuthenticatedUserId(c.req.header('Authorization'));
+		// Populate the model catalog cache so the vision fallback config resolves;
+		// every other AI route does this before reading model configs.
+		await loadAiModelCatalog();
 		const transcriptions = await transcribeVisionImages(images);
 		return c.json({ transcriptions });
 	} catch (error) {

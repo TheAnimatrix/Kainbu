@@ -83,7 +83,8 @@
 		getCardToneStyle,
 		getColumnHeaderToneStyle,
 		getColumnToneStyle,
-		getTagToneClasses
+		getTagToneClasses,
+		getToneSurfaceClass
 	} from '$lib/kainbu/tags';
 	import type {
 		ChatAttachment,
@@ -144,6 +145,7 @@
 	export let activeTaskId: string | undefined = undefined;
 	export let isLocked = false;
 	export let defaultShowCheckbox = true;
+	export let colorMode: import('$lib/kainbu/types').ColorMode = 'dark';
 	export let active = true;
 	export let members: ProjectMembership[] = [];
 	export let activeBoardId = '';
@@ -164,9 +166,22 @@
 	export let boardSearchQuery = '';
 
 	const flipDurationMs = 180;
+	const dndDropTargetStyle = {};
+	const kanbanOrderFingerprint = (columns: KanbanData) =>
+		columns
+			.map((column) => {
+				const taskIds = column.tasks
+					.filter(
+						(task) =>
+							!(task as Task & Record<string, unknown>)[SHADOW_ITEM_MARKER_PROPERTY_NAME]
+					)
+					.map((task) => task.id);
+				return `${column.id}:${taskIds.join(',')}`;
+			})
+			.join('|');
 	let viewportWidth = 0;
 	let boardData: KanbanData = data;
-	let lastEmittedData: KanbanData | null = null;
+	let lastEmittedOrderFingerprint = '';
 
 	let editingColumnId: string | null = null;
 	let editingColumnTitle = '';
@@ -185,7 +200,6 @@
 	let taskTagMenuOpen: TaskMenuState | null = null;
 	let taskInfoMenuOpen: TaskMenuState | null = null;
 	let boardScrollViewport: HTMLDivElement | null = null;
-	let activeTaskDragColumnId: string | null = null;
 	let taskDragInProgress = false;
 	let boardDataAtDragStart: KanbanData | null = null;
 	let expandedDiffTaskId: string | null = null;
@@ -254,11 +268,13 @@
 	);
 	$: isDiffMode = comparisonData !== undefined;
 	$: isCollaborative = members.length > 1;
-	$: if (data === lastEmittedData) {
-		boardData = data;
-		lastEmittedData = null;
-	} else if (data !== boardData && !taskDragInProgress) {
-		boardData = data;
+	$: {
+		const incomingFingerprint = kanbanOrderFingerprint(data);
+		if (incomingFingerprint === lastEmittedOrderFingerprint) {
+			lastEmittedOrderFingerprint = '';
+		} else if (data !== boardData && !taskDragInProgress) {
+			boardData = data;
+		}
 	}
 	$: if (projectId !== lastColumnMoveProjectId) {
 		lastColumnMoveProjectId = projectId;
@@ -741,7 +757,7 @@
 
 	const emitBoardChange = (nextData: KanbanData, options: BoardChangeOptions = {}) => {
 		boardData = nextData;
-		lastEmittedData = nextData;
+		lastEmittedOrderFingerprint = kanbanOrderFingerprint(nextData);
 		onChange(nextData, options);
 	};
 
@@ -754,37 +770,15 @@
 		};
 	};
 
-	const scrollColumnViewport = async (columnId: string, position: 'top' | 'bottom') => {
-		await tick();
-		if (typeof document === 'undefined') return;
-		const viewport = document.querySelector<HTMLElement>(`[data-column-viewport="${columnId}"]`);
-		viewport?.scrollTo({
-			top: position === 'top' ? 0 : viewport.scrollHeight,
-			behavior: isMobile ? 'smooth' : 'auto'
-		});
-	};
-
-	const scrollTaskIntoView = async (taskId: string) => {
-		await tick();
-		if (typeof document === 'undefined') return;
-		const escapedTaskId =
-			typeof CSS !== 'undefined' && typeof CSS.escape === 'function'
-				? CSS.escape(taskId)
-				: taskId.replace(/["\\]/g, '\\$&');
-		const card = document.querySelector<HTMLElement>(`[data-task-id="${escapedTaskId}"]`);
-		card?.scrollIntoView({
-			block: isMobile ? 'nearest' : 'center',
-			inline: 'center',
-			behavior: 'smooth'
-		});
-	};
+	const scrollBehavior = (): ScrollBehavior =>
+		browser && window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth';
 
 	const scrollDragViewportIfNeeded = (event: PointerEvent) => {
-		if (!activeTaskDragColumnId || isLocked || isDiffMode) return;
+		if (!taskDragInProgress || isLocked || isDiffMode) return;
 
-		const columnViewport = document.querySelector<HTMLElement>(
-			`[data-column-viewport="${activeTaskDragColumnId}"]`
-		);
+		const columnViewport = document
+			.elementFromPoint(event.clientX, event.clientY)
+			?.closest<HTMLElement>('[data-column-viewport]');
 		if (columnViewport) {
 			const rect = columnViewport.getBoundingClientRect();
 			const edge = 72;
@@ -810,6 +804,40 @@
 				boardScrollViewport.scrollBy({ left: -Math.ceil(maxStep * ratio), behavior: 'auto' });
 			}
 		}
+	};
+
+	const scrollTaskIntoView = async (taskId: string) => {
+		await tick();
+		if (typeof document === 'undefined') return;
+		const escapedTaskId =
+			typeof CSS !== 'undefined' && typeof CSS.escape === 'function'
+				? CSS.escape(taskId)
+				: taskId.replace(/["\\]/g, '\\$&');
+		const card = document.querySelector<HTMLElement>(`[data-task-id="${escapedTaskId}"]`);
+		if (!card) return;
+
+		const behavior = scrollBehavior();
+		const columnViewport = card.closest<HTMLElement>('[data-column-viewport]');
+		if (columnViewport) {
+			const cardRect = card.getBoundingClientRect();
+			const viewRect = columnViewport.getBoundingClientRect();
+			const edge = 12;
+			let targetScrollTop = columnViewport.scrollTop;
+			if (cardRect.top < viewRect.top + edge) {
+				targetScrollTop += cardRect.top - viewRect.top - edge;
+			} else if (cardRect.bottom > viewRect.bottom - edge) {
+				targetScrollTop += cardRect.bottom - viewRect.bottom + edge;
+			}
+			if (targetScrollTop !== columnViewport.scrollTop) {
+				columnViewport.scrollTo({ top: targetScrollTop, behavior });
+			}
+		}
+
+		card.scrollIntoView({
+			block: 'nearest',
+			inline: 'nearest',
+			behavior
+		});
 	};
 
 	const handleTaskReferenceNavigation = (payload: { taskId: string; columnId: string }) => {
@@ -880,10 +908,11 @@
 	};
 
 	const endTaskDrag = () => {
-		queueMicrotask(() => {
-			taskDragInProgress = false;
-			activeTaskDragColumnId = null;
-			boardDataAtDragStart = null;
+		requestAnimationFrame(() => {
+			requestAnimationFrame(() => {
+				taskDragInProgress = false;
+				boardDataAtDragStart = null;
+			});
 		});
 	};
 
@@ -938,7 +967,8 @@
 		);
 
 		closeMenus();
-		await scrollColumnViewport(columnId, placement);
+		await scrollTaskIntoView(nextTask.id);
+		await startTaskTitleEdit(columnId, nextTask);
 	};
 
 	const deleteTask = (columnId: string, taskId: string) => {
@@ -1309,9 +1339,11 @@
 	const getColumnLayoutStyle = (column: Column) =>
 		`width: ${getColumnWidth(column)}px; min-width: ${getColumnWidth(column)}px;`;
 	const getBoardColumnStyle = (column: Column) =>
-		[getColumnLayoutStyle(column), getColumnToneStyle(column.color)].filter(Boolean).join('; ');
+		[getColumnLayoutStyle(column), getColumnToneStyle(column.color, colorMode)]
+			.filter(Boolean)
+			.join('; ');
 	const getTaskStyle = (task: DiffTask) =>
-		task._status && task._status !== 'unchanged' ? '' : getCardToneStyle(task.color);
+		task._status && task._status !== 'unchanged' ? '' : getCardToneStyle(task.color, colorMode);
 
 	const getTaskCardStyle = (task: DiffTask, isLinkHighlighted: boolean) => {
 		const toneStyle = getTaskStyle(task);
@@ -1323,8 +1355,6 @@
 			.filter((chunk) => chunk && !chunk.startsWith('border-color:'))
 			.join('; ');
 	};
-
-	const taskFlipDurationMs = () => (isMobile ? 110 : flipDurationMs);
 
 	const setColumnWidth = (columnId: string, width: number) => {
 		emitBoardChange(
@@ -1381,8 +1411,9 @@
 				boardDataAtDragStart = boardData;
 			}
 			taskDragInProgress = true;
-			activeTaskDragColumnId = columnId;
-			boardData = withFinalizedDndColumnTasks(boardData, columnId, items as Task[]);
+			// Keep the dnd shadow placeholder in place so the drag preview renders and
+			// snaps to boundaries. Stripping shadow items here makes the card vanish mid-drag.
+			boardData = withUpdatedColumnTasks(boardData, columnId, items as Task[]);
 			return;
 		}
 
@@ -1393,7 +1424,7 @@
 				(column) => column.id !== fromColumnId && column.tasks.some((task) => task.id === taskId)
 			)?.id;
 
-			const nextBoard = recoverMissingDraggedTask(
+			boardData = recoverMissingDraggedTask(
 				withFinalizedDndColumnTasks(boardData, columnId, items as Task[], {
 					dedupeAcrossColumns: false
 				}),
@@ -1401,7 +1432,6 @@
 				taskId,
 				boardDataAtDragStart
 			);
-			emitBoardChange(nextBoard);
 
 			if (toColumnId) {
 				recordLastColumnMove(fromColumnId, toColumnId);
@@ -1443,6 +1473,7 @@
 		else if (task._status === 'modified') result += ' border border-amber-500/40 bg-amber-500/10';
 		else {
 			result += ' bg-app-surface';
+			if (getToneSurfaceClass(task.color)) result += ' kainbu-tone-surface';
 			if (isDiffMode) result += ' border border-app-border grayscale opacity-50';
 			else if (isLinkAnchor) result += ' z-[2] border-2 border-app-primary';
 			else if (isLinkClusterMember) result += ' z-[2] border-2 border-app-accent';
@@ -1649,7 +1680,8 @@
 									flipDurationMs,
 									dragDisabled:
 										isLocked || boardLayoutMode === 'link-groups' || boardSearchFiltering,
-									delayTouchStart: true
+									delayTouchStart: true,
+									dropTargetStyle: dndDropTargetStyle
 								}}
 								onconsider={(event) => handleColumnDnd(event as CustomEvent)}
 								onfinalize={(event) => handleColumnDnd(event as CustomEvent)}
@@ -1658,7 +1690,7 @@
 									<div
 										animate:flip={{ duration: flipDurationMs }}
 										data-is-dnd-shadow-item-hint={isShadowItem(column)}
-										class={`flex h-full max-h-full min-h-0 shrink-0 flex-col overflow-hidden rounded-lg border bg-app-surface/82 ${
+										class={`flex h-full max-h-full min-h-0 shrink-0 flex-col overflow-hidden rounded-lg border bg-app-column ${getToneSurfaceClass(column.color)} ${
 											column.isLinkGroup
 												? 'border-app-primary/35 ring-1 ring-app-primary/15'
 												: 'border-app-border'
@@ -1666,8 +1698,8 @@
 										style={getBoardColumnStyle(column)}
 									>
 										<div
-											class="flex items-center justify-between gap-3 border-b border-app-border px-3 py-2.5"
-											style={getColumnHeaderToneStyle(column.color)}
+											class={`flex items-center justify-between gap-3 border-b border-app-border px-3 py-2.5 ${getToneSurfaceClass(column.color)}`}
+											style={getColumnHeaderToneStyle(column.color, colorMode)}
 										>
 											<div class="min-w-0 flex-1">
 												{#if editingColumnId === column.id}
@@ -1761,37 +1793,35 @@
 										<div class="flex min-h-0 flex-1 flex-col overflow-hidden p-2">
 											<div
 												data-column-viewport={column.id}
-												class="flex min-h-0 flex-1 flex-col overflow-y-auto"
+												class="kainbu-scrollbar-hidden flex min-h-0 flex-1 flex-col gap-1.5 overflow-y-auto pb-8"
+												use:dndzone={{
+													items: column.tasks,
+													type: 'task',
+													flipDurationMs: 0,
+													dragDisabled:
+														isLocked || Boolean(column.isLinkGroup) || boardSearchFiltering,
+													delayTouchStart: isMobile ? 220 : true,
+													morphDisabled: true,
+													centreDraggedOnCursor: isMobile,
+													useCursorForDetection: true,
+													dropAnimationDisabled: true,
+													dropTargetStyle: dndDropTargetStyle
+												}}
 												onscroll={() => {
 													closeMenus();
 													bumpLinkOverlay();
 												}}
+												onconsider={(event) => {
+													if (column.isLinkGroup) return;
+													handleTaskDnd(column.id, event as CustomEvent, 'consider');
+												}}
+												onfinalize={(event) => {
+													if (column.isLinkGroup) return;
+													handleTaskDnd(column.id, event as CustomEvent, 'finalize');
+													bumpLinkOverlay();
+												}}
 											>
-												<div
-													class="flex min-h-16 flex-1 flex-col gap-1.5"
-													use:dndzone={{
-														items: column.tasks,
-														type: 'task',
-														flipDurationMs: taskFlipDurationMs(),
-														dragDisabled:
-															isLocked || Boolean(column.isLinkGroup) || boardSearchFiltering,
-														delayTouchStart: isMobile ? 220 : true,
-														morphDisabled: true,
-														centreDraggedOnCursor: isMobile,
-														useCursorForDetection: true,
-														dropAnimationDisabled: false
-													}}
-													onconsider={(event) => {
-														if (column.isLinkGroup) return;
-														handleTaskDnd(column.id, event as CustomEvent, 'consider');
-													}}
-													onfinalize={(event) => {
-														if (column.isLinkGroup) return;
-														handleTaskDnd(column.id, event as CustomEvent, 'finalize');
-														bumpLinkOverlay();
-													}}
-												>
-													{#each column.tasks as task (getDndKey(task))}
+												{#each column.tasks as task (getDndKey(task))}
 														{@const taskColumnId = getTaskColumnId(task.id, column.id)}
 														{@const isLinkDimmedCard =
 															Boolean(linkViewAnchorId) &&
@@ -1804,7 +1834,6 @@
 														{@const isLinkHighlightedCard =
 															isLinkClusterCard || linkViewAnchorId === task.id}
 														<div
-															animate:flip={{ duration: taskFlipDurationMs() }}
 															data-is-dnd-shadow-item-hint={isShadowItem(task)}
 															data-task-id={task.id}
 															class={[
@@ -2163,8 +2192,7 @@
 																</div>
 															</div>
 														</div>
-													{/each}
-												</div>
+												{/each}
 											</div>
 											{#if !column.isLinkGroup}
 												<button
@@ -2200,7 +2228,7 @@
 					<div class="flex h-full min-h-0 min-w-max gap-3">
 						{#each visibleDiffData as column (column.id)}
 							<div
-								class={`flex h-full shrink-0 flex-col overflow-hidden rounded-lg border bg-app-surface/80 ${
+								class={`flex h-full shrink-0 flex-col overflow-hidden rounded-lg border bg-app-column ${column._status === 'unchanged' ? getToneSurfaceClass(column.color) : ''} ${
 									column._status === 'added'
 										? 'border-emerald-500/40'
 										: column._status === 'removed'
@@ -2214,9 +2242,9 @@
 									: getColumnLayoutStyle(column)}
 							>
 								<div
-									class={`border-b border-app-border px-3 py-2.5 ${column._status === 'unchanged' ? 'grayscale opacity-50' : ''}`}
+									class={`border-b border-app-border px-3 py-2.5 ${column._status === 'unchanged' ? `${getToneSurfaceClass(column.color)} grayscale opacity-50` : ''}`}
 									style={column._status === 'unchanged'
-										? getColumnHeaderToneStyle(column.color)
+										? getColumnHeaderToneStyle(column.color, colorMode)
 										: undefined}
 								>
 									<div class="flex min-w-0 items-center gap-2">
@@ -2229,7 +2257,7 @@
 									</div>
 								</div>
 
-								<div class="min-h-0 flex-1 overflow-y-auto p-2.5">
+								<div class="kainbu-scrollbar-hidden min-h-0 flex-1 overflow-y-auto p-2.5">
 									<div class="flex flex-col gap-2.5">
 										{#each column.tasks as task (task.id)}
 											<button
@@ -2385,6 +2413,7 @@
 				<TaskModal
 					task={editingTask!.task}
 					{projectId}
+					{colorMode}
 					columns={boardData}
 					{members}
 					columnTitle={editingTask!.column.title}
@@ -2406,6 +2435,7 @@
 				<TaskModal
 					task={editingTask!.task}
 					{projectId}
+					{colorMode}
 					columns={boardData}
 					{members}
 					columnTitle={editingTask!.column.title}
@@ -2867,6 +2897,7 @@
 		<TaskModal
 			task={editingTask!.task}
 			{projectId}
+			{colorMode}
 			columns={boardData}
 			{members}
 			columnTitle={editingTask!.column.title}

@@ -57,28 +57,14 @@ export const buildUserMessageContent = (
 	return parts;
 };
 
-export const buildHistoryMessages = (
-	history: ChatMessage[],
-	options: { queuedCardsContext?: string } = {}
-): OpenRouterMessage[] => {
-	const lastUserIndex = [...history]
-		.map((message, index) => ({ message, index }))
-		.reverse()
-		.find((entry) => entry.message.role === "user")?.index;
-
-	return history.map((message, index) => {
+export const buildHistoryMessages = (history: ChatMessage[]): OpenRouterMessage[] =>
+	history.map((message) => {
 		if (message.role === "assistant") {
 			return { role: "assistant", content: message.text };
 		}
 
-		const suffix =
-			options.queuedCardsContext && index === lastUserIndex
-				? options.queuedCardsContext
-				: undefined;
-
 		return {
 			role: "user",
-			content: buildUserMessageContent(message.text, message.attachments, suffix),
+			content: buildUserMessageContent(message.text, message.attachments),
 		};
 	});
-};

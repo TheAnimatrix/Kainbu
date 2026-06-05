@@ -9,6 +9,7 @@ export interface AiThinkingConfig {
 }
 export type WorkspaceTab = 'dashboard' | 'kanban' | 'scratchpad' | 'chat' | 'settings';
 export type SettingsSection = 'account' | 'appearance';
+export type ColorMode = 'light' | 'dark';
 export type SyncStatus = 'idle' | 'local' | 'syncing' | 'synced' | 'error';
 export type UsernameAvailabilityState = 'idle' | 'checking' | 'available' | 'taken' | 'invalid';
 export type WorkspaceAction = 'kanban' | 'scratchpad' | 'highlights' | 'question';
@@ -277,12 +278,30 @@ export interface ProjectPage {
 	updatedAt: number;
 }
 
+/** Durable structured summary of compacted chat history (see context-compaction). */
+export interface AiContextSummary {
+	userGoal?: string;
+	boardContext?: string;
+	decisions?: string[];
+	pendingProposals?: string[];
+	appliedChanges?: string[];
+	rejectedOrUndone?: string[];
+	mustRemember?: string[];
+	notes?: string[];
+}
+
 export interface ProjectAiSession {
 	id: string;
 	projectId: string;
 	title: string;
 	modelId: AiModelId;
 	history: ChatMessage[];
+	/** Durable summary of history folded out of the live context window (string or AiContextSummary). */
+	contextSummary?: unknown;
+	/** Id of the last history message already folded into contextSummary. */
+	summarizedUpToMessageId?: string | null;
+	/** Approx token size of the live context window after the last turn. */
+	contextTokens?: number;
 	createdAt: number;
 	updatedAt: number;
 	lastMessageAt: number;
@@ -333,6 +352,7 @@ export interface UserSettings {
 	defaultShowCheckbox: boolean;
 	preferredAiModelId: AiModelId;
 	backgroundTheme: BackgroundTheme;
+	colorMode: ColorMode;
 }
 
 export interface UserProfile {
@@ -576,6 +596,10 @@ export interface AiWorkspaceRequest {
 	history: ChatMessage[];
 	scope: AiScopeHint;
 	continuation?: AiQuestionAnswer;
+	/** Durable summary persisted on the session from prior turns. */
+	contextSummary?: unknown;
+	/** Watermark: id of the last history message already folded into contextSummary. */
+	summarizedUpToMessageId?: string | null;
 }
 
 export interface AiWorkspaceResponse {
@@ -592,6 +616,14 @@ export interface AiWorkspaceResponse {
 	annotations: CitationAnnotation[];
 	toolActions: WorkspaceAction[];
 	stoppedReason?: string;
+	/** Updated durable summary to persist on the session (present when compaction ran). */
+	contextSummary?: unknown;
+	/** Updated watermark to persist on the session. */
+	summarizedUpToMessageId?: string | null;
+	/** True when older history was folded into the summary this turn. */
+	compacted?: boolean;
+	/** Approx token size of the live context window for this turn. */
+	contextTokens?: number;
 }
 
 export type AiWorkspaceStreamEvent =
@@ -698,6 +730,9 @@ export interface ProjectAiSessionRow {
 	title: string;
 	model_id: AiModelId;
 	history: ChatMessage[];
+	context_summary?: unknown;
+	summarized_up_to_message_id?: string | null;
+	context_tokens?: number | null;
 	created_at: string;
 	updated_at: string;
 	last_message_at: string;
@@ -786,6 +821,7 @@ export interface ProfileRow {
 	preferred_ai_model_id?: AiModelId | null;
 	preferred_model_preset?: string | null;
 	background_theme: BackgroundTheme;
+	color_mode?: ColorMode | null;
 	created_at: string;
 	updated_at: string;
 }
