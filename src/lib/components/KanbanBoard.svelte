@@ -1097,6 +1097,12 @@
 		taskTitleInput = null;
 	};
 
+	const syncTaskTitleInputHeight = (input: HTMLTextAreaElement | null = taskTitleInput) => {
+		if (!input) return;
+		input.style.height = 'auto';
+		input.style.height = `${input.scrollHeight}px`;
+	};
+
 	const saveTaskTitleEdit = () => {
 		if (!editingTaskTitle) return;
 
@@ -1121,8 +1127,11 @@
 		lastTaskTitleTap = null;
 
 		await tick();
-		taskTitleInput?.focus();
-		taskTitleInput?.select();
+		if (!taskTitleInput) return;
+		syncTaskTitleInputHeight(taskTitleInput);
+		taskTitleInput.focus();
+		const end = taskTitleInput.value.length;
+		taskTitleInput.setSelectionRange(end, end);
 	};
 
 	const handleTaskTitlePointerUp = (event: PointerEvent, columnId: string, task: Task) => {
@@ -2038,9 +2047,15 @@
 																		<textarea
 																			bind:this={taskTitleInput}
 																			bind:value={editingTaskTitleValue}
-																			rows="10"
-																			class="w-full resize-none rounded-lg border border-app-primary/40 bg-app-bg px-2 py-1 text-sm font-medium text-app-text outline-none"
+																			rows={1}
+																			class={[
+																				'kainbu-task-title-inline-edit',
+																				task.checked ? 'opacity-70' : ''
+																			]
+																				.filter(Boolean)
+																				.join(' ')}
 																			onclick={(event) => event.stopPropagation()}
+																			oninput={() => syncTaskTitleInputHeight()}
 																			onblur={saveTaskTitleEdit}
 																			onkeydown={(event) => {
 																				event.stopPropagation();
