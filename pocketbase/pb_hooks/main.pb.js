@@ -9,7 +9,10 @@ const loadAppSettings = (app) => {
 			'singleton = {:singleton}',
 			{ singleton: APP_SETTINGS_SINGLETON }
 		);
-	} catch (_) {
+	} catch (err) {
+		app.logger().error(
+			`mail: failed to load app_settings: ${err instanceof Error ? err.message : String(err)}`
+		);
 		return null;
 	}
 };
@@ -36,21 +39,13 @@ const addressList = (items) =>
 		.map((entry) => (entry.name ? `${entry.name} <${entry.address}>` : entry.address))
 		.filter(Boolean);
 
-// PocketBase 0.23+: do not attach hooks to the `users` auth collection (breaks signup).
-// Signup disable is enforced in the Hono `/api/auth/signup` route and the app UI.
-
-onMailerSend((e) => {
-	const settings = loadAppSettings(e.app);
-	if (mailProvider(settings) !== 'resend') {
-		return e.next();
-	}
-
+/** Send via Resend API. Returns true when handled (caller must not call e.next()). */
+const sendViaResend = (app, settings, message) => {
 	const apiKey = getText(settings, 'resend_api_key');
 	if (!apiKey) {
 		throw new Error('Resend API key is not configured.');
 	}
 
-	const message = e.message;
 	const payload = {
 		from: message.from.name
 			? `${message.from.name} <${message.from.address}>`
@@ -90,6 +85,41 @@ onMailerSend((e) => {
 				: `Resend email failed (${response.statusCode})`
 		);
 	}
+
+	app.logger().info(
+		`mail: sent via Resend to=${addressList(message.to).join(',')} subject=${message.subject}`
+	);
+	return true;
+};
+
+/**
+ * Auth emails (verification, password reset, etc.) use onMailerRecord* hooks.
+ * With SMTP disabled, e.next() would no-op — intercept Resend here instead of onMailerSend only.
+ */
+const interceptResendMail = (e) => {
+	const settings = loadAppSettings(e.app);
+	if (mailProvider(settings) !== 'resend') {
+		return e.next();
+	}
+
+	sendViaResend(e.app, settings, e.message);
+};
+
+// PocketBase 0.23+: do not attach hooks to the `users` auth collection (breaks signup).
+// Signup disable is enforced in the Hono `/api/auth/signup` route and the app UI.
+
+onMailerRecordVerificationSend(interceptResendMail);
+onMailerRecordPasswordResetSend(interceptResendMail);
+onMailerRecordEmailChangeSend(interceptResendMail);
+onMailerRecordAuthAlertSend(interceptResendMail);
+
+onMailerSend((e) => {
+	const settings = loadAppSettings(e.app);
+	if (mailProvider(settings) !== 'resend') {
+		return e.next();
+	}
+
+	sendViaResend(e.app, settings, e.message);
 });
 
 onRecordAfterCreateSuccess((e) => {
