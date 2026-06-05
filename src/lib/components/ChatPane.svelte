@@ -1079,9 +1079,7 @@
 												{#if taskCard.tags.length}
 													<div class="mt-2 flex flex-wrap gap-1.5">
 														{#each taskCard.tags.slice(0, 3) as tag (tag.id)}
-															<span
-																class={`rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.15em] ${getTagToneClasses(tag.color)}`}
-															>
+															<span class={getTagToneClasses(tag.color)}>
 																{tag.label}
 															</span>
 														{/each}
@@ -1428,9 +1426,7 @@
 							{#if taskCard.tags.length}
 								<div class="mt-2 flex flex-wrap gap-1.5">
 									{#each taskCard.tags.slice(0, 3) as tag (tag.id)}
-										<span
-											class={`rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.15em] ${getTagToneClasses(tag.color)}`}
-										>
+										<span class={getTagToneClasses(tag.color)}>
 											{tag.label}
 										</span>
 									{/each}

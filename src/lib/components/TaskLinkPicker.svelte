@@ -1,7 +1,18 @@
 <script lang="ts">
+	import { browser } from '$app/environment';
 	import { tick } from 'svelte';
 	import { Search, X } from 'lucide-svelte';
 	import type { TaskLinkPickerOption } from '$lib/kainbu/taskLinkPicker';
+
+	const portalToBody = (node: HTMLElement) => {
+		if (!browser) return {};
+		document.body.appendChild(node);
+		return {
+			destroy() {
+				node.remove();
+			}
+		};
+	};
 
 	export let open = false;
 	export let position: { top: number; left: number } | null = null;
@@ -29,19 +40,25 @@
 </script>
 
 {#if open && position}
-	<div class="pointer-events-none fixed inset-0 z-[160]">
+	<div class="pointer-events-none fixed inset-0 z-[160]" use:portalToBody>
 		<button
 			type="button"
 			class="pointer-events-auto fixed inset-0 cursor-default bg-transparent"
 			aria-label="Close link picker"
-			onclick={onClose}
+			onpointerdown={(event) => event.stopPropagation()}
+			onclick={(event) => {
+				event.stopPropagation();
+				onClose();
+			}}
 		></button>
 		<div
 			role="dialog"
 			aria-label="Link to task"
+			data-task-link-picker
 			class="pointer-events-auto fixed w-72 max-h-[min(24rem,calc(100vh-1.5rem))] overflow-hidden rounded-xl border border-app-border bg-app-surface shadow-kainbu-xl"
 			style={`top:${position.top}px; left:${position.left}px;`}
 			onmousedown={(event) => event.stopPropagation()}
+			onclick={(event) => event.stopPropagation()}
 		>
 			<div class="flex items-center justify-between gap-2 border-b border-app-border px-3 py-2">
 				<p class="text-sm font-semibold text-app-text">Link to task</p>

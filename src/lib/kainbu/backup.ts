@@ -1,3 +1,4 @@
+import { normalizeBoardPreferences } from '$lib/kainbu/boardPreferences';
 import { DEFAULT_COLUMN_WIDTH, EMPTY_PROJECT } from '$lib/kainbu/constants';
 import { createId } from '$lib/kainbu/id';
 import { normalizeProjectStructure } from '$lib/kainbu/projectStructure';
@@ -31,6 +32,7 @@ type BackupBoard = {
 	name: string;
 	position: number;
 	kanbanData: BackupColumn[];
+	preferences?: ReturnType<typeof normalizeBoardPreferences>;
 };
 
 type BackupPage = {
@@ -154,7 +156,8 @@ const stripKanbanForBackup = (kanbanData: KanbanData): BackupColumn[] =>
 const stripBoardForBackup = (board: ProjectBoard, index: number): BackupBoard => ({
 	name: board.name,
 	position: Number.isFinite(board.position) ? board.position : index,
-	kanbanData: stripKanbanForBackup(board.kanbanData || [])
+	kanbanData: stripKanbanForBackup(board.kanbanData || []),
+	preferences: normalizeBoardPreferences(board.preferences)
 });
 
 const stripPageForBackup = (page: ProjectPage, index: number): BackupPage => ({
@@ -288,6 +291,7 @@ const normalizeProject = (
 					name: typeof board.name === 'string' && board.name.trim() ? board.name : `Board ${index + 1}`,
 					position: typeof board.position === 'number' ? board.position : index,
 					kanbanData,
+					preferences: normalizeBoardPreferences(board.preferences),
 					createdAt: now,
 					updatedAt: now
 				};
@@ -299,6 +303,7 @@ const normalizeProject = (
 					name: 'Board',
 					position: 0,
 					kanbanData: importKanbanData(legacyKanban, seed.kanbanData).kanbanData,
+					preferences: normalizeBoardPreferences(undefined),
 					createdAt: now,
 					updatedAt: now
 				}
@@ -382,6 +387,7 @@ const normalizeLegacySession = (session: LegacySession, userId: string): Project
 				name: 'Board',
 				position: 0,
 				kanbanData,
+				preferences: normalizeBoardPreferences(undefined),
 				createdAt: seed.createdAt,
 				updatedAt: seed.updatedAt
 			}

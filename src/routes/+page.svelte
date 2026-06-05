@@ -109,6 +109,7 @@
 		renameProject as renameProjectRemote,
 		renameProjectBoard as renameProjectBoardRemote,
 		renameProjectPage as renameProjectPageRemote,
+		updateProjectBoardPreferences as updateProjectBoardPreferencesRemote,
 		reportBoardPresence,
 		respondToProjectInvite,
 		saveProjectAiState,
@@ -130,6 +131,7 @@
 		workspaceSearchParamsEqual,
 		type WorkspaceUrlState
 	} from '$lib/kainbu/workspaceUrl';
+	import { normalizeBoardPreferences } from '$lib/kainbu/boardPreferences';
 	import { getProjectMemberDisplayName, getProjectMemberSearchText } from '$lib/kainbu/members';
 	import {
 		getProjectBoard,
@@ -139,6 +141,7 @@
 		setProjectActiveBoard,
 		setProjectActivePage,
 		updateProjectBoardData,
+		updateProjectBoardPreferences,
 		updateProjectPageContent as updateProjectPageState
 	} from '$lib/kainbu/projectStructure';
 	import { getActiveScratchpadPad, getScratchpadPad } from '$lib/kainbu/scratchpad';
@@ -151,6 +154,7 @@
 		AiProposal,
 		AiProgressEvent,
 		AiQuestionAnswer,
+		BoardPreferences,
 		BoundTarget,
 		BackgroundTheme,
 		ChatAttachment,
@@ -355,6 +359,10 @@
 		}
 	}
 	$: currentBoardId = currentProject?.activeBoardId || '';
+	$: currentBoard = currentProject ? getProjectBoard(currentProject, currentBoardId) : null;
+	$: boardPreferences = currentBoard
+		? normalizeBoardPreferences(currentBoard.preferences, settings.defaultShowCheckbox)
+		: normalizeBoardPreferences(undefined, settings.defaultShowCheckbox);
 	$: currentPageId = currentProject?.activePageId || '';
 	$: currentPage = currentProject ? getProjectPage(currentProject, currentPageId) : null;
 	$: if (
@@ -3133,6 +3141,44 @@
 		applyLocalKanbanChange(currentProject, nextKanbanData, options);
 	};
 
+	const handleBoardPreferencesChange = (nextPreferences: BoardPreferences) => {
+		if (!currentProject || !currentBoardId) return;
+
+		const previousProjects = projects;
+		const nextProject = updateProjectBoardPreferences(
+			currentProject,
+			currentBoardId,
+			nextPreferences
+		);
+
+		applyWorkspaceState({
+			nextProjects: projects.map((entry) =>
+				entry.id === currentProject.id ? nextProject : entry
+			),
+			preferredProjectId: currentProjectId
+		});
+
+		void (async () => {
+			try {
+				await runSyncAction(
+					() =>
+						updateProjectBoardPreferencesRemote(
+							currentProject.id,
+							currentBoardId,
+							nextPreferences
+						),
+					'Unable to save board options right now.'
+				);
+			} catch (error) {
+				console.error(error);
+				applyWorkspaceState({
+					nextProjects: previousProjects,
+					preferredProjectId: currentProjectId
+				});
+			}
+		})();
+	};
+
 	const handleActiveTaskChange = (payload: { taskId?: string; columnId?: string } | null) => {
 		activeTaskContext =
 			payload?.taskId && payload?.columnId
@@ -4685,13 +4731,14 @@
 													{highlightedTaskIds}
 													activeTaskId={activeTaskContext?.taskId}
 													isLocked={proposalPreviewTarget === 'kanban'}
-													defaultShowCheckbox={settings.defaultShowCheckbox}
+													{boardPreferences}
 													colorMode={settings.colorMode}
 													active={mobileTab === 'kanban'}
 													members={currentProject.members}
 													bind:boardSearchActive
 													bind:boardSearchQuery
 													onChange={handleKanbanChange}
+													onBoardPreferencesChange={handleBoardPreferencesChange}
 													onSendToChat={handleSendTaskToChat}
 													onActiveTaskChange={handleActiveTaskChange}
 													onTaskReferenceNavigate={handleTaskReferenceNavigate}
@@ -4864,13 +4911,14 @@
 													{highlightedTaskIds}
 													activeTaskId={activeTaskContext?.taskId}
 													isLocked={proposalPreviewTarget === 'kanban'}
-													defaultShowCheckbox={settings.defaultShowCheckbox}
+													{boardPreferences}
 													colorMode={settings.colorMode}
 													active={desktopWorkspaceTab === 'kanban'}
 													members={currentProject.members}
 													bind:boardSearchActive
 													bind:boardSearchQuery
 													onChange={handleKanbanChange}
+													onBoardPreferencesChange={handleBoardPreferencesChange}
 													onSendToChat={handleSendTaskToChat}
 													onActiveTaskChange={handleActiveTaskChange}
 													onTaskReferenceNavigate={handleTaskReferenceNavigate}

@@ -1,7 +1,15 @@
+import { normalizeBoardPreferences } from '$lib/kainbu/boardPreferences';
 import { createId } from '$lib/kainbu/id';
 import { normalizeProjectAiState } from '$lib/kainbu/aiSessions';
 import { getActiveScratchpadPad, normalizeScratchpadData } from '$lib/kainbu/scratchpad';
-import type { KanbanData, Project, ProjectBoard, ProjectPage, ScratchpadData } from '$lib/kainbu/types';
+import type {
+	BoardPreferences,
+	KanbanData,
+	Project,
+	ProjectBoard,
+	ProjectPage,
+	ScratchpadData
+} from '$lib/kainbu/types';
 
 const cloneKanbanData = (kanbanData: KanbanData) => structuredClone(kanbanData || []);
 
@@ -11,6 +19,7 @@ const createFallbackBoard = (project: Pick<Project, 'id' | 'kanbanData' | 'creat
 	name: 'Board',
 	position: 0,
 	kanbanData: cloneKanbanData(project.kanbanData || []),
+	preferences: normalizeBoardPreferences(undefined),
 	createdAt: project.createdAt,
 	updatedAt: project.updatedAt
 });
@@ -58,6 +67,7 @@ export const normalizeProjectStructure = (project: Project): Project => {
 					name: board.name?.trim() || `Board ${index + 1}`,
 					position: Number.isFinite(board.position) ? board.position : index,
 					kanbanData: cloneKanbanData(board.kanbanData || []),
+					preferences: normalizeBoardPreferences(board.preferences),
 					createdAt: board.createdAt || project.createdAt,
 					updatedAt: board.updatedAt || project.updatedAt
 				}))
@@ -135,6 +145,27 @@ export const updateProjectBoardData = (project: Project, boardId: string, kanban
 	};
 
 	return setProjectActiveBoard(nextProject, boardId);
+};
+
+export const updateProjectBoardPreferences = (
+	project: Project,
+	boardId: string,
+	preferences: BoardPreferences
+) => {
+	const nextBoards = project.boards.map((board) =>
+		board.id === boardId
+			? {
+					...board,
+					preferences: normalizeBoardPreferences(preferences),
+					updatedAt: Date.now()
+				}
+			: board
+	);
+
+	return {
+		...project,
+		boards: nextBoards
+	};
 };
 
 export const updateProjectPageContent = (project: Project, pageId: string, content: string) => {

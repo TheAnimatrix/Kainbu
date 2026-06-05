@@ -2,7 +2,7 @@ import { createId } from '$lib/kainbu/id';
 import { DEFAULT_AI_MODEL_ID } from '$lib/kainbu/models';
 import { DEFAULT_BACKGROUND_THEME } from '$lib/kainbu/backgrounds';
 import { createScratchpadData } from '$lib/kainbu/scratchpad';
-import type { KanbanData, Project, UserSettings } from '$lib/kainbu/types';
+import type { BoardPreferences, KanbanData, Project, UserSettings } from '$lib/kainbu/types';
 
 export const BRAND_NAME = 'Kainbu';
 export const BRAND_KATAKANA = 'カインブ';
@@ -96,6 +96,12 @@ export const MAX_COLUMN_WIDTH = 420;
 
 export const clampColumnWidth = (value: number) =>
 	Math.max(MIN_COLUMN_WIDTH, Math.min(MAX_COLUMN_WIDTH, Math.round(value)));
+
+export const DEFAULT_BOARD_PREFERENCES: BoardPreferences = {
+	defaultShowCheckbox: true,
+	moveCheckedTasks: true,
+	checkedTaskTargetColumnId: ''
+};
 
 export const DEFAULT_SETTINGS: UserSettings = {
 	defaultShowCheckbox: true,
@@ -206,6 +212,7 @@ export const EMPTY_PROJECT = (userId: string, name = 'New Project'): Project => 
 				name: 'Board',
 				position: 0,
 				kanbanData: structuredClone(INITIAL_KANBAN),
+				preferences: structuredClone(DEFAULT_BOARD_PREFERENCES),
 				createdAt: now,
 				updatedAt: now
 			}

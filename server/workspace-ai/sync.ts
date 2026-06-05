@@ -404,6 +404,10 @@ const mapPbBoard = (record: Record<string, unknown>, projectId: string): Project
     project_id: projectId,
     name: String(record.name || ""),
     position: typeof record.position === "number" ? record.position : 0,
+    preferences:
+        record.preferences && typeof record.preferences === "object"
+            ? (record.preferences as ProjectBoardRow["preferences"])
+            : null,
     created_at: iso(record.created),
     updated_at: iso(record.updated),
 });

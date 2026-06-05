@@ -1116,7 +1116,7 @@
 									<span class="text-[10px] font-bold uppercase tracking-[0.2em] text-app-subtext">Tags</span>
 									<div class="flex flex-wrap items-center gap-1.5">
 										{#each draft.tags as tag (tag.id)}
-											<span class={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-semibold ${getTagToneClasses(tag.color)}`}>
+												<span class={`${getTagToneClasses(tag.color)} kainbu-tag-tone--lg gap-1.5`}>
 												{tag.label}
 												<button type="button" class="opacity-70 transition hover:opacity-100" on:click={() => deleteTag(tag.id)}>
 													<X size={11} />
@@ -1186,7 +1186,7 @@
 											{#each recentTags as tag (tag.id)}
 												<button
 													type="button"
-													class={`rounded-full px-2 py-0.5 text-[11px] font-semibold transition hover:opacity-100 ${getTagToneClasses(tag.color)}`}
+													class={`${getTagToneClasses(tag.color)} kainbu-tag-tone--lg transition hover:opacity-100`}
 													on:click={() => addTag(tag.label, tag.color)}
 												>
 													{tag.label}

@@ -5,6 +5,7 @@ import {
 	EMPTY_PROJECT
 } from '$lib/kainbu/constants';
 import { DEFAULT_AI_MODEL_ID } from '$lib/kainbu/models';
+import { normalizeBoardPreferences } from '$lib/kainbu/boardPreferences';
 import { normalizeNullableBackgroundTheme } from '$lib/kainbu/backgrounds';
 import { invokeWorkspaceApi } from '$lib/kainbu/workspaceApi';
 import { createId } from '$lib/kainbu/id';
@@ -517,6 +518,7 @@ const mapBoardRow = (
 	name: row.name,
 	position: row.position,
 	kanbanData: buildKanbanData(columns, tasks),
+	preferences: normalizeBoardPreferences(row.preferences),
 	createdAt: new Date(row.created_at).getTime(),
 	updatedAt: new Date(row.updated_at).getTime()
 });
@@ -1228,7 +1230,8 @@ export const createProject = async (
 			project: projectRecord.id,
 			client_id: board.id,
 			name: board.name,
-			position: board.position
+			position: board.position,
+			preferences: normalizeBoardPreferences(board.preferences)
 		});
 	}
 
@@ -1341,7 +1344,8 @@ export const createProjectBoard = async (projectId: string, name: string, positi
 		project: projectPbId,
 		client_id: clientId,
 		name,
-		position
+		position,
+		preferences: normalizeBoardPreferences(undefined)
 	});
 	return mapBoardRow(mapBoardRecord(data, projectId), [], []);
 };
@@ -1411,6 +1415,16 @@ const deleteProjectChildByClientId = async (
 
 export const renameProjectBoard = async (projectId: string, boardId: string, name: string) => {
 	await updateProjectChildByClientId('project_boards', projectId, boardId, { name });
+};
+
+export const updateProjectBoardPreferences = async (
+	projectId: string,
+	boardId: string,
+	preferences: ProjectBoard['preferences']
+) => {
+	await updateProjectChildByClientId('project_boards', projectId, boardId, {
+		preferences: normalizeBoardPreferences(preferences)
+	});
 };
 
 export const deleteProjectBoard = async (projectId: string, boardId: string) => {

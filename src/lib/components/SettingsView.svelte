@@ -404,26 +404,6 @@
 					</div>
 
 					<div>
-						<p class="text-xs font-semibold text-app-text">Task defaults</p>
-						<label class="mt-2 flex items-center justify-between gap-3 rounded-lg border border-app-border/40 px-3 py-2.5">
-							<div>
-								<p class="text-sm font-medium text-app-text">Checkbox on new tasks</p>
-								<p class="mt-0.5 text-xs text-app-subtext">Start new cards with a checkbox ready to toggle.</p>
-							</div>
-							<input
-								type="checkbox"
-								class="h-4 w-4 accent-app-primary"
-								checked={settings.defaultShowCheckbox}
-								on:change={(event) =>
-									onSettingsChange({
-										...settings,
-										defaultShowCheckbox: (event.currentTarget as HTMLInputElement).checked
-									})}
-							/>
-						</label>
-					</div>
-
-					<div>
 						<p class="text-xs font-semibold text-app-text">How backgrounds apply</p>
 						<ul class="mt-2 space-y-1 text-sm text-app-subtext">
 							<li>Personal: dashboard, settings, and fallback workspace mood.</li>

@@ -693,7 +693,7 @@
 									{#if timed.task.tags.length}
 										<div class="mt-2 flex flex-wrap gap-1">
 											{#each timed.task.tags.slice(0, 4) as tag (tag.id)}
-												<span class={`rounded-md px-1.5 py-0.5 text-[10px] font-semibold ${getTagToneClasses(tag.color)}`}>
+												<span class={getTagToneClasses(tag.color)}>
 													{tag.label}
 												</span>
 											{/each}

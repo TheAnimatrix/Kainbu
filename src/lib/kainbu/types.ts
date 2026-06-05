@@ -258,12 +258,20 @@ export interface ProjectInvite {
 	respondedAt?: number;
 }
 
+export interface BoardPreferences {
+	defaultShowCheckbox: boolean;
+	moveCheckedTasks: boolean;
+	/** Empty uses a column titled Done when moveCheckedTasks is enabled. */
+	checkedTaskTargetColumnId: string;
+}
+
 export interface ProjectBoard {
 	id: string;
 	projectId: string;
 	name: string;
 	position: number;
 	kanbanData: KanbanData;
+	preferences: BoardPreferences;
 	createdAt: number;
 	updatedAt: number;
 }
@@ -776,6 +784,7 @@ export interface ProjectBoardRow {
 	project_id: string;
 	name: string;
 	position: number;
+	preferences?: BoardPreferences | null;
 	created_at: string;
 	updated_at: string;
 }

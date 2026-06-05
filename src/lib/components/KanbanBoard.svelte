@@ -22,6 +22,7 @@
 		Plus,
 		Repeat2,
 		Search,
+		Settings2,
 		Sparkles,
 		Square,
 		Tag as TagIcon,
@@ -58,7 +59,9 @@
 	} from '$lib/kainbu/taskMarkdown';
 	import { getBoardPresenceViewers } from '$lib/kainbu/boardPresence';
 	import { formatTimingLabel, getTaskDueAt } from '$lib/kainbu/timing';
+	import BoardOptionsSheet from '$lib/components/BoardOptionsSheet.svelte';
 	import BoardViewersPill from '$lib/components/BoardViewersPill.svelte';
+	import { resolveCheckedMoveTargetColumnId } from '$lib/kainbu/boardPreferences';
 	import ShareWorkspaceLinkButton from '$lib/components/ShareWorkspaceLinkButton.svelte';
 	import {
 		addBidirectionalLink,
@@ -87,6 +90,7 @@
 		getToneSurfaceClass
 	} from '$lib/kainbu/tags';
 	import type {
+		BoardPreferences,
 		ChatAttachment,
 		Column,
 		KanbanData,
@@ -144,7 +148,7 @@
 	export let highlightedTaskIds: string[] = [];
 	export let activeTaskId: string | undefined = undefined;
 	export let isLocked = false;
-	export let defaultShowCheckbox = true;
+	export let boardPreferences: BoardPreferences;
 	export let colorMode: import('$lib/kainbu/types').ColorMode = 'dark';
 	export let active = true;
 	export let members: ProjectMembership[] = [];
@@ -162,6 +166,7 @@
 	}) => void = () => {};
 	export let onAddAttachments: (attachments: ChatAttachment[]) => void = () => {};
 	export let onDockedEditorChange: (isDocked: boolean) => void = () => {};
+	export let onBoardPreferencesChange: (nextPreferences: BoardPreferences) => void = () => {};
 	export let boardSearchActive = false;
 	export let boardSearchQuery = '';
 
@@ -213,7 +218,10 @@
 	let lastScrolledHighlightedTaskId = '';
 	let lastColumnMove: LastColumnMove | null = null;
 	let lastColumnMoveProjectId = '';
+	let boardOptionsOpen = false;
+	let menuSuppressScrollCloseUntil = 0;
 	const MENU_GAP = 8;
+	const MENU_SCROLL_CLOSE_GRACE_MS = 400;
 	const MENU_GUTTER = 12;
 	const COLUMN_MENU_WIDTH = 288;
 	const COLUMN_MENU_HEIGHT = 520;
@@ -505,6 +513,38 @@
 		rewriteTaskError = '';
 	};
 
+	const markMenuOpened = () => {
+		menuSuppressScrollCloseUntil = Date.now() + MENU_SCROLL_CLOSE_GRACE_MS;
+	};
+
+	const handleMenuViewportScroll = () => {
+		if (Date.now() < menuSuppressScrollCloseUntil) return;
+		closeMenus();
+		bumpLinkOverlay();
+	};
+
+	const portalToBody = (node: HTMLElement) => {
+		if (!browser) return {};
+		document.body.appendChild(node);
+		return {
+			destroy() {
+				node.remove();
+			}
+		};
+	};
+
+	const isFloatingMenuTarget = (target: HTMLElement | null) =>
+		Boolean(
+			target?.closest(
+				'[data-task-menu], [data-column-menu], [data-task-info-menu], [data-task-tag-menu], [data-task-link-picker]'
+			)
+		);
+
+	const closeMenusFromBackdrop = (event: MouseEvent) => {
+		event.stopPropagation();
+		closeMenus();
+	};
+
 	const clearLinkView = () => {
 		linkViewAnchorId = null;
 	};
@@ -521,11 +561,16 @@
 		linkOverlayRedrawToken += 1;
 	};
 
-	const openTaskLinkPicker = (columnId: string, taskId: string, trigger: HTMLButtonElement) => {
+	const openTaskLinkPicker = async (
+		columnId: string,
+		taskId: string,
+		trigger: HTMLButtonElement
+	) => {
+		markMenuOpened();
 		taskLinkPicker = {
 			sourceColId: columnId,
 			sourceTaskId: taskId,
-			position: getMenuPosition(trigger, LINK_PICKER_WIDTH, LINK_PICKER_HEIGHT)
+			position: await resolveMenuPosition(trigger, LINK_PICKER_WIDTH, LINK_PICKER_HEIGHT)
 		};
 		openTaskMenu = null;
 		taskTagMenuOpen = null;
@@ -621,6 +666,18 @@
 		closeMenus();
 	};
 
+	const resolveMenuPosition = async (
+		trigger: HTMLElement,
+		menuWidth: number,
+		menuHeight: number
+	): Promise<MenuPosition> => {
+		await tick();
+		if (browser && typeof requestAnimationFrame === 'function') {
+			await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+		}
+		return getMenuPosition(trigger, menuWidth, menuHeight);
+	};
+
 	const getMenuPosition = (
 		trigger: HTMLElement,
 		menuWidth: number,
@@ -648,38 +705,40 @@
 		};
 	};
 
-	const toggleColumnMenu = (columnId: string, trigger: HTMLElement) => {
+	const toggleColumnMenu = async (columnId: string, trigger: HTMLElement) => {
 		if (openColumnMenu?.columnId === columnId) {
 			openColumnMenu = null;
 			return;
 		}
 
+		markMenuOpened();
 		openColumnMenu = {
 			columnId,
-			position: getMenuPosition(trigger, COLUMN_MENU_WIDTH, COLUMN_MENU_HEIGHT)
+			position: await resolveMenuPosition(trigger, COLUMN_MENU_WIDTH, COLUMN_MENU_HEIGHT)
 		};
 		openTaskMenu = null;
 		taskTagMenuOpen = null;
 		taskInfoMenuOpen = null;
 	};
 
-	const toggleTaskMenu = (columnId: string, taskId: string, trigger: HTMLElement) => {
+	const toggleTaskMenu = async (columnId: string, taskId: string, trigger: HTMLElement) => {
 		if (openTaskMenu?.colId === columnId && openTaskMenu.taskId === taskId) {
 			openTaskMenu = null;
 			return;
 		}
 
+		markMenuOpened();
 		openTaskMenu = {
 			colId: columnId,
 			taskId,
-			position: getMenuPosition(trigger, TASK_MENU_WIDTH, TASK_MENU_HEIGHT)
+			position: await resolveMenuPosition(trigger, TASK_MENU_WIDTH, TASK_MENU_HEIGHT)
 		};
 		openColumnMenu = null;
 		taskTagMenuOpen = null;
 		taskInfoMenuOpen = null;
 	};
 
-	const toggleTaskInfoMenu = (colId: string, taskId: string, trigger: HTMLElement) => {
+	const toggleTaskInfoMenu = async (colId: string, taskId: string, trigger: HTMLElement) => {
 		if (taskInfoMenuOpen?.colId === colId && taskInfoMenuOpen.taskId === taskId) {
 			taskInfoMenuOpen = null;
 			return;
@@ -688,10 +747,11 @@
 		const task = boardData.flatMap((column) => column.tasks).find((entry) => entry.id === taskId);
 		const menuHeight = task?.hasCheckbox ? TASK_INFO_MENU_HEIGHT_CHECKABLE : TASK_INFO_MENU_HEIGHT;
 
+		markMenuOpened();
 		taskInfoMenuOpen = {
 			colId,
 			taskId,
-			position: getMenuPosition(trigger, TASK_INFO_MENU_WIDTH, menuHeight)
+			position: await resolveMenuPosition(trigger, TASK_INFO_MENU_WIDTH, menuHeight)
 		};
 		openColumnMenu = null;
 		openTaskMenu = null;
@@ -743,7 +803,7 @@
 
 	const handleWindowClick = (event: MouseEvent) => {
 		const target = event.target as HTMLElement | null;
-		if (target?.closest('[data-task-menu]') || target?.closest('[data-column-menu]')) {
+		if (isFloatingMenuTarget(target)) {
 			return;
 		}
 		closeMenus();
@@ -948,7 +1008,7 @@
 			title: 'New Task',
 			description: '',
 			tags: [],
-			hasCheckbox: defaultShowCheckbox,
+			hasCheckbox: boardPreferences.defaultShowCheckbox,
 			checked: false,
 			createdAt: timestamp,
 			updatedAt: timestamp
@@ -1073,9 +1133,13 @@
 	};
 
 	const toggleChecked = (columnId: string, taskId: string) => {
-		updateTask(columnId, taskId, (task) => {
-			const checked = !task.checked;
-			return {
+		const sourceColumn = boardData.find((column) => column.id === columnId);
+		const task = sourceColumn?.tasks.find((entry) => entry.id === taskId);
+		if (!task) return;
+
+		const checked = !task.checked;
+		const nextTask = preserveTaskTimestamps(
+			{
 				...task,
 				title:
 					task.hasCheckbox && hasLeadingCardCheckboxLine(task.title || '')
@@ -1083,8 +1147,38 @@
 						: task.title,
 				checked,
 				completedAt: checked ? Date.now() : undefined
-			};
-		});
+			},
+			task
+		);
+
+		if (checked) {
+			const targetColumnId = resolveCheckedMoveTargetColumnId(boardData, boardPreferences);
+			if (targetColumnId && targetColumnId !== columnId) {
+				emitBoardChange(
+					boardData.map((column) => {
+						if (column.id === columnId) {
+							return {
+								...column,
+								tasks: column.tasks.filter((entry) => entry.id !== taskId)
+							};
+						}
+
+						if (column.id === targetColumnId) {
+							return {
+								...column,
+								tasks: [nextTask, ...column.tasks]
+							};
+						}
+
+						return column;
+					})
+				);
+				closeMenus();
+				return;
+			}
+		}
+
+		updateTask(columnId, taskId, () => nextTask);
 		closeMenus();
 	};
 
@@ -1169,15 +1263,16 @@
 		assignMenuOpen = null;
 	};
 
-	const toggleTaskTagMenu = (colId: string, taskId: string, trigger: HTMLElement) => {
+	const toggleTaskTagMenu = async (colId: string, taskId: string, trigger: HTMLElement) => {
 		if (taskTagMenuOpen?.colId === colId && taskTagMenuOpen.taskId === taskId) {
 			taskTagMenuOpen = null;
 			return;
 		}
+		markMenuOpened();
 		taskTagMenuOpen = {
 			colId,
 			taskId,
-			position: getMenuPosition(trigger, TAG_MENU_WIDTH, TAG_MENU_HEIGHT)
+			position: await resolveMenuPosition(trigger, TAG_MENU_WIDTH, TAG_MENU_HEIGHT)
 		};
 		openColumnMenu = null;
 		openTaskMenu = null;
@@ -1464,8 +1559,11 @@
 		);
 		const isReferenceHighlight = !linkViewAnchorId && effectiveHighlightedTaskIds.includes(task.id);
 
-		let result =
-			'group relative shrink-0 overflow-hidden rounded-lg p-2 shadow-sm transition duration-200 hover:-translate-y-0.5 hover:shadow-lg';
+		const cardShadowClass = colorMode === 'light' ? '' : 'shadow-sm hover:shadow-lg';
+
+		let result = `group relative shrink-0 overflow-hidden rounded-lg p-2 ${cardShadowClass} transition duration-200${
+			isMobile ? '' : ' hover:-translate-y-0.5'
+		}`;
 
 		if (task._status === 'added') result += ' border border-emerald-500/40 bg-emerald-500/10';
 		else if (task._status === 'removed')
@@ -1590,10 +1688,7 @@
 			<div
 				bind:this={boardScrollViewport}
 				class="flex h-full min-h-0 min-w-0 flex-1 flex-col overflow-x-auto overflow-y-hidden py-1 lg:py-2"
-				onscroll={() => {
-					closeMenus();
-					bumpLinkOverlay();
-				}}
+				onscroll={handleMenuViewportScroll}
 			>
 				{#if !isDiffMode}
 					<div class="flex h-full min-h-0 min-w-min flex-col">
@@ -1631,6 +1726,23 @@
 							>
 								<Search size={13} />
 								Search
+							</button>
+							<button
+								type="button"
+								class={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-[11px] font-semibold transition ${
+									boardOptionsOpen
+										? 'border-app-primary/40 bg-app-primary/10 text-app-primary'
+										: 'border-app-border bg-app-surface text-app-subtext hover:text-app-text'
+								}`}
+								title="Board options"
+								aria-label="Board options"
+								onclick={() => {
+									closeMenus();
+									boardOptionsOpen = true;
+								}}
+							>
+								<Settings2 size={13} />
+								Options
 							</button>
 							{#if boardSearchActive}
 								<div class="flex min-w-[12rem] max-w-sm flex-1 items-center gap-1.5">
@@ -1781,7 +1893,10 @@
 														}`}
 														onclick={(event) => {
 															event.stopPropagation();
-															toggleColumnMenu(column.id, event.currentTarget as HTMLButtonElement);
+															void toggleColumnMenu(
+																column.id,
+																event.currentTarget as HTMLButtonElement
+															);
 														}}
 													>
 														<Ellipsis size={isMobile ? 18 : 16} />
@@ -1807,10 +1922,7 @@
 													dropAnimationDisabled: true,
 													dropTargetStyle: dndDropTargetStyle
 												}}
-												onscroll={() => {
-													closeMenus();
-													bumpLinkOverlay();
-												}}
+												onscroll={handleMenuViewportScroll}
 												onconsider={(event) => {
 													if (column.isLinkGroup) return;
 													handleTaskDnd(column.id, event as CustomEvent, 'consider');
@@ -1941,7 +2053,7 @@
 																<div class="mt-1.5 flex flex-wrap gap-1">
 																	{#if getTaskLinkCount(task) > 0}
 																		<span
-																			class="inline-flex items-center gap-1 rounded-full border border-app-primary/30 bg-app-primary/10 px-1.5 py-px text-[9px] font-semibold uppercase tracking-[0.14em] text-app-primary"
+																			class="inline-flex items-center gap-0.5 rounded-md border border-app-primary/30 bg-app-primary/10 px-1 py-px text-[10px] font-medium leading-tight text-app-primary"
 																		>
 																			<Link2 size={10} />
 																			{getTaskLinkCount(task)}
@@ -1949,9 +2061,7 @@
 																		</span>
 																	{/if}
 																	{#each task.tags || [] as tag (tag.id)}
-																		<span
-																			class={`rounded-full px-1.5 py-px text-[9px] font-semibold uppercase tracking-[0.14em] ${getTagToneClasses(tag.color)}`}
-																		>
+																		<span class={getTagToneClasses(tag.color)}>
 																			{tag.label}
 																		</span>
 																	{/each}
@@ -2065,7 +2175,11 @@
 																	{/if}
 																</div>
 
-																<div class="group/task-actions flex items-center">
+																<div
+																	class="group/task-actions flex items-center touch-manipulation"
+																	onpointerdown={(event) => event.stopPropagation()}
+																	onclick={(event) => event.stopPropagation()}
+																>
 																	<div
 																		class={`flex items-center ${
 																			isMobile
@@ -2103,7 +2217,7 @@
 																				taskInfoMenuOpen?.taskId === task.id}
 																			onclick={(event) => {
 																				event.stopPropagation();
-																				toggleTaskInfoMenu(
+																				void toggleTaskInfoMenu(
 																					taskColumnId,
 																					task.id,
 																					event.currentTarget as HTMLButtonElement
@@ -2123,7 +2237,7 @@
 																				title="Quick tags"
 																				onclick={(event) => {
 																					event.stopPropagation();
-																					toggleTaskTagMenu(
+																					void toggleTaskTagMenu(
 																						taskColumnId,
 																						task.id,
 																						event.currentTarget as HTMLButtonElement
@@ -2179,7 +2293,7 @@
 																			aria-label="More actions"
 																			onclick={(event) => {
 																				event.stopPropagation();
-																				toggleTaskMenu(
+																				void toggleTaskMenu(
 																					taskColumnId,
 																					task.id,
 																					event.currentTarget as HTMLButtonElement
@@ -2312,9 +2426,7 @@
 												{#if task.tags?.length}
 													<div class="flex flex-wrap gap-1.5">
 														{#each task.tags as tag (tag.id)}
-															<span
-																class={`rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.16em] ${getTagToneClasses(tag.color)}`}
-															>
+															<span class={getTagToneClasses(tag.color)}>
 																{tag.label}
 															</span>
 														{/each}
@@ -2461,7 +2573,14 @@
 			{@const currentColumnTone =
 				SURFACE_TONE_OPTIONS.find((t) => t.value === (menuColumn.color || '')) ??
 				SURFACE_TONE_OPTIONS[0]}
-			<div class="pointer-events-none fixed inset-0 z-[140]">
+			<div class="pointer-events-none fixed inset-0 z-[140]" use:portalToBody>
+				<button
+					type="button"
+					class="pointer-events-auto fixed inset-0 cursor-default bg-transparent"
+					aria-label="Close column menu"
+					onpointerdown={(event) => event.stopPropagation()}
+					onclick={closeMenusFromBackdrop}
+				></button>
 				<div
 					role="presentation"
 					data-column-menu
@@ -2617,7 +2736,14 @@
 		{@const menuColumn = boardData.find((column) => column.id === openTaskMenu!.colId)}
 		{@const menuTask = menuColumn?.tasks.find((task) => task.id === openTaskMenu!.taskId)}
 		{#if menuColumn && menuTask}
-			<div class="pointer-events-none fixed inset-0 z-[150]">
+			<div class="pointer-events-none fixed inset-0 z-[150]" use:portalToBody>
+				<button
+					type="button"
+					class="pointer-events-auto fixed inset-0 cursor-default bg-transparent"
+					aria-label="Close task menu"
+					onpointerdown={(event) => event.stopPropagation()}
+					onclick={closeMenusFromBackdrop}
+				></button>
 				<div
 					role="presentation"
 					data-task-menu
@@ -2654,7 +2780,7 @@
 						class="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm text-app-text transition hover:bg-app-element"
 						onclick={(event) => {
 							event.stopPropagation();
-							openTaskLinkPicker(
+							void openTaskLinkPicker(
 								menuColumn.id,
 								menuTask.id,
 								event.currentTarget as HTMLButtonElement
@@ -2818,7 +2944,14 @@
 		{@const infoColumn = boardData.find((column) => column.id === taskInfoMenuOpen!.colId)}
 		{@const infoTask = infoColumn?.tasks.find((task) => task.id === taskInfoMenuOpen!.taskId)}
 		{#if infoColumn && infoTask}
-			<div class="pointer-events-none fixed inset-0 z-[145]">
+			<div class="pointer-events-none fixed inset-0 z-[145]" use:portalToBody>
+				<button
+					type="button"
+					class="pointer-events-auto fixed inset-0 cursor-default bg-transparent"
+					aria-label="Close card info"
+					onpointerdown={(event) => event.stopPropagation()}
+					onclick={closeMenusFromBackdrop}
+				></button>
 				<div
 					role="dialog"
 					aria-label="Card info"
@@ -2826,6 +2959,7 @@
 					class="pointer-events-auto fixed rounded-xl border border-app-border bg-app-surface p-3 shadow-kainbu-xl"
 					style={`top:${taskInfoMenuOpen!.position.top}px; left:${taskInfoMenuOpen!.position.left}px; width:${TASK_INFO_MENU_WIDTH}px;`}
 					onmousedown={(event) => event.stopPropagation()}
+					onclick={(event) => event.stopPropagation()}
 				>
 					<p class="mb-2 text-[10px] font-bold uppercase tracking-[0.18em] text-app-subtext">
 						Card info
@@ -2855,12 +2989,21 @@
 		{@const menuColumn = boardData.find((column) => column.id === taskTagMenuOpen!.colId)}
 		{@const menuTask = menuColumn?.tasks.find((task) => task.id === taskTagMenuOpen!.taskId)}
 		{#if menuColumn && menuTask}
-			<div class="pointer-events-none fixed inset-0 z-[145]">
+			<div class="pointer-events-none fixed inset-0 z-[145]" use:portalToBody>
+				<button
+					type="button"
+					class="pointer-events-auto fixed inset-0 cursor-default bg-transparent"
+					aria-label="Close tag menu"
+					onpointerdown={(event) => event.stopPropagation()}
+					onclick={closeMenusFromBackdrop}
+				></button>
 				<div
 					role="presentation"
+					data-task-tag-menu
 					class="pointer-events-auto fixed w-52 max-h-[calc(100vh-1.5rem)] overflow-y-auto rounded-xl border border-app-border bg-app-surface p-1 shadow-kainbu-xl"
 					style={`top:${taskTagMenuOpen!.position.top}px; left:${taskTagMenuOpen!.position.left}px;`}
 					onmousedown={(event) => event.stopPropagation()}
+					onclick={(event) => event.stopPropagation()}
 				>
 					{#if existingTags.length}
 						{#each existingTags.slice(0, 10) as quickTag (quickTag.id)}
@@ -2931,5 +3074,13 @@
 		active={Boolean(linkViewAnchorId) && !isDiffMode && !isLocked}
 		edges={linkOverlayEdges}
 		redrawToken={linkOverlayRedrawToken}
+	/>
+
+	<BoardOptionsSheet
+		open={boardOptionsOpen}
+		preferences={boardPreferences}
+		columns={boardData}
+		onClose={() => (boardOptionsOpen = false)}
+		onChange={onBoardPreferencesChange}
 	/>
 </div>
