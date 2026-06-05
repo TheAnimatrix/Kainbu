@@ -1,3 +1,4 @@
+import { getUserAvatarUrl } from '$lib/kainbu/avatar';
 import {
 	DEFAULT_AI_SESSION_TITLE,
 	DEFAULT_CHAT_HISTORY,
@@ -394,20 +395,28 @@ const normalizeUsernameValue = (value: string | null | undefined) =>
 	typeof value === 'string' && value.trim().length ? value.trim() : null;
 
 const mapProfileRow = (
-	row: Pick<ProfileRow, 'user_id' | 'email' | 'username'> | null,
+	row: Pick<ProfileRow, 'user_id' | 'email' | 'username' | 'avatar_url'> | null,
 	userId: string
 ): UserProfile => ({
 	userId: row?.user_id || userId,
 	email: row?.email || null,
-	username: normalizeUsernameValue(row?.username)
+	username: normalizeUsernameValue(row?.username),
+	avatarUrl: row?.avatar_url ?? null
 });
 
 const fetchSharedMemberProfiles = async (userIds: string[]) => {
 	const uniqueUserIds = [...new Set(userIds.map((id) => id.trim()).filter(Boolean))];
-	if (!uniqueUserIds.length) return [] as Pick<ProfileRow, 'user_id' | 'email' | 'username'>[];
+	if (!uniqueUserIds.length) {
+		return [] as Pick<ProfileRow, 'user_id' | 'email' | 'username' | 'avatar_url'>[];
+	}
 
 	const result = await invokeWorkspaceApi<{
-		profiles: Array<{ userId: string; email?: string | null; username?: string | null }>;
+		profiles: Array<{
+			userId: string;
+			email?: string | null;
+			username?: string | null;
+			avatarUrl?: string | null;
+		}>;
 	}>('/api/workspace/members/profiles', {
 		body: { userIds: uniqueUserIds }
 	});
@@ -415,7 +424,8 @@ const fetchSharedMemberProfiles = async (userIds: string[]) => {
 	return (result.profiles || []).map((profile) => ({
 		user_id: profile.userId,
 		email: profile.email || null,
-		username: normalizeUsernameValue(profile.username)
+		username: normalizeUsernameValue(profile.username),
+		avatar_url: profile.avatarUrl ?? null
 	}));
 };
 
@@ -423,6 +433,7 @@ const mapMembershipRow = (
 	row: ProjectMembershipRow,
 	email: string | undefined,
 	username: string | null,
+	avatarUrl: string | null | undefined,
 	currentUserId: string
 ): ProjectMembership => ({
 	projectId: row.project_id,
@@ -430,6 +441,7 @@ const mapMembershipRow = (
 	role: row.role,
 	email,
 	username,
+	avatarUrl: avatarUrl ?? null,
 	joinedAt: new Date(row.joined_at).getTime(),
 	lastOpenedAt: new Date(row.last_opened_at).getTime(),
 	viewingBoardId: row.viewing_board_client_id || undefined,
@@ -951,7 +963,7 @@ const loadWorkspaceFromRemote = async (userId: string) => {
 		: [];
 
 	const profileIds = [...new Set(allMembershipRows.map((membership) => membership.user_id))];
-	const profileRows: Pick<ProfileRow, 'user_id' | 'email' | 'username'>[] = [];
+	const profileRows: Pick<ProfileRow, 'user_id' | 'email' | 'username' | 'avatar_url'>[] = [];
 	if (profileIds.length) {
 		let profiles: Array<Record<string, unknown>> = [];
 		try {
@@ -963,11 +975,14 @@ const loadWorkspaceFromRemote = async (userId: string) => {
 			profiles = [];
 		}
 		for (const profile of profiles) {
-			const mapped = mapProfileRecord(profile, String(profile.id));
+			const userId = String(profile.id);
+			const avatarUrl = getUserAvatarUrl({ id: userId, avatar: profile.avatar as string | null });
+			const mapped = mapProfileRecord(profile, userId, avatarUrl);
 			profileRows.push({
 				user_id: mapped.user_id,
 				email: mapped.email,
-				username: mapped.username
+				username: mapped.username,
+				avatar_url: avatarUrl
 			});
 		}
 		const resolvedProfileIds = new Set(profileRows.map((profile) => profile.user_id));
@@ -986,7 +1001,8 @@ const loadWorkspaceFromRemote = async (userId: string) => {
 			profile.user_id,
 			{
 				email: profile.email || undefined,
-				username: normalizeUsernameValue(profile.username)
+				username: normalizeUsernameValue(profile.username),
+				avatarUrl: profile.avatar_url ?? null
 			}
 		])
 	);
@@ -999,7 +1015,13 @@ const loadWorkspaceFromRemote = async (userId: string) => {
 		const current = membershipsByProjectId.get(row.project_id) || [];
 		const profileIdentity = profileIdentityById.get(row.user_id);
 		current.push(
-			mapMembershipRow(row, profileIdentity?.email, profileIdentity?.username || null, userId)
+			mapMembershipRow(
+				row,
+				profileIdentity?.email,
+				profileIdentity?.username || null,
+				profileIdentity?.avatarUrl,
+				userId
+			)
 		);
 		membershipsByProjectId.set(row.project_id, current);
 	}
@@ -1696,11 +1718,42 @@ export const fetchUserSettings = async (userId: string) => {
 export const fetchUserProfile = async (userId: string) => {
 	const pb = getPb();
 	const data = await pb.collection('users').getOne(userId);
+	const avatarUrl = getUserAvatarUrl(data);
 	return mapProfileRow(
 		{
 			user_id: userId,
 			email: typeof data.email === 'string' ? data.email : null,
-			username: typeof data.username === 'string' ? data.username : null
+			username: typeof data.username === 'string' ? data.username : null,
+			avatar_url: avatarUrl
+		},
+		userId
+	);
+};
+
+export const uploadUserAvatar = async (userId: string, file: File) => {
+	const pb = getPb();
+	const data = await pb.collection('users').update(userId, { avatar: file });
+	const avatarUrl = getUserAvatarUrl(data);
+	return mapProfileRow(
+		{
+			user_id: userId,
+			email: typeof data.email === 'string' ? data.email : null,
+			username: typeof data.username === 'string' ? data.username : null,
+			avatar_url: avatarUrl
+		},
+		userId
+	);
+};
+
+export const removeUserAvatar = async (userId: string) => {
+	const pb = getPb();
+	const data = await pb.collection('users').update(userId, { avatar: null });
+	return mapProfileRow(
+		{
+			user_id: userId,
+			email: typeof data.email === 'string' ? data.email : null,
+			username: typeof data.username === 'string' ? data.username : null,
+			avatar_url: null
 		},
 		userId
 	);
@@ -1723,11 +1776,13 @@ export const checkUsernameAvailability = async (username: string) => {
 export const updateUsername = async (userId: string, username: string) => {
 	const pb = getPb();
 	const data = await pb.collection('users').update(userId, { username });
+	const avatarUrl = getUserAvatarUrl(data);
 	return mapProfileRow(
 		{
 			user_id: userId,
 			email: typeof data.email === 'string' ? data.email : null,
-			username: typeof data.username === 'string' ? data.username : null
+			username: typeof data.username === 'string' ? data.username : null,
+			avatar_url: avatarUrl
 		},
 		userId
 	);

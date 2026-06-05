@@ -24,12 +24,18 @@ const VALID_GRADIENT_BACKGROUND_IDS = new Set([
 
 const VALID_SOLID_BACKGROUND_IDS = new Set([
 	'obsidian',
+	'graphite',
 	'cinder',
 	'deep-sea',
 	'evergreen',
 	'navy-room',
-	'mulberry'
+	'mulberry',
+	'sand',
+	'porcelain',
+	'plum'
 ]);
+
+const isCustomHslSolidId = (id: string) => /^custom-hsl-\d{1,3}-\d{1,3}-\d{1,3}$/.test(id.trim());
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
 	typeof value === 'object' && value !== null;
@@ -44,7 +50,8 @@ const isBackgroundTheme = (value: unknown): value is BackgroundTheme => {
 	}
 
 	if (value.kind === 'solid') {
-		return typeof value.id === 'string' && VALID_SOLID_BACKGROUND_IDS.has(value.id.trim());
+		const id = typeof value.id === 'string' ? value.id.trim() : '';
+		return VALID_SOLID_BACKGROUND_IDS.has(id) || isCustomHslSolidId(id);
 	}
 
 	if (value.kind === 'image') {
@@ -705,7 +712,11 @@ export const handleWorkspaceMemberProfilesRequest = async (
 			userId: String(user.id),
 			email: typeof user.email === 'string' ? user.email : null,
 			username:
-				typeof user.username === 'string' && user.username.trim() ? user.username.trim() : null
+				typeof user.username === 'string' && user.username.trim() ? user.username.trim() : null,
+			avatarUrl:
+				typeof user.avatar === 'string' && user.avatar.trim()
+					? admin.files.getURL(user, user.avatar)
+					: null
 		}))
 	};
 };

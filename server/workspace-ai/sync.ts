@@ -22,6 +22,7 @@ import type {
 } from "./types.js";
 import { createAdminPb, getAuthenticatedUserId } from "../pocketbase.js";
 import { getProjectPbId, pbEscapeFilter, projectClientFilter, projectRelationFilter } from "../pbWorkspace.js";
+import { areKanbanTasksEqualForDiff } from "../../src/lib/kainbu/diff.js";
 import type { BoardRefMap } from "./kanban-ops.js";
 
 const CURRENT_BOARD_FILE = "current-board.json";
@@ -683,31 +684,23 @@ const areStringArraysEqual = (left: string[], right: string[]) =>
     left.length === right.length && left.every((entry, index) => entry === right[index]);
 
 const diffTaskFields = (original: Task, next: Task) => {
+    if (areKanbanTasksEqualForDiff(original, next)) {
+        return {};
+    }
+
     const fields: Record<string, unknown> = {};
 
-    if (original.title !== next.title) fields.title = next.title;
-    if ((original.description || "") !== (next.description || "")) {
+    if ((original.title || "").trim() !== (next.title || "").trim()) {
+        fields.title = next.title;
+    }
+    if ((original.description || "").trim() !== (next.description || "").trim()) {
         fields.description = next.description || "";
     }
 
-    const originalColor = original.color || null;
-    const nextColor = next.color || null;
+    const originalColor = (original.color || "").trim() || null;
+    const nextColor = (next.color || "").trim() || null;
     if (originalColor !== nextColor) {
         fields.color = nextColor;
-    }
-
-    const originalTags = JSON.stringify((original.tags || []).map((tag) => ({
-        id: tag.id,
-        label: tag.label,
-        color: tag.color || null,
-    })));
-    const nextTags = JSON.stringify((next.tags || []).map((tag) => ({
-        id: tag.id,
-        label: tag.label,
-        color: tag.color || null,
-    })));
-    if (originalTags !== nextTags) {
-        fields.tags = structuredClone(next.tags || []);
     }
 
     if (Boolean(original.hasCheckbox) !== Boolean(next.hasCheckbox)) {
@@ -718,12 +711,41 @@ const diffTaskFields = (original: Task, next: Task) => {
         fields.checked = Boolean(next.checked);
     }
 
-    if ((original.countdownAt ?? null) !== (next.countdownAt ?? null)) {
-        fields.countdownAt = next.countdownAt ?? null;
+    const originalCountdown =
+        typeof original.countdownAt === "number" && original.countdownAt > 0
+            ? original.countdownAt
+            : null;
+    const nextCountdown =
+        typeof next.countdownAt === "number" && next.countdownAt > 0 ? next.countdownAt : null;
+    if (originalCountdown !== nextCountdown) {
+        fields.countdownAt = nextCountdown;
     }
 
-    if ((original.assignedTo ?? null) !== (next.assignedTo ?? null)) {
-        fields.assignedTo = next.assignedTo ?? null;
+    const originalAlarm =
+        typeof original.alarmAt === "number" && original.alarmAt > 0 ? original.alarmAt : null;
+    const nextAlarm = typeof next.alarmAt === "number" && next.alarmAt > 0 ? next.alarmAt : null;
+    if (originalAlarm !== nextAlarm) {
+        fields.alarmAt = nextAlarm;
+    }
+
+    if ((original.assignedTo || "").trim() !== (next.assignedTo || "").trim()) {
+        fields.assignedTo = (next.assignedTo || "").trim() || null;
+    }
+
+    const originalTags = JSON.stringify(
+        (original.tags || []).map((tag) => ({
+            label: tag.label,
+            color: tag.color || DEFAULT_TAG_COLOR,
+        }))
+    );
+    const nextTags = JSON.stringify(
+        (next.tags || []).map((tag) => ({
+            label: tag.label,
+            color: tag.color || DEFAULT_TAG_COLOR,
+        }))
+    );
+    if (originalTags !== nextTags) {
+        fields.tags = structuredClone(next.tags || []);
     }
 
     return fields;
@@ -1029,7 +1051,8 @@ const buildKanbanProposal = (
     nextKanbanData: KanbanData,
     scope?: AiScopeHint
 ): AiKanbanProposal => {
-    const ops = deriveKanbanOps(board.kanbanData, nextKanbanData);
+    const originalKanbanData = parseKanbanDocument(board.originalContent);
+    const ops = deriveKanbanOps(originalKanbanData, nextKanbanData);
     const proposalSafety = buildProposalSafety(ops, scope);
 
     return {
@@ -1040,6 +1063,7 @@ const buildKanbanProposal = (
         editCallCount: Math.max(1, board.editCallCount),
         ops,
         proposalSafety,
+        originalKanbanData,
         preview: {
             kanbanData: nextKanbanData,
         },

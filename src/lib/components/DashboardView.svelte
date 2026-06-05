@@ -109,10 +109,10 @@
 	const getMemberName = (member: Project['members'][number]) => getProjectMemberDisplayName(member);
 	const isPinned = (project: Project) => Boolean(project.viewerPinnedAt);
 	const projectCardClass = (project: Project, pinnedHighlight = false) => {
-		const active = project.id === currentProjectId;
-		if (active) return 'border-app-primary/30 bg-app-primary/5';
-		if (pinnedHighlight) return 'border-app-primary/20 bg-app-primary/5';
-		return 'border-app-border/50 bg-app-surface/60';
+		const classes = ['kainbu-board-card'];
+		if (project.id === currentProjectId) classes.push('kainbu-board-card--active');
+		if (pinnedHighlight) classes.push('kainbu-board-card--pinned');
+		return classes.join(' ');
 	};
 	const compareByPinThenName = (left: Project, right: Project) => {
 		const leftPinned = left.viewerPinnedAt ?? 0;
@@ -133,26 +133,48 @@
 </script>
 
 	<section
-		class="absolute inset-0 overflow-x-hidden overflow-y-auto px-3 py-3 sm:px-4 sm:py-4 lg:px-6 lg:py-5"
+		class="kainbu-dashboard absolute inset-0 overflow-x-hidden overflow-y-auto px-3 py-4 sm:px-5 sm:py-5 lg:px-7 lg:py-6"
 	>
-		<div class="mx-auto flex min-w-0 max-w-7xl flex-col gap-5">
-			<div class="flex flex-wrap items-end justify-between gap-3 px-1">
-				<div>
-					<p class="text-[10px] font-semibold uppercase tracking-[0.25em] text-app-primary">It's BU, KainBu</p>
-					<h2 class="mt-1.5 text-2xl font-bold tracking-tight text-app-text">
-						Dashboard
-					</h2>
-					<div class="mt-2 flex flex-wrap gap-3 text-xs text-app-subtext">
-						<span><span class="font-semibold text-app-text">{projects.length}</span> boards</span>
-						<span><span class="font-semibold text-app-text">{pinnedProjects.length}</span> pinned</span>
-						<span><span class="font-semibold text-app-text">{sharedProjects.length}</span> shared</span>
-						<span><span class="font-semibold text-app-text">{timedTasks.length}</span> due items</span>
-					</div>
+		<div class="mx-auto flex min-w-0 max-w-6xl flex-col gap-7">
+			<header class="kainbu-dashboard__header flex flex-wrap items-end justify-between gap-4">
+				<div class="min-w-0 max-w-xl">
+					<p class="kainbu-dashboard__kicker">It's BU, Kainbu</p>
+					<h2 class="kainbu-dashboard__title mt-1 text-app-text">Dashboard</h2>
+					<dl class="kainbu-dashboard__stats mt-3">
+						<div class="kainbu-dashboard__stat">
+							<dt class="sr-only">Boards</dt>
+							<dd>
+								<span class="kainbu-dashboard__stat-value">{projects.length}</span>
+								boards
+							</dd>
+						</div>
+						<div class="kainbu-dashboard__stat">
+							<dt class="sr-only">Pinned</dt>
+							<dd>
+								<span class="kainbu-dashboard__stat-value">{pinnedProjects.length}</span>
+								pinned
+							</dd>
+						</div>
+						<div class="kainbu-dashboard__stat">
+							<dt class="sr-only">Shared</dt>
+							<dd>
+								<span class="kainbu-dashboard__stat-value">{sharedProjects.length}</span>
+								shared
+							</dd>
+						</div>
+						<div class="kainbu-dashboard__stat">
+							<dt class="sr-only">Due items</dt>
+							<dd>
+								<span class="kainbu-dashboard__stat-value">{timedTasks.length}</span>
+								due
+							</dd>
+						</div>
+					</dl>
 				</div>
 				<div class="flex w-full flex-wrap gap-2 sm:w-auto">
 					<button
 						type="button"
-						class="inline-flex flex-1 items-center justify-center gap-1.5 rounded-lg bg-app-primary px-4 py-2 text-sm font-semibold text-white transition hover:bg-app-primary-hover sm:flex-none"
+						class="kainbu-dash-btn kainbu-dash-btn--primary inline-flex flex-1 items-center justify-center gap-1.5 sm:flex-none"
 						on:click={onCreateProject}
 					>
 						<FolderPlus size={14} />
@@ -161,7 +183,7 @@
 					{#if currentProjectId}
 						<button
 							type="button"
-							class="inline-flex flex-1 items-center justify-center gap-1.5 rounded-lg border border-app-border px-4 py-2 text-sm font-semibold text-app-text transition hover:text-app-primary sm:flex-none"
+							class="kainbu-dash-btn kainbu-dash-btn--ghost inline-flex flex-1 items-center justify-center gap-1.5 sm:flex-none"
 							on:click={() => onOpenProject(currentProjectId)}
 						>
 							Current board
@@ -169,16 +191,17 @@
 						</button>
 					{/if}
 				</div>
-			</div>
+			</header>
 
 			{#if incomingInvites.length}
-				<div class="px-1">
-					<p class="mb-2 text-[10px] font-semibold uppercase tracking-[0.2em] text-app-primary">
-						Incoming Invites ({incomingInvites.length})
-					</p>
-					<div class="flex flex-wrap gap-2">
+				<div class="kainbu-dashboard__invites">
+					<h3 class="kainbu-dashboard__section-label">
+						Incoming invites
+						<span class="kainbu-dashboard__section-count">{incomingInvites.length}</span>
+					</h3>
+					<div class="mt-2.5 flex flex-wrap gap-2">
 						{#each incomingInvites as invite (invite.id)}
-							<div class="flex min-w-56 items-center gap-2 rounded-lg border border-app-border/60 px-3 py-2">
+							<div class="kainbu-invite-chip">
 								<Mail size={13} class="shrink-0 text-app-primary" />
 								<div class="min-w-0 flex-1">
 									<p class="truncate text-sm font-medium text-app-text">
@@ -188,15 +211,17 @@
 								</div>
 								<button
 									type="button"
-									class="rounded-md bg-app-primary px-2 py-1 text-xs font-semibold text-white transition hover:bg-app-primary-hover"
+									class="kainbu-dash-btn kainbu-dash-btn--primary kainbu-dash-btn--compact rounded-md px-2 py-1"
 									on:click={() => onAcceptInvite(invite.id)}
+									aria-label="Accept invite"
 								>
 									<Check size={12} />
 								</button>
 								<button
 									type="button"
-									class="rounded-md border border-app-border px-2 py-1 text-xs text-app-subtext transition hover:text-rose-300"
+									class="kainbu-dash-btn kainbu-dash-btn--ghost kainbu-dash-btn--compact rounded-md border border-app-border px-2 py-1 text-app-subtext"
 									on:click={() => onRejectInvite(invite.id)}
+									aria-label="Decline invite"
 								>
 									<X size={12} />
 								</button>
@@ -206,20 +231,17 @@
 				</div>
 			{/if}
 
-			<div class="space-y-5">
+			<div class="flex flex-col gap-7">
 				{#if pinnedProjects.length}
 					<section>
-						<div class="mb-2.5 flex items-center justify-between gap-3 px-1">
-							<p class="text-[10px] font-semibold uppercase tracking-[0.2em] text-app-primary">
-								Pinned <span class="text-app-primary/50">· {pinnedProjects.length}</span>
-							</p>
-						</div>
-						<div class="flex gap-3 overflow-x-auto pb-2">
+						<h3 class="kainbu-dashboard__section-label mb-3">
+							Pinned
+							<span class="kainbu-dashboard__section-count">{pinnedProjects.length}</span>
+						</h3>
+						<div class="kainbu-board-rail kainbu-scrollbar-hidden">
 							{#each pinnedProjects as project (project.id)}
 								{#if project.accessRole === 'owner'}
-									<article
-										class={`w-80 shrink-0 rounded-xl border p-4 transition ${projectCardClass(project, true)}`}
-									>
+									<article class={projectCardClass(project, true)}>
 										<div class="flex items-start justify-between gap-3">
 											<div class="min-w-0 flex-1">
 												{#if renamingId === project.id}
@@ -233,9 +255,9 @@
 														on:blur={commitRename}
 													/>
 												{:else}
-													<h3 class="truncate text-lg font-bold text-app-text">
+													<h4 class="kainbu-board-card__title truncate">
 														{project.name}
-													</h3>
+													</h4>
 												{/if}
 												<p class="mt-0.5 text-[11px] text-app-subtext">
 													Updated {new Date(project.updatedAt).toLocaleDateString()}
@@ -243,7 +265,7 @@
 											</div>
 											<button
 												type="button"
-												class="inline-flex items-center gap-1 rounded-lg border border-app-border/50 px-2.5 py-1.5 text-xs font-medium text-app-text transition hover:text-app-primary"
+												class="kainbu-dash-btn kainbu-dash-btn--ghost kainbu-dash-btn--compact"
 												on:click={() => onOpenProject(project.id)}
 											>
 												Open
@@ -287,7 +309,7 @@
 											</div>
 										{/if}
 
-										<div class="mt-3 flex items-center gap-1.5">
+										<div class="kainbu-board-card__toolbar flex items-center gap-1.5">
 											<button
 												type="button"
 												class="rounded-md p-1.5 text-app-primary transition hover:text-app-primary-hover"
@@ -355,19 +377,17 @@
 										{/if}
 									</article>
 								{:else}
-									<article
-										class={`w-72 shrink-0 rounded-xl border p-4 transition ${projectCardClass(project, true)}`}
-									>
+									<article class={projectCardClass(project, true)}>
 										<div class="flex items-start justify-between gap-3">
 											<div class="min-w-0">
-												<h3 class="truncate text-lg font-bold text-app-text">{project.name}</h3>
+												<h4 class="kainbu-board-card__title truncate">{project.name}</h4>
 												<p class="mt-0.5 text-[11px] text-app-subtext">
 													{memberLabel(project)}
 												</p>
 											</div>
 											<button
 												type="button"
-												class="inline-flex items-center gap-1 rounded-lg border border-app-border/50 px-2.5 py-1.5 text-xs font-medium text-app-text transition hover:text-app-primary"
+												class="kainbu-dash-btn kainbu-dash-btn--ghost kainbu-dash-btn--compact"
 												on:click={() => onOpenProject(project.id)}
 											>
 												Open
@@ -417,18 +437,15 @@
 				{/if}
 
 				<section>
-					<div class="mb-2.5 flex items-center justify-between gap-3 px-1">
-						<p class="text-[10px] font-semibold uppercase tracking-[0.2em] text-app-subtext">
-							Boards <span class="text-app-subtext/50">· {ownedProjects.length}</span>
-						</p>
-					</div>
+					<h3 class="kainbu-dashboard__section-label mb-3">
+						Your boards
+						<span class="kainbu-dashboard__section-count">{ownedProjects.length}</span>
+					</h3>
 
 					{#if ownedProjects.length}
-						<div class="flex gap-3 overflow-x-auto pb-2">
+						<div class="kainbu-board-grid">
 							{#each ownedProjects as project (project.id)}
-								<article
-									class={`w-80 shrink-0 rounded-xl border p-4 transition ${projectCardClass(project)}`}
-								>
+								<article class={projectCardClass(project)}>
 									<div class="flex items-start justify-between gap-3">
 										<div class="min-w-0 flex-1">
 											{#if renamingId === project.id}
@@ -442,9 +459,9 @@
 													on:blur={commitRename}
 												/>
 											{:else}
-												<h3 class="truncate text-lg font-bold text-app-text">
+												<h4 class="kainbu-board-card__title truncate">
 													{project.name}
-												</h3>
+												</h4>
 											{/if}
 											<p class="mt-0.5 text-[11px] text-app-subtext">
 												Updated {new Date(project.updatedAt).toLocaleDateString()}
@@ -452,7 +469,7 @@
 										</div>
 										<button
 											type="button"
-											class="inline-flex items-center gap-1 rounded-lg border border-app-border/50 px-2.5 py-1.5 text-xs font-medium text-app-text transition hover:text-app-primary"
+											class="kainbu-dash-btn kainbu-dash-btn--ghost kainbu-dash-btn--compact"
 											on:click={() => onOpenProject(project.id)}
 										>
 											Open
@@ -496,7 +513,7 @@
 										</div>
 									{/if}
 
-									<div class="mt-3 flex items-center gap-1.5">
+									<div class="kainbu-board-card__toolbar flex items-center gap-1.5">
 										<button
 											type="button"
 											class={`rounded-md p-1.5 transition ${
@@ -574,35 +591,43 @@
 							{/each}
 						</div>
 					{:else}
-						<div class="rounded-lg border border-dashed border-app-border/40 px-5 py-6 text-center text-sm text-app-subtext">
-							Your owned boards will appear here once you create one.
+						<div class="kainbu-dashboard-empty">
+							<p class="text-sm font-medium text-app-text">No boards yet</p>
+							<p class="max-w-sm text-sm leading-relaxed text-app-subtext">
+								Create a board to start organizing tasks, notes, and invites in one place.
+							</p>
+							<button
+								type="button"
+								class="kainbu-dash-btn kainbu-dash-btn--ghost mt-1"
+								on:click={onCreateProject}
+							>
+								<FolderPlus size={14} />
+								Create your first board
+							</button>
 						</div>
 					{/if}
 				</section>
 
 				<section>
-					<div class="mb-2.5 flex items-center justify-between gap-3 px-1">
-						<p class="text-[10px] font-semibold uppercase tracking-[0.2em] text-app-subtext">
-							Shared Boards <span class="text-app-subtext/50">· {sharedProjects.length}</span>
-						</p>
-					</div>
+					<h3 class="kainbu-dashboard__section-label mb-3">
+						Shared with you
+						<span class="kainbu-dashboard__section-count">{sharedProjects.length}</span>
+					</h3>
 
 					{#if sharedProjects.length}
-						<div class="flex gap-3 overflow-x-auto pb-2">
+						<div class="kainbu-board-grid">
 							{#each sharedProjects as project (project.id)}
-								<article
-									class={`w-72 shrink-0 rounded-xl border p-4 transition ${projectCardClass(project)}`}
-								>
+								<article class={projectCardClass(project)}>
 									<div class="flex items-start justify-between gap-3">
 										<div class="min-w-0">
-											<h3 class="truncate text-lg font-bold text-app-text">{project.name}</h3>
+											<h4 class="kainbu-board-card__title truncate">{project.name}</h4>
 											<p class="mt-0.5 text-[11px] text-app-subtext">
 												{memberLabel(project)}
 											</p>
 										</div>
 										<button
 											type="button"
-											class="inline-flex items-center gap-1 rounded-lg border border-app-border/50 px-2.5 py-1.5 text-xs font-medium text-app-text transition hover:text-app-primary"
+											class="kainbu-dash-btn kainbu-dash-btn--ghost kainbu-dash-btn--compact"
 											on:click={() => onOpenProject(project.id)}
 										>
 											Open
@@ -656,29 +681,31 @@
 							{/each}
 						</div>
 					{:else}
-						<div class="rounded-lg border border-dashed border-app-border/40 px-5 py-6 text-center text-sm text-app-subtext">
-							Shared boards will show up here when invitations are accepted.
+						<div class="kainbu-dashboard-empty">
+							<p class="text-sm font-medium text-app-text">Nothing shared yet</p>
+							<p class="max-w-sm text-sm leading-relaxed text-app-subtext">
+								When someone invites you to a board, it will appear here for quick access.
+							</p>
 						</div>
 					{/if}
 				</section>
 
 				<section>
-					<div class="mb-2.5 flex items-center justify-between gap-3 px-1">
-						<p class="text-[10px] font-semibold uppercase tracking-[0.2em] text-app-subtext">
-							Due Tasks
-						</p>
-						<Clock3 size={14} class="text-app-accent/60" />
+					<div class="mb-3 flex items-center justify-between gap-3">
+						<h3 class="kainbu-dashboard__section-label">
+							Due soon
+							<span class="kainbu-dashboard__section-count">{timedTasks.length}</span>
+						</h3>
+						<Clock3 size={14} class="text-app-subtext/70" />
 					</div>
 
 					{#if timedTasks.length}
-						<div class="flex gap-3 overflow-x-auto pb-2">
+						<div class="kainbu-board-grid kainbu-board-grid--compact">
 							{#each timedTasks as timed (`${timed.projectId}-${timed.task.id}`)}
-								<article
-									class="w-72 shrink-0 rounded-xl border border-app-border/50 bg-app-surface/60 p-4 transition hover:bg-app-element/30"
-								>
+								<article class="kainbu-board-card kainbu-board-card--due">
 									<div class="flex items-start justify-between gap-3">
 										<div class="min-w-0">
-											<p class="break-words text-base font-bold text-app-text">{timed.task.title}</p>
+											<p class="kainbu-board-card__title break-words">{timed.task.title}</p>
 											<p class="mt-0.5 text-[11px] text-app-subtext">
 												{timed.projectName} / {timed.columnTitle}
 											</p>
@@ -727,11 +754,348 @@
 							{/each}
 						</div>
 					{:else}
-						<div class="rounded-lg border border-dashed border-app-border/40 px-5 py-6 text-center text-sm text-app-subtext">
-							No active due dates yet.
+						<div class="kainbu-dashboard-empty">
+							<p class="text-sm font-medium text-app-text">No due dates</p>
+							<p class="max-w-sm text-sm leading-relaxed text-app-subtext">
+								Tasks with due dates across your boards will show up here.
+							</p>
 						</div>
 					{/if}
 				</section>
 			</div>
 		</div>
 	</section>
+
+<style>
+	.kainbu-dashboard {
+		background:
+			radial-gradient(
+				ellipse 80% 50% at 50% -20%,
+				color-mix(in oklab, var(--color-app-primary) 8%, transparent),
+				transparent 70%
+			),
+			transparent;
+	}
+
+	.kainbu-dashboard__kicker {
+		font-size: 0.8125rem;
+		font-weight: 500;
+		font-style: italic;
+		font-family: var(--font-serif);
+		color: color-mix(in oklab, var(--color-app-subtext) 92%, var(--color-app-primary));
+		letter-spacing: 0.01em;
+	}
+
+	.kainbu-dashboard__title {
+		font-family: var(--font-display);
+		font-size: clamp(1.75rem, 3.5vw, 2.375rem);
+		font-weight: 700;
+		line-height: 1.05;
+		letter-spacing: -0.03em;
+		text-wrap: balance;
+	}
+
+	.kainbu-dashboard__stats {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 0.5rem;
+		margin: 0;
+		padding: 0;
+		list-style: none;
+	}
+
+	.kainbu-dashboard__stat {
+		display: inline-flex;
+		align-items: baseline;
+		gap: 0.3rem;
+		padding: 0.3rem 0.65rem;
+		border-radius: 999px;
+		font-size: 0.75rem;
+		font-weight: 500;
+		color: var(--color-app-subtext);
+		background: color-mix(in oklab, var(--color-app-element) 65%, transparent);
+		box-shadow: inset 0 1px 0 color-mix(in oklab, white 5%, transparent);
+	}
+
+	.kainbu-dashboard__stat-value {
+		font-weight: 600;
+		font-variant-numeric: tabular-nums;
+		color: var(--color-app-text);
+	}
+
+	.kainbu-dashboard__section-label {
+		font-size: 0.875rem;
+		font-weight: 600;
+		letter-spacing: -0.01em;
+		color: var(--color-app-text);
+	}
+
+	.kainbu-dashboard__section-count {
+		margin-left: 0.35rem;
+		font-weight: 500;
+		font-variant-numeric: tabular-nums;
+		color: var(--color-app-subtext);
+	}
+
+	.kainbu-dashboard__section-count::before {
+		content: '·';
+		margin-right: 0.35rem;
+		opacity: 0.45;
+	}
+
+	.kainbu-dashboard-empty {
+		display: flex;
+		flex-direction: column;
+		align-items: flex-start;
+		gap: 0.35rem;
+		padding: 1.25rem 1.125rem;
+		border-radius: 0.875rem;
+		background: color-mix(in oklab, var(--color-app-element) 40%, transparent);
+		border: 1px dashed color-mix(in oklab, var(--color-app-border) 60%, transparent);
+	}
+
+	.kainbu-invite-chip {
+		display: flex;
+		min-width: 14rem;
+		align-items: center;
+		gap: 0.625rem;
+		padding: 0.5rem 0.75rem;
+		border-radius: 0.75rem;
+		background: color-mix(in oklab, var(--color-app-surface) 88%, transparent);
+		box-shadow:
+			inset 0 1px 0 color-mix(in oklab, white 5%, transparent),
+			0 1px 2px color-mix(in oklab, var(--color-app-bg) 35%, transparent);
+	}
+
+	.kainbu-board-grid {
+		display: grid;
+		grid-template-columns: repeat(auto-fill, minmax(min(100%, 17.5rem), 1fr));
+		gap: 0.875rem;
+	}
+
+	.kainbu-board-grid--compact {
+		grid-template-columns: repeat(auto-fill, minmax(min(100%, 16rem), 1fr));
+	}
+
+	.kainbu-board-rail {
+		display: flex;
+		gap: 0.875rem;
+		overflow-x: auto;
+		padding-bottom: 0.35rem;
+		scroll-snap-type: x proximity;
+	}
+
+	.kainbu-board-rail :global(.kainbu-board-card) {
+		flex: 0 0 min(19rem, 88vw);
+		scroll-snap-align: start;
+	}
+
+	.kainbu-board-card {
+		display: flex;
+		flex-direction: column;
+		min-height: 10.5rem;
+		padding: 1rem 1.125rem;
+		border-radius: 0.875rem;
+		background: color-mix(in oklab, var(--color-app-surface) 86%, transparent);
+		box-shadow:
+			inset 0 1px 0 color-mix(in oklab, white 6%, transparent),
+			0 1px 3px color-mix(in oklab, var(--color-app-bg) 45%, transparent);
+		transition:
+			transform 0.22s ease,
+			box-shadow 0.22s ease,
+			background-color 0.22s ease;
+	}
+
+	.kainbu-board-card:hover {
+		transform: translateY(-2px);
+		box-shadow:
+			inset 0 1px 0 color-mix(in oklab, white 7%, transparent),
+			0 8px 24px -12px color-mix(in oklab, var(--color-app-bg) 75%, var(--color-app-primary));
+	}
+
+	.kainbu-board-card--active {
+		background: color-mix(in oklab, var(--color-app-primary) 7%, var(--color-app-surface));
+		box-shadow:
+			inset 0 0 0 1px color-mix(in oklab, var(--color-app-primary) 32%, transparent),
+			inset 0 1px 0 color-mix(in oklab, white 6%, transparent),
+			0 4px 16px -10px color-mix(in oklab, var(--color-app-primary) 35%, transparent);
+	}
+
+	.kainbu-board-card--pinned {
+		background: color-mix(in oklab, var(--color-app-primary) 5%, var(--color-app-surface));
+	}
+
+	.kainbu-board-card--due:hover {
+		background: color-mix(in oklab, var(--color-app-element) 55%, var(--color-app-surface));
+	}
+
+	.kainbu-board-card__title {
+		font-size: 1.0625rem;
+		font-weight: 600;
+		line-height: 1.25;
+		letter-spacing: -0.015em;
+		color: var(--color-app-text);
+	}
+
+	.kainbu-board-card__toolbar {
+		margin-top: auto;
+		padding-top: 0.75rem;
+	}
+
+	.kainbu-dash-btn {
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		gap: 0.375rem;
+		border: none;
+		border-radius: 0.625rem;
+		padding: 0.5rem 1rem;
+		font-size: 0.875rem;
+		font-weight: 600;
+		line-height: 1.2;
+		transition:
+			transform 0.16s ease,
+			box-shadow 0.16s ease,
+			background 0.16s ease,
+			color 0.16s ease,
+			border-color 0.16s ease;
+	}
+
+	.kainbu-dash-btn:focus-visible {
+		outline: 2px solid color-mix(in oklab, var(--color-app-primary) 70%, white);
+		outline-offset: 2px;
+	}
+
+	.kainbu-dash-btn:active:not(:disabled) {
+		transform: translateY(1px) scale(0.99);
+	}
+
+	.kainbu-dash-btn--primary {
+		background: linear-gradient(
+			180deg,
+			color-mix(in oklab, var(--color-app-primary) 72%, white) 0%,
+			var(--color-app-primary) 46%,
+			color-mix(in oklab, var(--color-app-primary-hover) 88%, black) 100%
+		);
+		color: #fff;
+		text-shadow: 0 1px 0 color-mix(in oklab, var(--color-app-primary-hover) 55%, black);
+		border: 1px solid color-mix(in oklab, var(--color-app-primary-hover) 68%, black);
+		box-shadow:
+			inset 0 1px 0 color-mix(in oklab, white 46%, transparent),
+			inset 0 -1px 0 color-mix(in oklab, black 24%, transparent),
+			0 1px 0 color-mix(in oklab, var(--color-app-primary-hover) 72%, black),
+			0 5px 14px -4px color-mix(in oklab, var(--color-app-primary) 58%, black),
+			0 2px 4px -1px color-mix(in oklab, var(--color-app-bg) 55%, transparent);
+	}
+
+	.kainbu-dash-btn--primary:hover:not(:disabled) {
+		background: linear-gradient(
+			180deg,
+			color-mix(in oklab, var(--color-app-primary) 66%, white) 0%,
+			color-mix(in oklab, var(--color-app-primary-hover) 94%, var(--color-app-primary)) 46%,
+			color-mix(in oklab, var(--color-app-primary-hover) 82%, black) 100%
+		);
+		transform: translateY(-1px);
+		box-shadow:
+			inset 0 1px 0 color-mix(in oklab, white 52%, transparent),
+			inset 0 -1px 0 color-mix(in oklab, black 20%, transparent),
+			0 2px 0 color-mix(in oklab, var(--color-app-primary-hover) 68%, black),
+			0 10px 22px -6px color-mix(in oklab, var(--color-app-primary) 62%, black),
+			0 3px 6px -2px color-mix(in oklab, var(--color-app-bg) 45%, transparent);
+	}
+
+	.kainbu-dash-btn--primary:active:not(:disabled) {
+		background: linear-gradient(
+			180deg,
+			color-mix(in oklab, var(--color-app-primary-hover) 92%, black) 0%,
+			color-mix(in oklab, var(--color-app-primary-hover) 96%, black) 100%
+		);
+		transform: translateY(1px) scale(0.99);
+		box-shadow:
+			inset 0 2px 5px color-mix(in oklab, black 32%, transparent),
+			inset 0 1px 0 color-mix(in oklab, white 16%, transparent),
+			0 1px 2px color-mix(in oklab, var(--color-app-primary) 40%, black);
+	}
+
+	.kainbu-dash-btn--ghost {
+		background: linear-gradient(
+			180deg,
+			color-mix(in oklab, var(--color-app-element) 72%, white) 0%,
+			color-mix(in oklab, var(--color-app-element) 55%, transparent) 100%
+		);
+		color: var(--color-app-text);
+		border: 1px solid color-mix(in oklab, var(--color-app-border) 82%, transparent);
+		box-shadow:
+			inset 0 1px 0 color-mix(in oklab, white 14%, transparent),
+			inset 0 -1px 0 color-mix(in oklab, black 10%, transparent),
+			0 2px 6px -3px color-mix(in oklab, var(--color-app-bg) 70%, transparent);
+	}
+
+	.kainbu-dash-btn--ghost:hover:not(:disabled) {
+		color: var(--color-app-primary);
+		border-color: color-mix(in oklab, var(--color-app-primary) 38%, var(--color-app-border));
+		transform: translateY(-1px);
+		box-shadow:
+			inset 0 1px 0 color-mix(in oklab, white 18%, transparent),
+			inset 0 -1px 0 color-mix(in oklab, black 8%, transparent),
+			0 4px 12px -4px color-mix(in oklab, var(--color-app-primary) 28%, transparent);
+	}
+
+	.kainbu-dash-btn--ghost:active:not(:disabled) {
+		transform: translateY(1px) scale(0.99);
+		box-shadow:
+			inset 0 2px 4px color-mix(in oklab, black 16%, transparent),
+			inset 0 1px 0 color-mix(in oklab, white 8%, transparent);
+	}
+
+	.kainbu-dash-btn--compact {
+		padding: 0.375rem 0.625rem;
+		font-size: 0.75rem;
+		font-weight: 500;
+		border-radius: 0.5rem;
+	}
+
+	:root[data-color-mode='light'] .kainbu-board-card {
+		box-shadow:
+			inset 0 1px 0 rgb(255 255 255 / 0.72),
+			0 1px 3px color-mix(in oklab, var(--color-app-bg) 12%, transparent);
+	}
+
+	:root[data-color-mode='light'] .kainbu-board-card:hover {
+		box-shadow:
+			inset 0 1px 0 rgb(255 255 255 / 0.85),
+			0 10px 28px -14px color-mix(in oklab, var(--color-app-primary) 22%, transparent);
+	}
+
+	:root[data-color-mode='light'] .kainbu-dashboard__stat {
+		box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.65);
+	}
+
+	:root[data-color-mode='light'] .kainbu-dash-btn--primary {
+		box-shadow:
+			inset 0 1px 0 rgb(255 255 255 / 0.55),
+			inset 0 -1px 0 color-mix(in oklab, var(--color-app-primary-hover) 28%, black),
+			0 1px 0 color-mix(in oklab, var(--color-app-primary-hover) 55%, black),
+			0 6px 16px -5px color-mix(in oklab, var(--color-app-primary) 38%, transparent);
+	}
+
+	:root[data-color-mode='light'] .kainbu-dash-btn--primary:hover:not(:disabled) {
+		box-shadow:
+			inset 0 1px 0 rgb(255 255 255 / 0.62),
+			inset 0 -1px 0 color-mix(in oklab, var(--color-app-primary-hover) 24%, black),
+			0 2px 0 color-mix(in oklab, var(--color-app-primary-hover) 52%, black),
+			0 10px 24px -7px color-mix(in oklab, var(--color-app-primary) 42%, transparent);
+	}
+
+	:root[data-color-mode='light'] .kainbu-dash-btn--ghost {
+		background: linear-gradient(
+			180deg,
+			color-mix(in oklab, var(--color-app-surface) 92%, white) 0%,
+			color-mix(in oklab, var(--color-app-element) 80%, transparent) 100%
+		);
+		box-shadow:
+			inset 0 1px 0 rgb(255 255 255 / 0.88),
+			inset 0 -1px 0 color-mix(in oklab, var(--color-app-border) 55%, transparent),
+			0 2px 8px -4px color-mix(in oklab, var(--color-app-bg) 18%, transparent);
+	}
+</style>

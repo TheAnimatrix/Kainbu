@@ -39,11 +39,14 @@
 	import SyncBadge from '$lib/components/SyncBadge.svelte';
 	import ThemedBackdrop from '$lib/components/ThemedBackdrop.svelte';
 	import UsernameModal from '$lib/components/UsernameModal.svelte';
+	import { getAvatarUploadError } from '$lib/kainbu/avatar';
 	import {
 		BACKGROUND_SIGNED_URL_REFRESH_BUFFER_MS,
 		BACKGROUND_SIGNED_URL_TTL_SECONDS,
+		adaptBackgroundThemeForColorMode,
 		getBackgroundThemeKey,
 		getBackgroundUploadError,
+		applyThemeAccent,
 		getChatOrbStyle,
 		isImageBackgroundTheme
 	} from '$lib/kainbu/backgrounds';
@@ -52,7 +55,11 @@
 		deleteBackgroundImage,
 		uploadBackgroundImage
 	} from '$lib/kainbu/backgroundStorage';
-	import { applyColorMode, readStoredColorMode } from '$lib/kainbu/colorMode';
+	import { applyColorMode, persistColorMode, readStoredColorMode } from '$lib/kainbu/colorMode';
+	import {
+		persistProjectRailCompact,
+		readStoredProjectRailCompact
+	} from '$lib/kainbu/projectRailLayout';
 	import {
 		DEFAULT_CHAT_HISTORY,
 		DEFAULT_SETTINGS,
@@ -102,6 +109,8 @@
 		deleteProjectPage as deleteProjectPageRemote,
 		deleteProjectRemote,
 		fetchUserProfile,
+		removeUserAvatar,
+		uploadUserAvatar,
 		fetchUserSettings,
 		fetchWorkspace,
 		leaveProject,
@@ -218,6 +227,15 @@
 		return nextSettings;
 	};
 
+	const resolveColorModeForHydration = (
+		settingsValue: UserSettings,
+		preferStored: boolean
+	): UserSettings => {
+		if (!preferStored) return settingsValue;
+		const storedColorMode = readStoredColorMode();
+		return storedColorMode ? { ...settingsValue, colorMode: storedColorMode } : settingsValue;
+	};
+
 	let user: AuthUser | null = null;
 	let projects: Project[] = [];
 	let incomingInvites: ProjectInvite[] = [];
@@ -232,6 +250,7 @@
 	let desktopWorkspaceTab: WorkspaceTab = 'dashboard';
 	let mobileTab: WorkspaceTab = 'dashboard';
 	let settingsSection: SettingsSection = 'appearance';
+	let workspaceTabBeforeSettings: WorkspaceTab = 'dashboard';
 	let authHydrating = true;
 	let workspaceHydrating = false;
 	let isRestoring = false;
@@ -255,7 +274,7 @@
 	let highlightedTaskIds: string[] = [];
 	let boardSearchActive = false;
 	let boardSearchQuery = '';
-	let projectRailCompact = true;
+	let projectRailCompact = browser ? readStoredProjectRailCompact() : true;
 
 	const projectSwitchFadeIn = { duration: 200 };
 	const projectSwitchFadeOut = { duration: 150 };
@@ -289,6 +308,7 @@
 	let projectBackgroundImageUrl: string | null = null;
 	let personalBackgroundUploading = false;
 	let projectBackgroundUploading = false;
+	let avatarUploading = false;
 	let boardSessionHistory: Record<string, BoardHistoryState> = {};
 	let usernameDraft = '';
 	let usernameAvailability: UsernameAvailabilityState = 'idle';
@@ -470,6 +490,11 @@
 		activeBackgroundImageUrl ?? '',
 		settings.colorMode
 	);
+	$: applyThemeAccent(
+		user ? activeBackgroundTheme : settings.backgroundTheme,
+		user ? (activeBackgroundImageUrl ?? '') : (personalBackgroundImageUrl ?? ''),
+		settings.colorMode
+	);
 	$: profileEmail = profile?.email || user?.email || null;
 	$: scratchpadReferenceOptions = (() => {
 		if (!currentProject) return [] as TaskReferenceOption[];
@@ -628,7 +653,8 @@
 	const createFallbackUserProfile = (currentUser: AuthUser): UserProfile => ({
 		userId: currentUser.id,
 		email: currentUser.email || null,
-		username: null
+		username: null,
+		avatarUrl: null
 	});
 	const resolveProfileAfterFetch = (
 		currentUser: AuthUser,
@@ -655,8 +681,19 @@
 		}
 		usernameCheckSequence += 1;
 	};
+	const syncCurrentUserAvatarAcrossProjects = (avatarUrl: string | null) => {
+		const currentUserId = user?.id;
+		if (!currentUserId) return;
+		projects = projects.map((project) => ({
+			...project,
+			members: project.members.map((member) =>
+				member.userId === currentUserId ? { ...member, avatarUrl } : member
+			)
+		}));
+	};
 	const syncUsernameDraftFromProfile = (nextProfile: UserProfile | null) => {
 		profile = nextProfile;
+		syncCurrentUserAvatarAcrossProjects(nextProfile?.avatarUrl ?? null);
 		const normalizedCurrent = normalizeUsername(nextProfile?.username);
 		const normalizedDraft = normalizeUsername(usernameDraft);
 
@@ -1206,6 +1243,10 @@
 		}
 
 		refreshPendingProposalStaleness(sortedProjects);
+
+		if (profile?.userId && user?.id === profile.userId) {
+			syncCurrentUserAvatarAcrossProjects(profile.avatarUrl ?? null);
+		}
 
 		refreshSyncStatus();
 		scheduleSnapshotPersist();
@@ -1816,7 +1857,10 @@
 			applyWorkspaceState({
 				nextProjects: localSnapshot.projects,
 				preferredProjectId: localSnapshot.currentProjectId,
-				nextSettings: localSnapshot.settings,
+				nextSettings: resolveColorModeForHydration(
+					localSnapshot.settings,
+					!localSnapshot.dirtySettings
+				),
 				nextDirtySettings: localSnapshot.dirtySettings,
 				nextProjectRevisions: localSnapshot.projectRevisions,
 				nextLastProjectSyncAt: localSnapshot.lastProjectSyncAt,
@@ -1870,16 +1914,19 @@
 				return;
 			}
 
-			const resolvedSettings = localSnapshot?.dirtySettings
-				? localSnapshot.settings
-				: settingsResult.status === 'fulfilled'
-					? !supportsProfileBackgroundTheme() && localSnapshot?.settings
-						? {
-								...settingsResult.value,
-								backgroundTheme: localSnapshot.settings.backgroundTheme
-							}
-						: settingsResult.value
-					: localSnapshot?.settings || structuredClone(DEFAULT_SETTINGS);
+			const resolvedSettings = resolveColorModeForHydration(
+				localSnapshot?.dirtySettings
+					? localSnapshot.settings
+					: settingsResult.status === 'fulfilled'
+						? !supportsProfileBackgroundTheme() && localSnapshot?.settings
+							? {
+									...settingsResult.value,
+									backgroundTheme: localSnapshot.settings.backgroundTheme
+								}
+							: settingsResult.value
+						: localSnapshot?.settings || structuredClone(DEFAULT_SETTINGS),
+				!localSnapshot?.dirtySettings
+			);
 
 			applyWorkspaceState({
 				nextProjects: mergeRemoteProjects(
@@ -2860,7 +2907,36 @@
 	};
 
 	const handleSettingsChange = (nextSettings: UserSettings) => {
-		settings = normalizeAiSettings(nextSettings);
+		let normalizedSettings = normalizeAiSettings(nextSettings);
+		const colorModeChanged = normalizedSettings.colorMode !== settings.colorMode;
+
+		if (colorModeChanged) {
+			persistColorMode(normalizedSettings.colorMode);
+			normalizedSettings = {
+				...normalizedSettings,
+				backgroundTheme: adaptBackgroundThemeForColorMode(
+					normalizedSettings.backgroundTheme,
+					normalizedSettings.colorMode
+				)
+			};
+
+			const project = currentProject;
+			if (project?.backgroundTheme) {
+				const adaptedBoardTheme = adaptBackgroundThemeForColorMode(
+					project.backgroundTheme,
+					normalizedSettings.colorMode
+				);
+
+				if (
+					getBackgroundThemeKey(adaptedBoardTheme) !==
+					getBackgroundThemeKey(project.backgroundTheme)
+				) {
+					void commitProjectBackgroundChange(project.id, adaptedBoardTheme);
+				}
+			}
+		}
+
+		settings = normalizedSettings;
 		dirtySettings = true;
 		refreshSyncStatus();
 		scheduleSettingsSync();
@@ -2938,6 +3014,44 @@
 			}
 		} catch (error) {
 			console.error(error);
+		}
+	};
+
+	const handleUploadAvatar = async (file: File) => {
+		if (!user) return;
+
+		const validationError = getAvatarUploadError(file);
+		if (validationError) {
+			setSyncError(validationError);
+			return;
+		}
+
+		avatarUploading = true;
+		try {
+			const nextProfile = await uploadUserAvatar(user.id, file);
+			profile = nextProfile;
+			syncCurrentUserAvatarAcrossProjects(nextProfile.avatarUrl);
+		} catch (error) {
+			console.error(error);
+			setSyncError(error instanceof Error ? error.message : 'Unable to upload profile picture.');
+		} finally {
+			avatarUploading = false;
+		}
+	};
+
+	const handleRemoveAvatar = async () => {
+		if (!user || !profile?.avatarUrl) return;
+
+		avatarUploading = true;
+		try {
+			const nextProfile = await removeUserAvatar(user.id);
+			profile = nextProfile;
+			syncCurrentUserAvatarAcrossProjects(null);
+		} catch (error) {
+			console.error(error);
+			setSyncError(error instanceof Error ? error.message : 'Unable to remove profile picture.');
+		} finally {
+			avatarUploading = false;
 		}
 	};
 
@@ -3036,9 +3150,16 @@
 	};
 
 	const openSettings = (nextSection: SettingsSection = 'appearance') => {
+		const currentTab = isMobile ? mobileTab : desktopWorkspaceTab;
+		workspaceTabBeforeSettings =
+			currentTab !== 'settings' ? currentTab : workspaceTabBeforeSettings;
 		settingsSection = nextSection;
 		setWorkspaceTab('settings');
 		showProjectSheet = false;
+	};
+
+	const closeSettings = () => {
+		setWorkspaceTab(workspaceTabBeforeSettings);
 	};
 
 	const handleDraftChange = (value: string) => {
@@ -3439,7 +3560,7 @@
 						...proposal,
 						projectId: projectSnapshot.id,
 						stale: getKanbanFingerprint(projectSnapshot.kanbanData) !== proposal.baseFingerprint,
-						originalKanbanData: structuredClone(projectSnapshot.kanbanData)
+						originalKanbanData: structuredClone(proposal.originalKanbanData)
 					}
 				: {
 						...proposal,
@@ -4362,6 +4483,11 @@
 	};
 
 	onMount(() => {
+		const storedColorMode = readStoredColorMode();
+		if (storedColorMode && storedColorMode !== settings.colorMode) {
+			settings = { ...settings, colorMode: storedColorMode };
+		}
+
 		void loadAiModels();
 		void fetchAuthSettings()
 			.then((settings) => {
@@ -4494,7 +4620,11 @@
 				{syncStatus}
 				{profileEmail}
 				profileUsername={profile?.username || null}
-				onToggleCompact={() => (projectRailCompact = !projectRailCompact)}
+				profileAvatarUrl={profile?.avatarUrl ?? null}
+				onToggleCompact={() => {
+					projectRailCompact = !projectRailCompact;
+					persistProjectRailCompact(projectRailCompact);
+				}}
 				onOpenBoard={openProjectBoard}
 				onOpenPage={openProjectPage}
 				onCreateBoard={handleCreateBoardInline}
@@ -4778,6 +4908,7 @@
 													projectId={currentProject.id}
 													activeBoardId={currentProject.activeBoardId}
 													currentUserId={user?.id || ''}
+													currentUserAvatarUrl={profile?.avatarUrl ?? null}
 													shareUrl={workspaceShareUrl}
 													data={kanbanData}
 													comparisonData={kanbanComparisonData}
@@ -4874,17 +5005,22 @@
 											{currentProject}
 											email={profileEmail}
 											username={profile?.username || null}
+											avatarUrl={profile?.avatarUrl ?? null}
 											{usernameDraft}
 											{usernameAvailability}
 											{usernameFeedback}
 											{usernameSaving}
+											{avatarUploading}
 											personalImageUrl={personalBackgroundImageUrl}
 											boardImageUrl={projectBackgroundImageUrl}
 											personalImageUploading={personalBackgroundUploading}
 											boardImageUploading={projectBackgroundUploading}
+											onBack={closeSettings}
 											onSectionChange={handleSettingsSectionChange}
 											onUsernameDraftChange={handleUsernameDraftChange}
 											onUsernameSubmit={handleUsernameSubmit}
+											onUploadAvatar={handleUploadAvatar}
+											onRemoveAvatar={handleRemoveAvatar}
 											onSettingsChange={handleSettingsChange}
 											onSelectPersonalBackground={handleSelectPersonalBackground}
 											onUploadPersonalBackground={handleUploadPersonalBackground}
@@ -4958,6 +5094,7 @@
 													projectId={currentProject.id}
 													activeBoardId={currentProject.activeBoardId}
 													currentUserId={user?.id || ''}
+													currentUserAvatarUrl={profile?.avatarUrl ?? null}
 													shareUrl={workspaceShareUrl}
 													data={kanbanData}
 													comparisonData={kanbanComparisonData}
@@ -5005,17 +5142,22 @@
 											{currentProject}
 											email={profileEmail}
 											username={profile?.username || null}
+											avatarUrl={profile?.avatarUrl ?? null}
 											{usernameDraft}
 											{usernameAvailability}
 											{usernameFeedback}
 											{usernameSaving}
+											{avatarUploading}
 											personalImageUrl={personalBackgroundImageUrl}
 											boardImageUrl={projectBackgroundImageUrl}
 											personalImageUploading={personalBackgroundUploading}
 											boardImageUploading={projectBackgroundUploading}
+											onBack={closeSettings}
 											onSectionChange={handleSettingsSectionChange}
 											onUsernameDraftChange={handleUsernameDraftChange}
 											onUsernameSubmit={handleUsernameSubmit}
+											onUploadAvatar={handleUploadAvatar}
+											onRemoveAvatar={handleRemoveAvatar}
 											onSettingsChange={handleSettingsChange}
 											onSelectPersonalBackground={handleSelectPersonalBackground}
 											onUploadPersonalBackground={handleUploadPersonalBackground}

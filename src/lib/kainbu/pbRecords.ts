@@ -192,10 +192,15 @@ export const mapAiSessionRecord = (
 	last_message_at: iso(record.last_message_at, iso(record.updated))
 });
 
-export const mapProfileRecord = (record: PbRecord, userId: string): ProfileRow => ({
+export const mapProfileRecord = (
+	record: PbRecord,
+	userId: string,
+	avatarUrl: string | null = null
+): ProfileRow => ({
 	user_id: userId,
 	email: typeof record.email === 'string' ? record.email : null,
 	username: typeof record.username === 'string' ? record.username : null,
+	avatar_url: avatarUrl,
 	default_show_checkbox:
 		typeof record.default_show_checkbox === 'boolean' ? record.default_show_checkbox : true,
 	preferred_ai_model_id:

@@ -238,6 +238,7 @@ export interface ProjectMembership {
 	role: ProjectAccessRole;
 	email?: string;
 	username?: string | null;
+	avatarUrl?: string | null;
 	joinedAt: number;
 	lastOpenedAt: number;
 	viewingBoardId?: string;
@@ -367,6 +368,7 @@ export interface UserProfile {
 	userId: string;
 	email: string | null;
 	username: string | null;
+	avatarUrl: string | null;
 }
 
 export interface ProjectRevisionState {
@@ -559,6 +561,8 @@ export interface AiKanbanProposal {
 	editCallCount: number;
 	ops: KanbanPatchOperation[];
 	proposalSafety: AiProposalSafety;
+	/** Board snapshot from when the AI run started (normalized), used for proposal diffs. */
+	originalKanbanData: KanbanData;
 	preview: {
 		kanbanData: KanbanData;
 	};
@@ -826,6 +830,7 @@ export interface ProfileRow {
 	user_id: string;
 	email: string | null;
 	username: string | null;
+	avatar_url?: string | null;
 	default_show_checkbox: boolean;
 	preferred_ai_model_id?: AiModelId | null;
 	preferred_model_preset?: string | null;

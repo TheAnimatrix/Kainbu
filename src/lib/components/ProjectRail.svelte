@@ -7,8 +7,8 @@
 		FolderPlus,
 		LayoutPanelTop,
 		LogOut,
-		PanelLeftClose,
-		PanelLeftOpen,
+		ChevronsLeft,
+		Pin,
 		Pencil,
 		Plus,
 		RotateCcw,
@@ -19,6 +19,7 @@
 	import type { Project, SyncStatus } from '$lib/kainbu/types';
 	import SyncBadge from '$lib/components/SyncBadge.svelte';
 	import BrandMark from '$lib/components/BrandMark.svelte';
+	import UserAvatar from '$lib/components/UserAvatar.svelte';
 
 	export let projects: Project[] = [];
 	export let currentProjectId = '';
@@ -30,6 +31,7 @@
 	export let syncStatus: SyncStatus = 'idle';
 	export let profileEmail: string | null = null;
 	export let profileUsername: string | null = null;
+	export let profileAvatarUrl: string | null = null;
 	export let onToggleCompact: () => void = () => {};
 	export let onOpenBoard: (projectId: string, boardId: string) => void;
 	export let onOpenPage: (projectId: string, pageId: string) => void;
@@ -139,16 +141,6 @@
 		await onCreatePage(projectId, nextName);
 	};
 
-	const initialsFor = (value: string | null) => {
-		if (!value) return 'KB';
-		return value
-			.split(/[^a-zA-Z0-9]+/)
-			.filter(Boolean)
-			.slice(0, 2)
-			.map((part) => part[0]?.toUpperCase() || '')
-			.join('') || value.slice(0, 2).toUpperCase();
-	};
-
 	$: profileLabel = profileUsername || profileEmail || 'Account';
 	$: profileMeta = profileUsername ? profileEmail || 'Open account settings' : 'Set username in settings';
 
@@ -211,15 +203,15 @@
 					<div class="flex min-w-0 items-center gap-2">
 						<button
 							type="button"
-							class="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-app-border/50 bg-app-element/25 text-app-text transition hover:border-app-primary/35 hover:text-app-primary"
+							class="shrink-0 rounded-md text-app-subtext transition hover:text-app-text"
 							on:click={onToggleCompact}
 							aria-label={compact ? 'Pin sidebar open' : 'Collapse sidebar'}
 							title={compact ? 'Pin sidebar open' : 'Collapse sidebar'}
 						>
 							{#if compact}
-								<PanelLeftOpen size={15} />
+								<Pin size={16} strokeWidth={1.75} />
 							{:else}
-								<PanelLeftClose size={15} />
+								<ChevronsLeft size={16} strokeWidth={1.75} />
 							{/if}
 						</button>
 						<BrandMark size={24} framed={false} alt="{BRAND_NAME} logo" />
@@ -522,9 +514,7 @@
 						class="flex w-full items-center gap-2.5 rounded-md px-2 py-2 text-left transition hover:bg-app-element/40"
 						on:click={onOpenAccount}
 					>
-						<div class="grid h-7 w-7 shrink-0 place-items-center rounded-md bg-app-element/60 text-[10px] font-bold uppercase text-app-subtext">
-							{initialsFor(profileLabel)}
-						</div>
+						<UserAvatar src={profileAvatarUrl} label={profileLabel} size="lg" />
 						<div class="min-w-0 flex-1">
 							<p class="truncate text-sm font-medium text-app-text">{profileLabel}</p>
 							<p class="truncate text-[11px] text-app-subtext/70">{profileMeta}</p>

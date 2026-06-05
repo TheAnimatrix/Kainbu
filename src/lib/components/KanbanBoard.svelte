@@ -48,9 +48,17 @@
 	} from '$lib/kainbu/constants';
 	import { filterColumnsForBoardSearch, normalizeBoardSearchQuery } from '$lib/kainbu/boardSearch';
 	import { rewriteTaskTitle } from '$lib/kainbu/ai';
-	import { computeKanbanDiff, diffWords, type DiffColumn, type DiffTask } from '$lib/kainbu/diff';
+	import {
+		areKanbanTasksEqualForDiff,
+		computeKanbanDiff,
+		diffWords,
+		formatDiffTaskSnapshot,
+		type DiffColumn,
+		type DiffTask
+	} from '$lib/kainbu/diff';
 	import { createId } from '$lib/kainbu/id';
-	import { getProjectMemberDisplayName } from '$lib/kainbu/members';
+	import { getMemberAvatarInitials, getProjectMemberDisplayName } from '$lib/kainbu/members';
+	import UserAvatar from '$lib/components/UserAvatar.svelte';
 	import {
 		hasLeadingCardCheckboxLine,
 		stripLeadingCardCheckboxLine,
@@ -154,6 +162,7 @@
 	export let members: ProjectMembership[] = [];
 	export let activeBoardId = '';
 	export let currentUserId = '';
+	export let currentUserAvatarUrl: string | null = null;
 	export let shareUrl = '';
 	export let onChange: (nextData: KanbanData, options?: BoardChangeOptions) => void;
 	export let onSendToChat: (payload: { task: Task; column: Column }) => void;
@@ -201,7 +210,7 @@
 	let taskTitleInput: HTMLTextAreaElement | null = null;
 	let lastTaskTitleTap: { columnId: string; taskId: string; at: number } | null = null;
 	let suppressTaskOpenUntil = 0;
-	let assignMenuOpen: { colId: string; taskId: string } | null = null;
+	let assignMenuOpen: TaskMenuState | null = null;
 	let taskTagMenuOpen: TaskMenuState | null = null;
 	let taskInfoMenuOpen: TaskMenuState | null = null;
 	let boardScrollViewport: HTMLDivElement | null = null;
@@ -234,6 +243,19 @@
 	const TASK_INFO_MENU_WIDTH = 232;
 	const TASK_INFO_MENU_HEIGHT = 148;
 	const TASK_INFO_MENU_HEIGHT_CHECKABLE = 188;
+	const ASSIGN_MENU_WIDTH = 168;
+	const ASSIGN_MENU_ROW_HEIGHT = 34;
+	const ASSIGN_MENU_UNASSIGN_HEIGHT = 38;
+	const ASSIGN_MENU_PADDING = 12;
+	const ASSIGN_MENU_MAX_HEIGHT = 280;
+
+	const getAssignMenuHeight = (memberCount: number, hasAssignee: boolean) =>
+		Math.min(
+			ASSIGN_MENU_MAX_HEIGHT,
+			memberCount * ASSIGN_MENU_ROW_HEIGHT +
+				(hasAssignee ? ASSIGN_MENU_UNASSIGN_HEIGHT : 0) +
+				ASSIGN_MENU_PADDING
+		);
 	const TITLE_DOUBLE_TAP_MS = 320;
 	const TASK_EDITOR_LAYOUT_STORAGE_KEY = 'kainbu:task-modal-layout-mode';
 	const TASK_EDITOR_DOCK_WIDTH_STORAGE_KEY = 'kainbu:task-editor-dock-width-rem';
@@ -717,6 +739,7 @@
 			position: await resolveMenuPosition(trigger, COLUMN_MENU_WIDTH, COLUMN_MENU_HEIGHT)
 		};
 		openTaskMenu = null;
+		assignMenuOpen = null;
 		taskTagMenuOpen = null;
 		taskInfoMenuOpen = null;
 	};
@@ -734,6 +757,7 @@
 			position: await resolveMenuPosition(trigger, TASK_MENU_WIDTH, TASK_MENU_HEIGHT)
 		};
 		openColumnMenu = null;
+		assignMenuOpen = null;
 		taskTagMenuOpen = null;
 		taskInfoMenuOpen = null;
 	};
@@ -1250,12 +1274,28 @@
 		closeMenus();
 	};
 
-	const toggleAssignMenu = (colId: string, taskId: string) => {
+	const toggleAssignMenu = async (colId: string, taskId: string, trigger: HTMLElement) => {
 		if (assignMenuOpen?.colId === colId && assignMenuOpen.taskId === taskId) {
 			assignMenuOpen = null;
-		} else {
-			assignMenuOpen = { colId, taskId };
+			return;
 		}
+
+		const task = boardData.flatMap((column) => column.tasks).find((entry) => entry.id === taskId);
+
+		markMenuOpened();
+		assignMenuOpen = {
+			colId,
+			taskId,
+			position: await resolveMenuPosition(
+				trigger,
+				ASSIGN_MENU_WIDTH,
+				getAssignMenuHeight(members.length, Boolean(task?.assignedTo))
+			)
+		};
+		openColumnMenu = null;
+		openTaskMenu = null;
+		taskTagMenuOpen = null;
+		taskInfoMenuOpen = null;
 	};
 
 	const assignTask = (columnId: string, taskId: string, userId: string | undefined) => {
@@ -1276,6 +1316,7 @@
 		};
 		openColumnMenu = null;
 		openTaskMenu = null;
+		assignMenuOpen = null;
 		taskInfoMenuOpen = null;
 	};
 
@@ -1303,11 +1344,18 @@
 	const getMemberLabel = (member: ProjectMembership) =>
 		getProjectMemberDisplayName(member, { preferCurrentUserLabel: false });
 
-	const getAssignedMemberLabel = (task: Task) => {
+	const getAssignedMember = (task: Task) => {
 		if (!task.assignedTo) return null;
-		const member = members.find((m) => m.userId === task.assignedTo);
+		return members.find((member) => member.userId === task.assignedTo) ?? null;
+	};
+
+	const getMemberAvatarUrl = (member: ProjectMembership | null | undefined) => {
 		if (!member) return null;
-		return member.isCurrentUser ? 'You' : getMemberLabel(member);
+		if (member.avatarUrl) return member.avatarUrl;
+		if (member.isCurrentUser || member.userId === currentUserId) {
+			return currentUserAvatarUrl;
+		}
+		return null;
 	};
 
 	const copyTaskTitle = async (columnId: string, taskId: string) => {
@@ -1552,6 +1600,13 @@
 		endTaskDrag();
 	};
 
+	const taskHasVisibleProposalDiff = (task: DiffTask) =>
+		Boolean(
+			task._status === 'modified' &&
+				task._originalTask &&
+				!areKanbanTasksEqualForDiff(task._originalTask, task)
+		);
+
 	const cardClasses = (task: DiffTask, options?: { linkDimmed?: boolean }) => {
 		const isLinkAnchor = linkViewAnchorId === task.id;
 		const isLinkClusterMember = Boolean(
@@ -1568,7 +1623,8 @@
 		if (task._status === 'added') result += ' border border-emerald-500/40 bg-emerald-500/10';
 		else if (task._status === 'removed')
 			result += ' border border-rose-500/40 bg-rose-500/10 opacity-80';
-		else if (task._status === 'modified') result += ' border border-amber-500/40 bg-amber-500/10';
+		else if (taskHasVisibleProposalDiff(task))
+			result += ' border border-amber-500/40 bg-amber-500/10';
 		else {
 			result += ' bg-app-surface';
 			if (getToneSurfaceClass(task.color)) result += ' kainbu-tone-surface';
@@ -1605,7 +1661,7 @@
 	const diffStatusLabel = (task: DiffTask) => {
 		if (task._status === 'added') return 'Inserted card';
 		if (task._status === 'removed') return 'Deleted card';
-		if (task._status === 'modified') return 'Edited card';
+		if (taskHasVisibleProposalDiff(task)) return 'Edited card';
 		return '';
 	};
 
@@ -1618,35 +1674,28 @@
 			return 'border-rose-500/30 bg-rose-500/10 text-rose-200';
 		}
 
-		if (task._status === 'modified') {
+		if (taskHasVisibleProposalDiff(task)) {
 			return 'border-amber-500/30 bg-amber-500/10 text-amber-100';
 		}
 
 		return 'border-app-border bg-app-element/70 text-app-subtext';
 	};
 
-	const formatDiffTaskSnapshot = (task: Task | undefined) => {
-		if (!task) return 'Card details unavailable.';
+	const formatProposalTaskSnapshot = (task: Task | undefined) => {
+		if (!task) return formatDiffTaskSnapshot(task);
 
-		const tags = (task.tags || []).map((tag) => tag.label).join(', ') || '(none)';
-		const assignedMember = task.assignedTo
-			? members.find((member) => member.userId === task.assignedTo)
-			: undefined;
-		const assignee = task.assignedTo
-			? assignedMember
+		const lines = formatDiffTaskSnapshot(task).split('\n');
+		if (task.assignedTo) {
+			const assignedMember = members.find((member) => member.userId === task.assignedTo);
+			const assignee = assignedMember
 				? getProjectMemberDisplayName(assignedMember)
-				: task.assignedTo
-			: '(none)';
-		const dueLabel = getTaskDueAt(task) !== null ? formatTimingLabel(task) : '(none)';
-
-		return [
-			`Title: ${task.title || '(untitled)'}`,
-			`Description: ${(task.description || '').trim() || '(empty)'}`,
-			`Tags: ${tags}`,
-			`Assignee: ${assignee}`,
-			`Due: ${dueLabel}`,
-			`Checkbox: ${task.hasCheckbox ? (task.checked ? 'checked' : 'unchecked') : 'off'}`
-		].join('\n');
+				: task.assignedTo;
+			lines[4] = `Assignee: ${assignee}`;
+		}
+		if (getTaskDueAt(task) !== null) {
+			lines[5] = `Due: ${formatTimingLabel(task)}`;
+		}
+		return lines.join('\n');
 	};
 
 	const formatDate = (timestamp?: number) =>
@@ -2080,96 +2129,57 @@
 															{/if}
 
 															<div
-																class="mt-2 flex items-end justify-between gap-2 border-t border-app-border/70 pt-1.5"
+																class="mt-2 flex items-center justify-between gap-2 border-t border-app-border/70 pt-1.5"
 															>
 																<div
 																	class="min-w-0 flex items-center gap-2 text-[9px] text-app-subtext"
 																>
 																	{#if isCollaborative}
 																		<div class="relative">
-																			{#if task.assignedTo && getAssignedMemberLabel(task)}
+																			{#if task.assignedTo && getAssignedMember(task)}
+																				{@const assignedMember = getAssignedMember(task)}
 																				<button
 																					type="button"
-																					class="inline-flex items-center gap-1 rounded-md border border-app-primary/30 bg-app-primary/10 px-1.5 py-0.5 text-[9px] font-semibold text-app-primary transition hover:bg-app-primary/20"
+																					class="inline-flex min-h-8 min-w-8 items-center justify-center rounded-lg transition hover:ring-2 hover:ring-app-primary/25"
+																					aria-label={`Assigned to ${getMemberLabel(assignedMember!)}`}
+																					title={`Assigned to ${getMemberLabel(assignedMember!)}`}
 																					onclick={(event) => {
 																						event.stopPropagation();
-																						toggleAssignMenu(taskColumnId, task.id);
+																						void toggleAssignMenu(
+																							taskColumnId,
+																							task.id,
+																							event.currentTarget as HTMLButtonElement
+																						);
 																					}}
 																				>
-																					<span
-																						class="inline-block h-3 w-3 rounded-full border border-app-primary/40 bg-app-primary/20 text-center text-[7px] font-bold leading-3 text-app-primary"
-																					>
-																						{(getAssignedMemberLabel(task) || '?')[0].toUpperCase()}
-																					</span>
-																					{getAssignedMemberLabel(task)}
+																					<UserAvatar
+																						src={getMemberAvatarUrl(assignedMember)}
+																						initials={assignedMember
+																							? getMemberAvatarInitials(assignedMember)
+																							: '??'}
+																						label={assignedMember
+																							? getMemberLabel(assignedMember)
+																							: 'Assignee'}
+																						size="base"
+																						variant="primary"
+																					/>
 																				</button>
 																			{:else}
 																				<button
 																					type="button"
 																					aria-label="Assign"
-																					class="inline-flex items-center rounded-md border border-dashed border-app-border p-0.5 text-app-subtext transition hover:border-app-primary/40 hover:text-app-primary"
+																					class="inline-flex min-h-8 min-w-8 items-center justify-center rounded-lg border border-dashed border-app-border text-app-subtext transition hover:border-app-primary/40 hover:text-app-primary"
 																					onclick={(event) => {
 																						event.stopPropagation();
-																						toggleAssignMenu(taskColumnId, task.id);
+																						void toggleAssignMenu(
+																							taskColumnId,
+																							task.id,
+																							event.currentTarget as HTMLButtonElement
+																						);
 																					}}
 																				>
 																					<UserPlus size={12} />
 																				</button>
-																			{/if}
-																			{#if assignMenuOpen?.colId === taskColumnId && assignMenuOpen?.taskId === task.id}
-																				<div
-																					role="menu"
-																					tabindex="-1"
-																					class="absolute bottom-full left-0 z-50 mb-1 min-w-[140px] rounded-lg border border-app-border bg-app-surface p-1 shadow-xl"
-																					onclick={(event) => event.stopPropagation()}
-																					onkeydown={(event) => event.stopPropagation()}
-																				>
-																					{#each members as member (member.userId)}
-																						<button
-																							type="button"
-																							class="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-[11px] transition {task.assignedTo ===
-																							member.userId
-																								? 'bg-app-primary/15 font-semibold text-app-primary'
-																								: 'text-app-text hover:bg-app-element'}"
-																							onclick={(event) => {
-																								event.stopPropagation();
-																								assignTask(
-																									taskColumnId,
-																									task.id,
-																									task.assignedTo === member.userId
-																										? undefined
-																										: member.userId
-																								);
-																							}}
-																						>
-																							<span
-																								class="inline-block h-4 w-4 shrink-0 rounded-full border border-app-border bg-app-element text-center text-[8px] font-bold leading-4 text-app-subtext"
-																							>
-																								{getMemberLabel(member)[0].toUpperCase()}
-																							</span>
-																							<span class="truncate">{getMemberLabel(member)}</span>
-																							{#if member.isCurrentUser}
-																								<span class="text-[9px] text-app-subtext"
-																									>(you)</span
-																								>
-																							{/if}
-																						</button>
-																					{/each}
-																					{#if task.assignedTo}
-																						<div class="border-t border-app-border mt-1 pt-1">
-																							<button
-																								type="button"
-																								class="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-[11px] text-app-subtext transition hover:bg-app-element"
-																								onclick={(event) => {
-																									event.stopPropagation();
-																									assignTask(taskColumnId, task.id, undefined);
-																								}}
-																							>
-																								Unassign
-																							</button>
-																						</div>
-																					{/if}
-																				</div>
 																			{/if}
 																		</div>
 																	{/if}
@@ -2399,7 +2409,7 @@
 														</div>
 													{/if}
 													<div class="min-w-0 flex-1">
-														{#if task._status && task._status !== 'unchanged'}
+														{#if diffStatusLabel(task)}
 															<div class="mb-2">
 																<span
 																	class={`inline-flex rounded-full border px-2.5 py-1 text-[9px] font-bold uppercase tracking-[0.18em] ${diffStatusClasses(task)}`}
@@ -2444,7 +2454,7 @@
 													</div>
 												{/if}
 
-												{#if task._status === 'modified' && task._originalTask}
+												{#if taskHasVisibleProposalDiff(task)}
 													<div class="mt-3 grid gap-2 lg:grid-cols-2">
 														<div class="rounded-lg border border-app-border bg-app-bg/55 p-3">
 															<p
@@ -2455,7 +2465,7 @@
 															<div
 																class="whitespace-pre-wrap font-mono text-[11px] leading-relaxed text-app-subtext"
 															>
-																{formatDiffTaskSnapshot(task._originalTask)}
+																{formatProposalTaskSnapshot(task._originalTask)}
 															</div>
 														</div>
 														<div class="rounded-lg border border-app-border bg-app-bg/55 p-3">
@@ -2467,7 +2477,7 @@
 															<div
 																class="whitespace-pre-wrap font-mono text-[11px] leading-relaxed text-app-text"
 															>
-																{formatDiffTaskSnapshot(task)}
+																{formatProposalTaskSnapshot(task)}
 															</div>
 														</div>
 													</div>
@@ -2935,6 +2945,74 @@
 						<Trash2 size={14} />
 						Delete Task
 					</button>
+				</div>
+			</div>
+		{/if}
+	{/if}
+
+	{#if assignMenuOpen}
+		{@const assignColumn = boardData.find((column) => column.id === assignMenuOpen!.colId)}
+		{@const assignTaskRow = assignColumn?.tasks.find((task) => task.id === assignMenuOpen!.taskId)}
+		{#if assignColumn && assignTaskRow}
+			<div class="pointer-events-none fixed inset-0 z-[145]" use:portalToBody>
+				<button
+					type="button"
+					class="pointer-events-auto fixed inset-0 cursor-default bg-transparent"
+					aria-label="Close assign menu"
+					onpointerdown={(event) => event.stopPropagation()}
+					onclick={closeMenusFromBackdrop}
+				></button>
+				<div
+					role="menu"
+					tabindex="-1"
+					data-assign-menu
+					class="pointer-events-auto fixed max-h-[min(17.5rem,calc(100vh-1.5rem))] overflow-y-auto rounded-xl border border-app-border bg-app-surface p-1 shadow-kainbu-xl"
+					style={`top:${assignMenuOpen!.position.top}px; left:${assignMenuOpen!.position.left}px; width:${ASSIGN_MENU_WIDTH}px;`}
+					onmousedown={(event) => event.stopPropagation()}
+					onclick={(event) => event.stopPropagation()}
+				>
+					{#each members as member (member.userId)}
+						<button
+							type="button"
+							class="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-[11px] transition {assignTaskRow.assignedTo ===
+							member.userId
+								? 'bg-app-primary/15 font-semibold text-app-primary'
+								: 'text-app-text hover:bg-app-element'}"
+							onclick={(event) => {
+								event.stopPropagation();
+								assignTask(
+									assignColumn.id,
+									assignTaskRow.id,
+									assignTaskRow.assignedTo === member.userId ? undefined : member.userId
+								);
+							}}
+						>
+							<UserAvatar
+								src={getMemberAvatarUrl(member)}
+								initials={getMemberAvatarInitials(member)}
+								label={getMemberLabel(member)}
+								size="sm"
+							/>
+							<span class="truncate">{getMemberLabel(member)}</span>
+							{#if member.isCurrentUser}
+								<span class="text-[9px] text-app-subtext">(you)</span>
+							{/if}
+						</button>
+					{/each}
+					{#if assignTaskRow.assignedTo}
+						<div class="mt-1 border-t border-app-border pt-1">
+							<button
+								type="button"
+								class="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-[11px] text-app-subtext transition hover:bg-app-element"
+								onclick={(event) => {
+									event.stopPropagation();
+									assignTask(assignColumn.id, assignTaskRow.id, undefined);
+								}}
+							>
+								Unassign
+							</button>
+						</div>
+					{/if}
 				</div>
 			</div>
 		{/if}

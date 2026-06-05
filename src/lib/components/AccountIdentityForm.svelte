@@ -15,8 +15,28 @@
 	export let onDraftChange: (value: string) => void;
 	export let onSubmit: () => void | Promise<void>;
 	export let onSignOut: (() => void | Promise<void>) | null = null;
+	export let embedded = false;
 
 	let editing = false;
+
+	const labelClass = embedded
+		? 'kainbu-settings-field-label'
+		: 'text-[10px] font-semibold uppercase tracking-[0.18em] text-app-subtext/60';
+	const headingClass = embedded
+		? 'kainbu-settings-field-label kainbu-settings-field-label--heading'
+		: 'text-[10px] font-semibold uppercase tracking-[0.2em] text-app-primary';
+	const inputClass = embedded
+		? 'kainbu-settings-input w-full px-9 py-2 text-sm'
+		: 'w-full rounded-lg border border-app-border/60 bg-app-bg px-9 py-2 text-sm text-app-text outline-none transition focus:border-app-primary/40';
+	const submitBtnClass = embedded
+		? 'kainbu-set-btn kainbu-set-btn--primary px-4 py-2 text-sm'
+		: 'rounded-lg bg-app-primary px-4 py-2 text-sm font-semibold text-white transition hover:bg-app-primary-hover disabled:cursor-not-allowed disabled:opacity-40';
+	const cancelBtnClass = embedded
+		? 'kainbu-set-btn kainbu-set-btn--ghost px-3 py-2 text-sm'
+		: 'rounded-lg border border-app-border/40 px-3 py-2 text-sm text-app-subtext transition hover:text-app-text';
+	const changeBtnClass = embedded
+		? 'kainbu-set-btn kainbu-set-btn--ghost kainbu-set-btn--compact'
+		: 'inline-flex items-center gap-1 rounded-md px-2 py-1 text-[11px] text-app-subtext/50 transition hover:text-app-text';
 
 	const getFeedbackClasses = (state: UsernameAvailabilityState) => {
 		if (state === 'available') return 'text-emerald-400';
@@ -33,22 +53,24 @@
 </script>
 
 <form class="space-y-3.5" on:submit|preventDefault={() => void onSubmit()}>
-	<div>
-		<p class="text-[10px] font-semibold uppercase tracking-[0.2em] text-app-primary">{heading}</p>
-		{#if description}
-			<p class="mt-1 text-sm text-app-subtext">{description}</p>
-		{/if}
-	</div>
+	{#if !embedded}
+		<div>
+			<p class={headingClass}>{heading}</p>
+			{#if description}
+				<p class="mt-1 text-sm text-app-subtext">{description}</p>
+			{/if}
+		</div>
+	{/if}
 
 	{#if hasUsername && !editing}
 		<div class="flex items-center justify-between gap-3">
 			<div class="min-w-0">
-				<p class="text-[10px] font-semibold uppercase tracking-[0.18em] text-app-subtext/60">Username</p>
+				<p class={labelClass}>Username</p>
 				<p class="mt-0.5 text-sm font-medium text-app-text">@{currentUsername}</p>
 			</div>
 			<button
 				type="button"
-				class="inline-flex items-center gap-1 rounded-md px-2 py-1 text-[11px] text-app-subtext/50 transition hover:text-app-text"
+				class="{changeBtnClass} inline-flex items-center gap-1"
 				on:click={() => (editing = true)}
 			>
 				<Pencil size={11} />
@@ -58,9 +80,7 @@
 	{:else}
 		<div class="flex gap-2">
 			<label class="min-w-0 flex-1">
-				<span class="mb-1 block text-[10px] font-semibold uppercase tracking-[0.2em] text-app-subtext">
-					Username
-				</span>
+				<span class="{labelClass} mb-1 block">Username</span>
 				<div class="relative">
 					<div class="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3 text-app-subtext/60">
 						<AtSign size={14} />
@@ -71,18 +91,14 @@
 						autocomplete="username"
 						spellcheck="false"
 						placeholder="your_name"
-						class="w-full rounded-lg border border-app-border/60 bg-app-bg px-9 py-2 text-sm text-app-text outline-none transition focus:border-app-primary/40"
+						class={inputClass}
 						on:input={(event) => onDraftChange((event.currentTarget as HTMLInputElement).value)}
 					/>
 				</div>
 			</label>
 
 			<div class="flex items-end gap-1.5">
-				<button
-					type="submit"
-					disabled={!canSubmit}
-					class="rounded-lg bg-app-primary px-4 py-2 text-sm font-semibold text-white transition hover:bg-app-primary-hover disabled:cursor-not-allowed disabled:opacity-40"
-				>
+				<button type="submit" disabled={!canSubmit} class="{submitBtnClass} disabled:cursor-not-allowed disabled:opacity-40">
 					{#if saving}
 						<LoaderCircle size={15} class="animate-spin" />
 					{:else}
@@ -92,7 +108,7 @@
 				{#if hasUsername}
 					<button
 						type="button"
-						class="rounded-lg border border-app-border/40 px-3 py-2 text-sm text-app-subtext transition hover:text-app-text"
+						class={cancelBtnClass}
 						on:click={() => {
 							editing = false;
 							onDraftChange(currentUsername || '');
@@ -117,7 +133,7 @@
 
 	<div class="flex gap-3 text-xs">
 		<div class="min-w-0 flex-1">
-			<p class="text-[10px] font-semibold uppercase tracking-[0.18em] text-app-subtext/60">Email</p>
+			<p class={labelClass}>Email</p>
 			<p class="mt-0.5 truncate font-medium text-app-text">{email || 'No email available'}</p>
 		</div>
 	</div>

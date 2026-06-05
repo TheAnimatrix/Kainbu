@@ -187,15 +187,15 @@ export const BACKGROUND_SOLID_OPTIONS: BackgroundScenePreset[] = [
 		label: 'Obsidian',
 		swatch: '#09090b',
 		scene: '#09090b',
-		primaryGlow: 'rgba(255, 255, 255, 0.04)',
-		secondaryGlow: 'rgba(255, 255, 255, 0.03)',
-		gridOpacity: 0.08,
+		primaryGlow: 'transparent',
+		secondaryGlow: 'transparent',
+		gridOpacity: 0,
 		light: {
 			swatch: '#fafafa',
 			scene: '#fafafa',
-			primaryGlow: 'rgba(0, 0, 0, 0.03)',
-			secondaryGlow: 'rgba(0, 0, 0, 0.02)',
-			gridOpacity: 0.12
+			primaryGlow: 'transparent',
+			secondaryGlow: 'transparent',
+			gridOpacity: 0
 		}
 	},
 	{
@@ -345,6 +345,7 @@ export const BACKGROUND_SOLID_OPTIONS: BackgroundScenePreset[] = [
 ];
 
 const gradientById = new Map(BACKGROUND_GRADIENT_OPTIONS.map((option) => [option.id, option]));
+const DEFAULT_GRADIENT_FALLBACK_ID = BACKGROUND_GRADIENT_OPTIONS[0]?.id ?? 'ember-haze';
 const solidById = new Map(BACKGROUND_SOLID_OPTIONS.map((option) => [option.id, option]));
 
 const isObject = (value: unknown): value is Record<string, unknown> =>
@@ -353,10 +354,112 @@ const isObject = (value: unknown): value is Record<string, unknown> =>
 const normalizePresetId = (id: unknown) => (typeof id === 'string' ? id.trim() : '');
 const escapeCssUrl = (value: string) => value.replace(/"/g, '\\"');
 
-export const DEFAULT_BACKGROUND_THEME: BackgroundTheme = {
-	kind: 'gradient',
-	id: 'ember-haze'
+const CUSTOM_HSL_SOLID_ID_RE = /^custom-hsl-(\d{1,3})-(\d{1,3})-(\d{1,3})$/;
+
+const clampHslChannel = (value: number, max: number) =>
+	Math.min(max, Math.max(0, Math.round(value)));
+
+export const isCustomHslSolidId = (id: string) => CUSTOM_HSL_SOLID_ID_RE.test(id.trim());
+
+export const parseCustomHslSolidId = (
+	id: string
+): { h: number; s: number; l: number } | null => {
+	const match = id.trim().match(CUSTOM_HSL_SOLID_ID_RE);
+	if (!match) return null;
+
+	return {
+		h: clampHslChannel(Number(match[1]), 360),
+		s: clampHslChannel(Number(match[2]), 100),
+		l: clampHslChannel(Number(match[3]), 100)
+	};
 };
+
+export const customHslSolidTheme = (h: number, s: number, l: number): BackgroundTheme => ({
+	kind: 'solid',
+	id: `custom-hsl-${clampHslChannel(h, 360)}-${clampHslChannel(s, 100)}-${clampHslChannel(l, 100)}`
+});
+
+export const DEFAULT_DARK_CUSTOM_HSL = { h: 206, s: 78, l: 2 } as const;
+export const DEFAULT_LIGHT_CUSTOM_HSL = { h: 206, s: 18, l: 97 } as const;
+
+const DARK_TO_LIGHT_SAT_RATIO = DEFAULT_LIGHT_CUSTOM_HSL.s / DEFAULT_DARK_CUSTOM_HSL.s;
+const LIGHT_TO_DARK_SAT_RATIO = DEFAULT_DARK_CUSTOM_HSL.s / DEFAULT_LIGHT_CUSTOM_HSL.s;
+
+export const pairCustomHslForColorMode = (
+	hsl: { h: number; s: number; l: number },
+	targetMode: ColorMode
+): { h: number; s: number; l: number } => {
+	const isLightInput = hsl.l >= 50;
+
+	if (targetMode === 'light') {
+		if (isLightInput) return { h: hsl.h, s: hsl.s, l: hsl.l };
+
+		return {
+			h: hsl.h,
+			s: clampHslChannel(Math.round(hsl.s * DARK_TO_LIGHT_SAT_RATIO), 100),
+			l: DEFAULT_LIGHT_CUSTOM_HSL.l
+		};
+	}
+
+	if (!isLightInput) return { h: hsl.h, s: hsl.s, l: hsl.l };
+
+	return {
+		h: hsl.h,
+		s: clampHslChannel(Math.round(hsl.s * LIGHT_TO_DARK_SAT_RATIO), 100),
+		l: DEFAULT_DARK_CUSTOM_HSL.l
+	};
+};
+
+export const shouldAdaptBackgroundThemeForColorMode = (theme: BackgroundTheme) =>
+	theme.kind === 'solid' &&
+	(parseCustomHslSolidId(theme.id) !== null || theme.id === 'obsidian');
+
+export const adaptBackgroundThemeForColorMode = (
+	theme: BackgroundTheme,
+	targetMode: ColorMode
+): BackgroundTheme => {
+	if (!shouldAdaptBackgroundThemeForColorMode(theme)) return theme;
+
+	const hsl =
+		theme.kind === 'solid'
+			? parseCustomHslSolidId(theme.id) ?? { ...DEFAULT_DARK_CUSTOM_HSL }
+			: { ...DEFAULT_DARK_CUSTOM_HSL };
+	const paired = pairCustomHslForColorMode(hsl, targetMode);
+
+	return customHslSolidTheme(paired.h, paired.s, paired.l);
+};
+
+export const defaultCustomHslForColorMode = (colorMode: ColorMode = 'dark') =>
+	pairCustomHslForColorMode(DEFAULT_DARK_CUSTOM_HSL, colorMode);
+
+export const resolveCustomHslFromTheme = (
+	theme: BackgroundTheme | null | undefined,
+	colorMode: ColorMode = 'dark'
+) => {
+	if (theme?.kind === 'solid') {
+		const parsed = parseCustomHslSolidId(theme.id);
+		if (parsed) return parsed;
+	}
+
+	return defaultCustomHslForColorMode(colorMode);
+};
+
+const buildCustomHslScene = (h: number, s: number, l: number, colorMode: ColorMode) => {
+	const glowAlpha = colorMode === 'light' ? 0.14 : 0.1;
+
+	return {
+		baseStyle: `background: hsl(${h} ${s}% ${l}%);`,
+		primaryGlow: `hsla(${h}, ${s}%, ${l}%, ${glowAlpha})`,
+		secondaryGlow: `hsla(${h}, ${Math.max(0, s - 10)}%, ${Math.max(0, l - 8)}%, ${glowAlpha * 0.85})`,
+		gridOpacity: colorMode === 'light' ? 0.1 : 0.08
+	};
+};
+
+export const DEFAULT_BACKGROUND_THEME: BackgroundTheme = customHslSolidTheme(
+	DEFAULT_DARK_CUSTOM_HSL.h,
+	DEFAULT_DARK_CUSTOM_HSL.s,
+	DEFAULT_DARK_CUSTOM_HSL.l
+);
 
 export const isBackgroundTheme = (value: unknown): value is BackgroundTheme => {
 	if (!isObject(value) || typeof value.kind !== 'string') return false;
@@ -366,7 +469,8 @@ export const isBackgroundTheme = (value: unknown): value is BackgroundTheme => {
 	}
 
 	if (value.kind === 'solid') {
-		return solidById.has(normalizePresetId(value.id));
+		const id = normalizePresetId(value.id);
+		return solidById.has(id) || isCustomHslSolidId(id);
 	}
 
 	if (value.kind === 'image') {
@@ -412,14 +516,14 @@ export const isImageBackgroundTheme = (
 
 export const getBackgroundOption = (theme: BackgroundTheme) => {
 	if (theme.kind === 'gradient') {
-		return gradientById.get(theme.id) || gradientById.get(DEFAULT_BACKGROUND_THEME.id)!;
+		return gradientById.get(theme.id) || gradientById.get(DEFAULT_GRADIENT_FALLBACK_ID)!;
 	}
 
 	if (theme.kind === 'solid') {
 		return solidById.get(theme.id) || solidById.get(BACKGROUND_SOLID_OPTIONS[0].id)!;
 	}
 
-	return gradientById.get(DEFAULT_BACKGROUND_THEME.id)!;
+	return gradientById.get(DEFAULT_GRADIENT_FALLBACK_ID)!;
 };
 
 export const getBackgroundScene = (
@@ -445,6 +549,13 @@ export const getBackgroundScene = (
 		};
 	}
 
+	if (theme.kind === 'solid') {
+		const customHsl = parseCustomHslSolidId(theme.id);
+		if (customHsl) {
+			return buildCustomHslScene(customHsl.h, customHsl.s, customHsl.l, colorMode);
+		}
+	}
+
 	const option = getBackgroundOption(theme);
 	const presentation = getBackgroundPresetPresentation(option, colorMode);
 	return {
@@ -457,8 +568,8 @@ export const getBackgroundScene = (
 
 type Rgb = { r: number; g: number; b: number };
 
-const CHAT_ORB_FALLBACK_PRIMARY: Rgb = { r: 234, g: 88, b: 12 };
-const CHAT_ORB_FALLBACK_SECONDARY: Rgb = { r: 185, g: 28, b: 28 };
+const CHAT_ORB_FALLBACK_PRIMARY: Rgb = { r: 113, g: 113, b: 122 };
+const CHAT_ORB_FALLBACK_SECONDARY: Rgb = { r: 161, g: 161, b: 170 };
 
 const clampChannel = (value: number) => Math.min(255, Math.max(0, Math.round(value)));
 
@@ -480,6 +591,17 @@ const parseSceneColor = (value: string): Rgb | null => {
 			g: (value32 >> 8) & 255,
 			b: value32 & 255
 		};
+	}
+
+	const hslMatch = value.match(
+		/hsla?\(\s*([\d.]+)(?:deg)?\s*[, ]\s*([\d.]+)%\s*[, ]\s*([\d.]+)%/i
+	);
+	if (hslMatch) {
+		return hslToRgb(
+			clampHslChannel(Number(hslMatch[1]), 360) / 360,
+			clampHslChannel(Number(hslMatch[2]), 100) / 100,
+			clampHslChannel(Number(hslMatch[3]), 100) / 100
+		);
 	}
 
 	return null;
@@ -619,6 +741,42 @@ const buildChatOrbPalette = (warm: Rgb, sceneSecondary: Rgb, colorMode: ColorMod
 	};
 };
 
+const firstSceneHexColor = (sceneValue: string): Rgb | null => {
+	const match = sceneValue.match(/#([0-9a-f]{6})/i);
+	return match ? parseSceneColor(`#${match[1]}`) : null;
+};
+
+const resolveChatOrbWarm = (
+	theme: BackgroundTheme,
+	scene: ReturnType<typeof getBackgroundScene>,
+	colorMode: ColorMode
+): Rgb => {
+	if (scene.primaryGlow !== 'transparent') {
+		const fromPrimary = parseSceneColor(scene.primaryGlow);
+		if (fromPrimary) {
+			return enrichNeutralGlow(fromPrimary, CHAT_ORB_FALLBACK_PRIMARY);
+		}
+	}
+
+	if (scene.secondaryGlow !== 'transparent') {
+		const fromSecondary = parseSceneColor(scene.secondaryGlow);
+		if (fromSecondary) {
+			return enrichNeutralGlow(fromSecondary, CHAT_ORB_FALLBACK_PRIMARY);
+		}
+	}
+
+	if (theme.kind === 'solid' || theme.kind === 'gradient') {
+		const option = getBackgroundOption(theme);
+		const presentation = getBackgroundPresetPresentation(option, colorMode);
+		const fromScene = firstSceneHexColor(presentation.scene);
+		if (fromScene) {
+			return enrichNeutralGlow(fromScene, CHAT_ORB_FALLBACK_PRIMARY);
+		}
+	}
+
+	return CHAT_ORB_FALLBACK_PRIMARY;
+};
+
 /** Inline CSS custom properties for the chat orb, derived from the active background scene. */
 export const getChatOrbStyle = (
 	theme: BackgroundTheme,
@@ -626,11 +784,11 @@ export const getChatOrbStyle = (
 	colorMode: ColorMode = 'dark'
 ) => {
 	const scene = getBackgroundScene(theme, imageUrl, colorMode);
-	const warm = enrichNeutralGlow(
-		parseSceneColor(scene.primaryGlow) ?? CHAT_ORB_FALLBACK_PRIMARY,
-		CHAT_ORB_FALLBACK_PRIMARY
-	);
-	const sceneSecondary = parseSceneColor(scene.secondaryGlow) ?? CHAT_ORB_FALLBACK_SECONDARY;
+	const warm = resolveChatOrbWarm(theme, scene, colorMode);
+	const sceneSecondary =
+		scene.secondaryGlow !== 'transparent'
+			? (parseSceneColor(scene.secondaryGlow) ?? CHAT_ORB_FALLBACK_SECONDARY)
+			: CHAT_ORB_FALLBACK_SECONDARY;
 	const palette = buildChatOrbPalette(warm, sceneSecondary, colorMode);
 
 	const vars: Record<string, string> = {
@@ -647,6 +805,60 @@ export const getChatOrbStyle = (
 	return Object.entries(vars)
 		.map(([name, value]) => `${name}:${value}`)
 		.join(';');
+};
+
+const rgbHex = (color: Rgb) =>
+	`#${[color.r, color.g, color.b]
+		.map((channel) => channel.toString(16).padStart(2, '0'))
+		.join('')}`;
+
+export const customHslToHex = (h: number, s: number, l: number) =>
+	rgbHex(hslToRgb(h / 360, s / 100, l / 100));
+
+export const DEFAULT_APP_BG_HEX = {
+	dark: customHslToHex(
+		DEFAULT_DARK_CUSTOM_HSL.h,
+		DEFAULT_DARK_CUSTOM_HSL.s,
+		DEFAULT_DARK_CUSTOM_HSL.l
+	),
+	light: customHslToHex(
+		DEFAULT_LIGHT_CUSTOM_HSL.h,
+		DEFAULT_LIGHT_CUSTOM_HSL.s,
+		DEFAULT_LIGHT_CUSTOM_HSL.l
+	)
+} as const;
+
+const resolveThemeAccentColors = (
+	theme: BackgroundTheme,
+	imageUrl = '',
+	colorMode: ColorMode = 'dark'
+) => {
+	const scene = getBackgroundScene(theme, imageUrl, colorMode);
+	const warm = resolveChatOrbWarm(theme, scene, colorMode);
+	const { h, s } = rgbToHsl(warm);
+	return {
+		primary: hslToRgb(h, Math.max(s, 0.62), colorMode === 'light' ? 0.48 : 0.52),
+		primaryHover: hslToRgb(h, Math.max(s, 0.7), colorMode === 'light' ? 0.38 : 0.42)
+	};
+};
+
+/** Sync app primary/accent tokens with the active background theme. */
+export const applyThemeAccent = (
+	theme: BackgroundTheme,
+	imageUrl = '',
+	colorMode: ColorMode = 'dark'
+) => {
+	if (typeof document === 'undefined') return;
+
+	const { primary, primaryHover } = resolveThemeAccentColors(theme, imageUrl, colorMode);
+	const primaryHex = rgbHex(primary);
+	const hoverHex = rgbHex(primaryHover);
+	const root = document.documentElement;
+
+	root.style.setProperty('--color-app-primary', primaryHex);
+	root.style.setProperty('--color-app-primary-hover', hoverHex);
+	root.style.setProperty('--color-app-accent', primaryHex);
+	root.style.setProperty('--color-app-accent-hover', hoverHex);
 };
 
 export const getBackgroundImagePreviewStyle = (

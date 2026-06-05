@@ -31,11 +31,16 @@ export const repairUsersCollectionApiRules = async (
 	const before = {
 		viewRule: collection.viewRule ?? null,
 		listRule: collection.listRule ?? null,
-		authRule: collection.authRule ?? null
+		authRule: collection.authRule ?? null,
+		authAlertEnabled: collection.authAlert?.enabled ?? null
 	};
 
 	await client.collections.update(collection.id, {
 		...USERS_COLLECTION_API_RULES,
+		authAlert: {
+			...(collection.authAlert ?? {}),
+			enabled: false
+		},
 		...extra
 	});
 
@@ -53,10 +58,15 @@ export const repairUsersCollectionApiRules = async (
 		);
 	}
 
-	if (before.viewRule !== result.viewRule || before.listRule !== result.listRule) {
+	if (
+		before.viewRule !== result.viewRule ||
+		before.listRule !== result.listRule ||
+		before.authAlertEnabled !== false
+	) {
 		console.log('[users-rules] repaired users collection API rules', {
 			before,
-			after: result
+			after: result,
+			authAlertEnabled: false
 		});
 	}
 

@@ -1,7 +1,7 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="290 100 220 220">
   <!-- Top-Left quadrant -->
-  <polygon points="290,100 400,100 400,210" fill="#d47a2e"/>
-  <polygon points="290,100 290,210 400,210" fill="#c26a1f"/>
+  <polygon points="290,100 400,100 400,210" fill="#3b82f6"/>
+  <polygon points="290,100 290,210 400,210" fill="#2563eb"/>
 
   <!-- Top-Right (K upper arm) -->
   <polygon points="400,100 510,100 400,210" fill="#636363"/>
@@ -11,11 +11,11 @@
   <polygon points="290,210 290,320 400,320" fill="#3a3a3a"/>
 
   <!-- Bottom-Right (K lower arm) -->
-  <polygon points="400,210 510,320 400,320" fill="#d47a2e"/>
+  <polygon points="400,210 510,320 400,320" fill="#3b82f6"/>
 
   <!-- Fold overlays -->
   <polygon points="348,158 400,100 400,210" fill="#4a4a4a"/>
-  <polygon points="452,262 400,210 400,320" fill="#a8551a"/>
+  <polygon points="452,262 400,210 400,320" fill="#1d4ed8"/>
 
   <!-- Subtle shadow -->
   <polygon points="290,320 400,320 290,210" fill="#3a3a3a" opacity="0.3"/>

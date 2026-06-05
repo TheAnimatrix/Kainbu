@@ -89,7 +89,7 @@ export const SURFACE_TONE_OPTIONS = [
 	}))
 ] as const;
 
-export const COLUMN_DOT_COLORS = ['bg-orange-400', 'bg-blue-400', 'bg-cyan-400', 'bg-emerald-400'];
+export const COLUMN_DOT_COLORS = ['bg-blue-400', 'bg-cyan-400', 'bg-indigo-400', 'bg-emerald-400'];
 export const DEFAULT_COLUMN_WIDTH = 268;
 export const MIN_COLUMN_WIDTH = 220;
 export const MAX_COLUMN_WIDTH = 420;

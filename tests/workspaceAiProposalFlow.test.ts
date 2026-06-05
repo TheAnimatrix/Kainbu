@@ -61,6 +61,8 @@ describe('workspace AI proposal flow helpers', () => {
 
 		const ops = deriveKanbanOps(original, next);
 
+		expect(deriveKanbanOps(original, original)).toEqual([]);
+
 		expect(ops).toEqual(
 			expect.arrayContaining([
 				{
@@ -82,5 +84,41 @@ describe('workspace AI proposal flow helpers', () => {
 				}
 			])
 		);
+	});
+
+	it('does not stage update_task when only tag ids change', () => {
+		const original: KanbanData = [
+			{
+				id: 'todo',
+				title: 'Todo',
+				width: 268,
+				tasks: [
+					{
+						id: 'task-1',
+						title: 'SIP Fix app name not showing + template fix + decoupling',
+						description: '',
+						tags: [{ id: 'tag-a', label: 'Bug', color: 'tone:red' }]
+					}
+				]
+			}
+		];
+
+		const next: KanbanData = [
+			{
+				id: 'todo',
+				title: 'Todo',
+				width: 268,
+				tasks: [
+					{
+						id: 'task-1',
+						title: 'SIP Fix app name not showing + template fix + decoupling',
+						description: '',
+						tags: [{ id: 'tag-b', label: 'Bug', color: 'tone:red' }]
+					}
+				]
+			}
+		];
+
+		expect(deriveKanbanOps(original, next)).toEqual([]);
 	});
 });

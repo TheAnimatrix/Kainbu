@@ -226,10 +226,13 @@ const interceptResendMail = (e) => {
 // PocketBase 0.23+: do not attach hooks to the `users` auth collection (breaks signup).
 // Signup disable is enforced in the Hono `/api/auth/signup` route and the app UI.
 
+/** Kainbu: new-device login alerts are disabled (see users.authAlert + migration 1730000023). */
+const suppressAuthAlertMail = () => {};
+
 onMailerBeforeRecordVerificationSend(interceptResendVerification);
 onMailerBeforeRecordPasswordResetSend(interceptResendPasswordReset);
 onMailerRecordEmailChangeSend(interceptResendMail);
-onMailerRecordAuthAlertSend(interceptResendMail);
+onMailerRecordAuthAlertSend(suppressAuthAlertMail);
 
 onMailerSend((e) => {
 	const settings = loadAppSettings(e.app);

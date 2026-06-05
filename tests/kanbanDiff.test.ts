@@ -18,6 +18,17 @@ describe('areKanbanTasksEqualForDiff', () => {
 		expect(areKanbanTasksEqualForDiff(left, right)).toBe(true);
 	});
 
+	it('treats missing tag color as the default tone', () => {
+		const left = baseTask({
+			tags: [{ id: 'tag-a', label: 'Blocked', color: 'tone:blue' }]
+		});
+		const right = baseTask({
+			tags: [{ id: 'tag-b', label: 'Blocked', color: '' }]
+		});
+
+		expect(areKanbanTasksEqualForDiff(left, right)).toBe(true);
+	});
+
 	it('ignores tag ids when label and color match', () => {
 		const left = baseTask({
 			tags: [{ id: 'tag-a', label: 'Blocked', color: 'tone:red' }]

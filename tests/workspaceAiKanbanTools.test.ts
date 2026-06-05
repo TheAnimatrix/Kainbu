@@ -371,10 +371,7 @@ describe('workspace AI kanban tools', () => {
 	it('update_task adds, removes, and recolors tags', async () => {
 		const workspace = await makeWorkspace(sampleKanban);
 		const addResult = await updateTask(workspace, 'T1', {
-			addTags: [
-				{ label: 'Bug', color: 'tone:red' },
-				'Feature'
-			]
+			addTags: [{ label: 'Bug', color: 'tone:red' }, { label: 'Feature' }]
 		});
 		expect(addResult.ok).toBe(true);
 

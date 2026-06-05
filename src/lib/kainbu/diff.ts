@@ -1,6 +1,9 @@
 import { DEFAULT_COLUMN_WIDTH } from '$lib/kainbu/constants';
 import { normalizeDueTimestamp } from '$lib/kainbu/timing';
+import { formatTagsForAiContext } from '$lib/kainbu/tags';
 import type { Column, KanbanData, Tag, Task } from '$lib/kainbu/types';
+
+const DEFAULT_TAG_COLOR = 'tone:blue';
 
 export interface TextDiffPart {
 	value: string;
@@ -84,8 +87,8 @@ export interface DiffColumn extends Column {
 	_status?: 'added' | 'removed' | 'modified' | 'unchanged';
 }
 
-const tagDiffSignature = (tag: Tag) =>
-	`${(tag.label || '').trim()}|${(tag.color || '').trim() || ''}`;
+export const tagDiffSignature = (tag: Tag) =>
+	`${(tag.label || '').trim()}|${(tag.color || '').trim() || DEFAULT_TAG_COLOR}`;
 
 const areTagsEqual = (left: Tag[], right: Tag[]) => {
 	const leftSet = new Set((left || []).map(tagDiffSignature));
@@ -121,6 +124,24 @@ export const areKanbanTasksEqualForDiff = (left: Task, right: Task) => {
 	if ((left.assignedTo || '').trim() !== (right.assignedTo || '').trim()) return false;
 
 	return areTagsEqual(left.tags || [], right.tags || []);
+};
+
+/** Fields shown in proposal review cards — keep in sync with formatDiffTaskSnapshot. */
+export const formatDiffTaskSnapshot = (task: Task | undefined) => {
+	if (!task) return 'Card details unavailable.';
+
+	const tags = (task.tags || []).length ? formatTagsForAiContext(task.tags) : '(none)';
+	const dueAt = normalizeDueTimestamp(task.countdownAt) ?? normalizeDueTimestamp(task.alarmAt);
+
+	return [
+		`Title: ${(task.title || '').trim() || '(untitled)'}`,
+		`Description: ${(task.description || '').trim() || '(empty)'}`,
+		`Card color: ${(task.color || '').trim() || '(none)'}`,
+		`Tags: ${tags}`,
+		`Assignee: ${(task.assignedTo || '').trim() || '(none)'}`,
+		`Due: ${dueAt ? new Date(dueAt).toLocaleString() : '(none)'}`,
+		`Checkbox: ${task.hasCheckbox ? (task.checked ? 'checked' : 'unchecked') : 'off'}`
+	].join('\n');
 };
 
 const areColumnsEqual = (left: Column, right: Column) => {

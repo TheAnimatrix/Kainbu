@@ -1,3 +1,5 @@
+import { DEFAULT_APP_BG_HEX } from '$lib/kainbu/backgrounds';
+
 export type ColorMode = 'light' | 'dark';
 
 export const COLOR_MODE_STORAGE_KEY = 'kainbu-color-mode';
@@ -15,8 +17,12 @@ export const applyColorMode = (mode: ColorMode) => {
 
 	const meta = document.querySelector('meta[name="theme-color"]');
 	if (meta) {
-		meta.setAttribute('content', mode === 'light' ? '#fafafa' : '#09090b');
+		meta.setAttribute('content', DEFAULT_APP_BG_HEX[mode]);
 	}
+};
+
+export const persistColorMode = (mode: ColorMode) => {
+	if (typeof localStorage === 'undefined') return;
 
 	try {
 		localStorage.setItem(COLOR_MODE_STORAGE_KEY, mode);

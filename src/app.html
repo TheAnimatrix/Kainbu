@@ -6,7 +6,18 @@
 			name="viewport"
 			content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content"
 		/>
-		<meta name="theme-color" content="#09090b" />
+		<meta name="theme-color" content="#010609" />
+		<style>
+			html,
+			body {
+				background-color: hsl(206, 78%, 2%);
+			}
+
+			html[data-color-mode='light'],
+			html[data-color-mode='light'] body {
+				background-color: hsl(206, 18%, 97%);
+			}
+		</style>
 		<script>
 			try {
 				const mode = localStorage.getItem('kainbu-color-mode');

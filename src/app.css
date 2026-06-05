@@ -6,7 +6,7 @@
 	--font-display: 'Shippori Mincho', serif;
 	--font-serif: 'Source Serif 4', Georgia, 'Times New Roman', serif;
 
-	--color-app-bg: #09090b;
+	--color-app-bg: hsl(206 78% 2%);
 	--color-app-surface: #18181b;
 	--color-app-column: #131316;
 	--color-app-surface-hover: #27272a;
@@ -14,10 +14,10 @@
 	--color-app-border: #2f2f33;
 	--color-app-text: #f4f4f5;
 	--color-app-subtext: #a1a1aa;
-	--color-app-primary: #c2410c;
-	--color-app-primary-hover: #9a3412;
-	--color-app-accent: #3b82f6;
-	--color-app-accent-hover: #2563eb;
+	--color-app-primary: #71717a;
+	--color-app-primary-hover: #52525b;
+	--color-app-accent: #71717a;
+	--color-app-accent-hover: #52525b;
 
 	--shadow-kainbu-xl: 0 34px 90px -34px rgba(0, 0, 0, 0.82);
 }
@@ -33,7 +33,7 @@
 
 	:root[data-color-mode='light'] {
 		color-scheme: light;
-		--color-app-bg: #fafafa;
+		--color-app-bg: hsl(206 18% 97%);
 		--color-app-surface: #ffffff;
 		--color-app-column: #ffffff;
 		--color-app-surface-hover: #f4f4f5;
@@ -41,10 +41,10 @@
 		--color-app-border: #e4e4e7;
 		--color-app-text: #18181b;
 		--color-app-subtext: #71717a;
-		--color-app-primary: #c2410c;
-		--color-app-primary-hover: #9a3412;
-		--color-app-accent: #2563eb;
-		--color-app-accent-hover: #1d4ed8;
+		--color-app-primary: #52525b;
+		--color-app-primary-hover: #3f3f46;
+		--color-app-accent: #52525b;
+		--color-app-accent-hover: #3f3f46;
 		--shadow-kainbu-xl: 0 28px 70px -28px rgba(15, 23, 42, 0.18);
 	}
 
@@ -57,20 +57,10 @@
 	body {
 		min-height: 100dvh;
 		font-family: var(--font-sans);
-		background:
-			radial-gradient(circle at top right, rgba(194, 65, 12, 0.12), transparent 24rem),
-			radial-gradient(circle at bottom left, rgba(59, 130, 246, 0.1), transparent 28rem),
-			var(--color-app-bg);
+		background: var(--color-app-bg);
 		color: var(--color-app-text);
 		overflow: hidden;
 		-webkit-font-smoothing: antialiased;
-	}
-
-	:root[data-color-mode='light'] body {
-		background:
-			radial-gradient(circle at top right, rgba(194, 65, 12, 0.06), transparent 24rem),
-			radial-gradient(circle at bottom left, rgba(59, 130, 246, 0.05), transparent 28rem),
-			var(--color-app-bg);
 	}
 
 	button,
@@ -666,7 +656,7 @@
 	}
 
 	.kainbu-prose blockquote {
-		border-left: 3px solid rgba(194, 65, 12, 0.65);
+		border-left: 3px solid color-mix(in oklab, var(--color-app-primary) 65%, transparent);
 		padding-left: 1rem;
 		color: var(--color-app-subtext);
 	}
@@ -1171,11 +1161,11 @@
 		border-radius: 999px;
 		background: linear-gradient(
 			90deg,
-			rgba(251, 146, 60, 0.18),
-			rgba(251, 146, 60, 0.95),
-			rgba(251, 191, 36, 0.18)
+			color-mix(in oklab, var(--color-app-primary) 18%, transparent),
+			color-mix(in oklab, var(--color-app-primary) 95%, transparent),
+			color-mix(in oklab, var(--color-app-accent-hover) 18%, transparent)
 		);
-		box-shadow: 0 0 0 1px rgba(251, 146, 60, 0.15);
+		box-shadow: 0 0 0 1px color-mix(in oklab, var(--color-app-primary) 15%, transparent);
 		transform: translateY(-50%);
 		pointer-events: none;
 	}
@@ -1628,14 +1618,14 @@
 	.chat-orb-anchor {
 		--chat-orb-size: 3.5rem;
 		--chat-orb-lines-size: 5.5rem;
-		--chat-orb-primary: 234 88 12;
-		--chat-orb-secondary: 59 130 246;
-		--chat-orb-tertiary: 244 114 182;
-		--chat-orb-highlight: 255 237 213;
+		--chat-orb-primary: 113 113 122;
+		--chat-orb-secondary: 161 161 170;
+		--chat-orb-tertiary: 82 82 91;
+		--chat-orb-highlight: 228 228 231;
 		--chat-orb-ring-start: 255 255 255;
 		--chat-orb-lines-center: 255 255 255;
-		--chat-orb-ball: 234 88 12;
-		--chat-orb-focus: 251 146 60;
+		--chat-orb-ball: 82 82 91;
+		--chat-orb-focus: 161 161 170;
 		position: absolute;
 		bottom: 1.25rem;
 		right: 1.25rem;
