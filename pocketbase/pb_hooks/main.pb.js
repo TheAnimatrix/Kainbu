@@ -92,24 +92,142 @@ const sendViaResend = (app, settings, message) => {
 	return true;
 };
 
+const appMeta = (app) => app.settings()?.meta || {};
+
+const getAppUrl = (app) => {
+	const meta = appMeta(app);
+	return typeof meta.appURL === 'string' ? meta.appURL.trim().replace(/\/+$/, '') : '';
+};
+
+const getSender = (app) => {
+	const meta = appMeta(app);
+	return {
+		fromEmail: typeof meta.senderAddress === 'string' ? meta.senderAddress.trim() : '',
+		fromName: typeof meta.senderName === 'string' ? meta.senderName.trim() : ''
+	};
+};
+
 /**
- * Auth emails (verification, password reset, etc.) use onMailerRecord* hooks.
- * With SMTP disabled, e.next() would no-op — intercept Resend here instead of onMailerSend only.
+ * Auth emails use onMailerRecord* hooks.
+ * We build the payload from e.record + e.meta + PB settings to avoid relying on
+ * event.message structure across PocketBase versions.
+ */
+const interceptResendVerification = (e) => {
+	const settings = loadAppSettings(e.app);
+	if (mailProvider(settings) !== 'resend') return e.next();
+
+	const { fromEmail, fromName } = getSender(e.app);
+	const appUrl = getAppUrl(e.app);
+	const token = e.meta?.token || '';
+	const recipient = e.record?.get('email') || '';
+	if (!fromEmail || !appUrl || !token || !recipient) return;
+
+	const link = `${appUrl}/auth/confirm-verification/${encodeURIComponent(token)}`;
+	const subject = 'Verify your Kainbu email';
+	const html = `<p>Welcome to Kainbu.</p><p><a href="${htmlEscape(
+		link
+	)}">Verify your email</a></p>`;
+	const text = `Welcome to Kainbu. Verify your email: ${link}`;
+
+	const apiKey = getText(settings, 'resend_api_key');
+	const response = $http.send({
+		method: 'POST',
+		url: 'https://api.resend.com/emails',
+		headers: {
+			Authorization: `Bearer ${apiKey}`,
+			'Content-Type': 'application/json'
+		},
+		body: JSON.stringify({
+			from: fromName ? `${fromName} <${fromEmail}>` : fromEmail,
+			to: [recipient],
+			subject,
+			html,
+			text
+		})
+	});
+
+	if (response.statusCode < 200 || response.statusCode >= 300) {
+		let detail = '';
+		try {
+			const parsed = JSON.parse(response.raw || '{}');
+			detail =
+				typeof parsed.message === 'string'
+					? parsed.message
+					: typeof parsed.error === 'string'
+						? parsed.error
+						: '';
+		} catch (_) {}
+		throw new Error(
+			detail ? `Resend email failed (${response.statusCode}): ${detail}` : `Resend email failed (${response.statusCode})`
+		);
+	}
+};
+
+const interceptResendPasswordReset = (e) => {
+	const settings = loadAppSettings(e.app);
+	if (mailProvider(settings) !== 'resend') return e.next();
+
+	const { fromEmail, fromName } = getSender(e.app);
+	const appUrl = getAppUrl(e.app);
+	const token = e.meta?.token || '';
+	const recipient = e.record?.get('email') || '';
+	if (!fromEmail || !appUrl || !token || !recipient) return;
+
+	const link = `${appUrl}/auth/confirm-password-reset/${encodeURIComponent(token)}`;
+	const subject = 'Reset your Kainbu password';
+	const html = `<p>Use this link to set a new Kainbu password.</p><p><a href="${htmlEscape(
+		link
+	)}">Reset password</a></p>`;
+	const text = `Reset your Kainbu password: ${link}`;
+
+	const apiKey = getText(settings, 'resend_api_key');
+	const response = $http.send({
+		method: 'POST',
+		url: 'https://api.resend.com/emails',
+		headers: {
+			Authorization: `Bearer ${apiKey}`,
+			'Content-Type': 'application/json'
+		},
+		body: JSON.stringify({
+			from: fromName ? `${fromName} <${fromEmail}>` : fromEmail,
+			to: [recipient],
+			subject,
+			html,
+			text
+		})
+	});
+
+	if (response.statusCode < 200 || response.statusCode >= 300) {
+		let detail = '';
+		try {
+			const parsed = JSON.parse(response.raw || '{}');
+			detail =
+				typeof parsed.message === 'string'
+					? parsed.message
+					: typeof parsed.error === 'string'
+						? parsed.error
+						: '';
+		} catch (_) {}
+		throw new Error(
+			detail ? `Resend email failed (${response.statusCode}): ${detail}` : `Resend email failed (${response.statusCode})`
+		);
+	}
+};
+
+/**
+ * Fallback for other mail types: keep using the message-based Resend payload.
  */
 const interceptResendMail = (e) => {
 	const settings = loadAppSettings(e.app);
-	if (mailProvider(settings) !== 'resend') {
-		return e.next();
-	}
-
+	if (mailProvider(settings) !== 'resend') return e.next();
 	sendViaResend(e.app, settings, e.message);
 };
 
 // PocketBase 0.23+: do not attach hooks to the `users` auth collection (breaks signup).
 // Signup disable is enforced in the Hono `/api/auth/signup` route and the app UI.
 
-onMailerRecordVerificationSend(interceptResendMail);
-onMailerRecordPasswordResetSend(interceptResendMail);
+onMailerRecordVerificationSend(interceptResendVerification);
+onMailerRecordPasswordResetSend(interceptResendPasswordReset);
 onMailerRecordEmailChangeSend(interceptResendMail);
 onMailerRecordAuthAlertSend(interceptResendMail);
 
