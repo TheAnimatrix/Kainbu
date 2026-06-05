@@ -1,0 +1,1 @@
+run npm run dev:remote when you want to connect to remote pocketbase but local api/ui
