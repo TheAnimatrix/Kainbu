@@ -115,6 +115,7 @@ const getSender = (app) => {
 const interceptResendVerification = (e) => {
 	const settings = loadAppSettings(e.app);
 	if (mailProvider(settings) !== 'resend') return e.next();
+	throw new Error('[mail-hook-debug] onMailerRecordVerificationSend fired');
 
 	const { fromEmail, fromName } = getSender(e.app);
 	const appUrl = getAppUrl(e.app);
