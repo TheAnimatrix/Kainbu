@@ -1,4 +1,9 @@
-import type { ColorMode } from '$lib/kainbu/types';
+import type { ColorMode, Tag } from '$lib/kainbu/types';
+
+export const formatTagsForAiContext = (tags: Tag[] = []) =>
+	tags
+		.map((tag) => (tag.color ? `${tag.label} (${tag.color})` : tag.label))
+		.join(', ');
 
 const TONE_RGB = {
 	red: '248 113 113',

@@ -147,6 +147,7 @@
 	import { getActiveScratchpadPad, getScratchpadPad } from '$lib/kainbu/scratchpad';
 	import type { TaskReferenceOption } from '$lib/kainbu/taskMarkdown';
 	import { buildTimedTasks, clearTaskDueAt } from '$lib/kainbu/timing';
+	import { formatTagsForAiContext } from '$lib/kainbu/tags';
 	import type {
 		AiModelConfig,
 		AiVisionFallbackConfig,
@@ -3352,8 +3353,13 @@
 			if (!board) return { kind: 'none', name: 'kanban', content: '' };
 			const lines = [`Board: "${board.name}"`];
 			for (const col of board.kanbanData) {
-				const taskTitles = col.tasks.map((t) => t.title).join(', ');
-				lines.push(`[${col.title}] ${taskTitles || '(empty)'}`);
+				const taskSummaries = col.tasks.map((task) => {
+					const tagSuffix = task.tags?.length
+						? ` [${formatTagsForAiContext(task.tags)}]`
+						: '';
+					return `${task.title}${tagSuffix}`;
+				});
+				lines.push(`[${col.title}] ${taskSummaries.join(', ') || '(empty)'}`);
 			}
 			return { kind: 'board', name: board.name, content: lines.join('\n').slice(0, 3000) };
 		}

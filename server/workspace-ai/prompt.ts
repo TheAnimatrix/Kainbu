@@ -7,6 +7,7 @@ import {
 	WORKSPACE_AI_MAX_MODEL_TURNS_LARGE_BOARD,
 	WORKSPACE_AI_MAX_TOOL_CALLS
 } from './constants.js';
+import { formatTagsForAiContext } from '../../src/lib/kainbu/tags.js';
 import { findColumn, findTask } from './kanban-ops.js';
 import type { KanbanData } from './types.js';
 import type { OpenRouterMessage } from './openrouter-stream.js';
@@ -21,9 +22,9 @@ export const buildStaticSystemPrompt = (maxModelTurns = WORKSPACE_AI_MAX_MODEL_T
 		`You help users manage their boards (columns and tasks) and pages (notes).`,
 		``,
 		`## Tools`,
-		`- board_list_columns / board_list_tasks: Inspect the board (required on large boards). List results include color and checkbox state.`,
-		`- add_tasks: Create tasks in a column (max ${WORKSPACE_AI_ADD_TASKS_MAX_TITLES} per call). Use titles[] or tasks[] with optional description, color, hasCheckbox, checked.`,
-		`- update_task: Change one task (title, description, color, hasCheckbox, checked). Use taskRef.`,
+		`- board_list_columns / board_list_tasks: Inspect the board (required on large boards). List results include color, tags, and checkbox state.`,
+		`- add_tasks: Create tasks in a column (max ${WORKSPACE_AI_ADD_TASKS_MAX_TITLES} per call). Use titles[] or tasks[] with optional description, color, hasCheckbox, checked, tags.`,
+		`- update_task: Change one task (title, description, color, hasCheckbox, checked, addTags, updateTags, removeTags). Use taskRef.`,
 		`- bulk_update_tasks: Update up to 10 tasks at once (same fields as update_task).`,
 		`- add_column / update_column: Add or rename columns and set column color.`,
 		`- delete_tasks: Remove tasks by taskRef.`,
@@ -33,8 +34,9 @@ export const buildStaticSystemPrompt = (maxModelTurns = WORKSPACE_AI_MAX_MODEL_T
 		`- ask_questions: Open a structured Q&A panel for one or more user answers, then wait for the continuation.`,
 		`- web_search: External information only when needed.`,
 		``,
-		`## Card and column colors`,
-		`Valid color values: ${TONE_COLORS_DOC}. Pass null to clear a color.`,
+		`## Card, column, and tag colors`,
+		`Valid color values: ${TONE_COLORS_DOC}. Pass null to clear a card/column color.`,
+		`Tags use the same tone:* colors. addTags accepts string labels or { label, color? }. updateTags sets tag color by label ({ label, color }). removeTags drops tags by label.`,
 		``,
 		`## Limits (per user message)`,
 		`- Max ${WORKSPACE_AI_MAX_TOOL_CALLS} tool calls.`,
@@ -109,9 +111,10 @@ This board is large. Call board_list_columns, then board_list_tasks for relevant
 	}
 
 	if (scope?.queuedTaskCards?.length) {
-		const lines = scope.queuedTaskCards.map(
-			(card) => `- ${card.title} (column: ${card.columnTitle})`
-		);
+		const lines = scope.queuedTaskCards.map((card) => {
+			const tagLine = card.tags?.length ? ` tags: ${formatTagsForAiContext(card.tags)}` : '';
+			return `- ${card.title} (column: ${card.columnTitle})${tagLine}`;
+		});
 		sections.push(`## Referenced tasks\n${lines.join('\n')}`);
 	}
 
@@ -158,7 +161,10 @@ export const buildQueuedTaskCardsContext = (scope?: AiScopeHint) => {
 	const cards = scope?.queuedTaskCards || [];
 	if (!cards.length) return '';
 
-	const lines = cards.map((card) => `- ${card.title} (column: ${card.columnTitle})`);
+	const lines = cards.map((card) => {
+		const tagLine = card.tags?.length ? ` tags: ${formatTagsForAiContext(card.tags)}` : '';
+		return `- ${card.title} (column: ${card.columnTitle})${tagLine}`;
+	});
 	return `The user attached these task cards:\n${lines.join('\n')}`;
 };
 

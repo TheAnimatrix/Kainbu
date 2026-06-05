@@ -1,4 +1,5 @@
 import { DEFAULT_COLUMN_WIDTH } from '$lib/kainbu/constants';
+import { normalizeDueTimestamp } from '$lib/kainbu/timing';
 import type { Column, KanbanData, Tag, Task } from '$lib/kainbu/types';
 
 export interface TextDiffPart {
@@ -83,13 +84,12 @@ export interface DiffColumn extends Column {
 	_status?: 'added' | 'removed' | 'modified' | 'unchanged';
 }
 
-const areTagsEqual = (left: Tag[], right: Tag[]) => {
-	if (left.length !== right.length) {
-		return false;
-	}
+const tagDiffSignature = (tag: Tag) =>
+	`${(tag.label || '').trim()}|${(tag.color || '').trim() || ''}`;
 
-	const leftSet = new Set(left.map((tag) => `${tag.id}|${tag.label}|${tag.color}`));
-	const rightSet = new Set(right.map((tag) => `${tag.id}|${tag.label}|${tag.color}`));
+const areTagsEqual = (left: Tag[], right: Tag[]) => {
+	const leftSet = new Set((left || []).map(tagDiffSignature));
+	const rightSet = new Set((right || []).map(tagDiffSignature));
 
 	if (leftSet.size !== rightSet.size) {
 		return false;
@@ -104,19 +104,21 @@ const areTagsEqual = (left: Tag[], right: Tag[]) => {
 	return true;
 };
 
-const areTasksEqual = (left: Task, right: Task) => {
-	if (left.title.trim() !== right.title.trim()) return false;
+/** Compare task fields that matter for AI proposal review (matches the diff snapshot). */
+export const areKanbanTasksEqualForDiff = (left: Task, right: Task) => {
+	if ((left.title || '').trim() !== (right.title || '').trim()) return false;
 	if ((left.description || '').trim() !== (right.description || '').trim()) return false;
 	if ((left.color || '').trim() !== (right.color || '').trim()) return false;
-	if ((left.hasCheckbox || false) !== (right.hasCheckbox || false)) return false;
-	if ((left.checked || false) !== (right.checked || false)) return false;
-	if (left.completedAt !== right.completedAt) return false;
-	if (left.countdownAt !== right.countdownAt) return false;
-	if (left.alarmAt !== right.alarmAt) return false;
-	if ((left.assignedTo || '') !== (right.assignedTo || '')) return false;
-
-	const linkSignature = (ids: string[] | undefined) => [...new Set(ids || [])].sort().join('|');
-	if (linkSignature(left.linkedTaskIds) !== linkSignature(right.linkedTaskIds)) return false;
+	if (Boolean(left.hasCheckbox) !== Boolean(right.hasCheckbox)) return false;
+	if (Boolean(left.checked) !== Boolean(right.checked)) return false;
+	if ((left.completedAt ?? null) !== (right.completedAt ?? null)) return false;
+	if ((normalizeDueTimestamp(left.countdownAt) ?? null) !== (normalizeDueTimestamp(right.countdownAt) ?? null)) {
+		return false;
+	}
+	if ((normalizeDueTimestamp(left.alarmAt) ?? null) !== (normalizeDueTimestamp(right.alarmAt) ?? null)) {
+		return false;
+	}
+	if ((left.assignedTo || '').trim() !== (right.assignedTo || '').trim()) return false;
 
 	return areTagsEqual(left.tags || [], right.tags || []);
 };
@@ -131,6 +133,13 @@ export const computeKanbanDiff = (original: KanbanData, proposed: KanbanData): D
 	const mergedColumns: DiffColumn[] = [];
 	const originalColumnMap = new Map(original.map((column) => [column.id, column]));
 	const proposedColumnMap = new Map(proposed.map((column) => [column.id, column]));
+	const originalTaskById = new Map<string, Task>();
+
+	for (const column of original) {
+		for (const task of column.tasks) {
+			originalTaskById.set(task.id, task);
+		}
+	}
 
 	for (const proposedColumn of proposed) {
 		const originalColumn = originalColumnMap.get(proposedColumn.id);
@@ -145,11 +154,10 @@ export const computeKanbanDiff = (original: KanbanData, proposed: KanbanData): D
 		}
 
 		const mergedTasks: DiffTask[] = [];
-		const originalTaskMap = new Map(originalColumn.tasks.map((task) => [task.id, task]));
 		const proposedTaskMap = new Map(proposedColumn.tasks.map((task) => [task.id, task]));
 
 		for (const proposedTask of proposedColumn.tasks) {
-			const originalTask = originalTaskMap.get(proposedTask.id);
+			const originalTask = originalTaskById.get(proposedTask.id);
 
 			if (!originalTask) {
 				mergedTasks.push({ ...proposedTask, _status: 'added' });
@@ -158,7 +166,7 @@ export const computeKanbanDiff = (original: KanbanData, proposed: KanbanData): D
 
 			mergedTasks.push({
 				...proposedTask,
-				_status: areTasksEqual(originalTask, proposedTask) ? 'unchanged' : 'modified',
+				_status: areKanbanTasksEqualForDiff(originalTask, proposedTask) ? 'unchanged' : 'modified',
 				_originalTask: originalTask
 			});
 		}

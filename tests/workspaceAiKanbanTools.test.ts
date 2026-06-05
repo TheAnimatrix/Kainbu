@@ -368,6 +368,83 @@ describe('workspace AI kanban tools', () => {
 		expect(added[1].title).toBe('Plain');
 	});
 
+	it('update_task adds, removes, and recolors tags', async () => {
+		const workspace = await makeWorkspace(sampleKanban);
+		const addResult = await updateTask(workspace, 'T1', {
+			addTags: [
+				{ label: 'Bug', color: 'tone:red' },
+				'Feature'
+			]
+		});
+		expect(addResult.ok).toBe(true);
+
+		let task = workspace.board.kanbanData[0].tasks.find((entry) => entry.id === 'task-1');
+		expect(task?.tags).toHaveLength(2);
+		expect(task?.tags?.find((tag) => tag.label === 'Bug')?.color).toBe('tone:red');
+		expect(task?.tags?.find((tag) => tag.label === 'Feature')?.color).toBe('tone:blue');
+
+		const recolorResult = await updateTask(workspace, 'T1', {
+			updateTags: [{ label: 'Feature', color: 'tone:green' }]
+		});
+		expect(recolorResult.ok).toBe(true);
+		task = workspace.board.kanbanData[0].tasks.find((entry) => entry.id === 'task-1');
+		expect(task?.tags?.find((tag) => tag.label === 'Feature')?.color).toBe('tone:green');
+
+		const addRecolorResult = await updateTask(workspace, 'T1', {
+			addTags: [{ label: 'Bug', color: 'tone:amber' }]
+		});
+		expect(addRecolorResult.ok).toBe(true);
+		task = workspace.board.kanbanData[0].tasks.find((entry) => entry.id === 'task-1');
+		expect(task?.tags).toHaveLength(2);
+		expect(task?.tags?.find((tag) => tag.label === 'Bug')?.color).toBe('tone:amber');
+
+		const removeResult = await updateTask(workspace, 'T1', { removeTags: ['Bug'] });
+		expect(removeResult.ok).toBe(true);
+		task = workspace.board.kanbanData[0].tasks.find((entry) => entry.id === 'task-1');
+		expect(task?.tags).toHaveLength(1);
+		expect(task?.tags?.[0]?.label).toBe('Feature');
+	});
+
+	it('add_tasks with tags[] sets initial tag colors', async () => {
+		const workspace = await makeWorkspace(sampleKanban);
+		const result = await addTasks(workspace, 'C1', [], undefined, [
+			{
+				title: 'Tagged task',
+				tags: [{ label: 'Urgent', color: 'tone:rose' }, 'Backlog']
+			}
+		]);
+		expect(result.ok).toBe(true);
+		const added = workspace.board.kanbanData[0].tasks.at(-1);
+		expect(added?.tags).toHaveLength(2);
+		expect(added?.tags?.find((tag) => tag.label === 'Urgent')?.color).toBe('tone:rose');
+		expect(added?.tags?.find((tag) => tag.label === 'Backlog')?.color).toBe('tone:blue');
+	});
+
+	it('board index and list tools expose task tags', () => {
+		const kanban: KanbanData = [
+			{
+				id: 'col-1',
+				title: 'Todo',
+				width: 268,
+				tasks: [
+					{
+						id: 'task-1',
+						title: 'One',
+						description: '',
+						tags: [{ id: 'tag-1', label: 'Bug', color: 'tone:red' }]
+					}
+				]
+			}
+		];
+		const refs = buildBoardRefIndex(kanban, 'Main');
+		expect(refs.indexText).toContain('Bug (tone:red)');
+
+		const tasks = listBoardTasks(kanban, refs, 'C1');
+		expect(tasks.ok).toBe(true);
+		if (!tasks.ok) return;
+		expect(tasks.tasks?.[0]?.tags).toEqual([{ label: 'Bug', color: 'tone:red' }]);
+	});
+
 	it('list tools expose color and checkbox state', () => {
 		const kanban: KanbanData = [
 			{
@@ -380,7 +457,7 @@ describe('workspace AI kanban tools', () => {
 						id: 'task-1',
 						title: 'One',
 						description: 'Details',
-						tags: [],
+						tags: [{ id: 'tag-1', label: 'Bug', color: 'tone:red' }],
 						hasCheckbox: true,
 						checked: true,
 						color: 'tone:red'
@@ -400,6 +477,7 @@ describe('workspace AI kanban tools', () => {
 		expect(tasks.tasks?.[0]?.hasCheckbox).toBe(true);
 		expect(tasks.tasks?.[0]?.checked).toBe(true);
 		expect(tasks.tasks?.[0]?.description).toBe('Details');
+		expect(tasks.tasks?.[0]?.tags).toEqual([{ label: 'Bug', color: 'tone:red' }]);
 	});
 });
 

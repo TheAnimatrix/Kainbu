@@ -24,6 +24,15 @@ const TONE_COLOR_ENUM = [
 	'tone:rose'
 ] as const;
 
+const tagInputProperties = {
+	label: { type: 'string', description: 'Tag label' },
+	color: {
+		type: 'string',
+		enum: [...TONE_COLOR_ENUM],
+		description: 'Optional tag color tone (default tone:blue)'
+	}
+};
+
 const taskUpdateProperties = {
 	title: { type: 'string' },
 	description: { type: 'string' },
@@ -33,7 +42,29 @@ const taskUpdateProperties = {
 		description: 'Card color tone, or null to clear'
 	},
 	hasCheckbox: { type: 'boolean', description: 'Show checkbox on card' },
-	checked: { type: 'boolean', description: 'Checkbox checked state (implies hasCheckbox)' }
+	checked: { type: 'boolean', description: 'Checkbox checked state (implies hasCheckbox)' },
+	addTags: {
+		type: 'array',
+		items: {
+			anyOf: [{ type: 'string' }, { type: 'object', properties: tagInputProperties, required: ['label'] }]
+		},
+		description:
+			'Tags to add (string or { label, color? }). If the label already exists and color is set, updates that tag color.'
+	},
+	updateTags: {
+		type: 'array',
+		items: {
+			type: 'object',
+			properties: tagInputProperties,
+			required: ['label', 'color']
+		},
+		description: 'Change color of existing tags by label ({ label, color } with tone:* values). Adds the tag if missing.'
+	},
+	removeTags: {
+		type: 'array',
+		items: { type: 'string' },
+		description: 'Tag labels to remove (case insensitive)'
+	}
 };
 
 const taskDraftProperties = {
@@ -41,7 +72,14 @@ const taskDraftProperties = {
 	description: { type: 'string' },
 	color: { type: 'string', enum: [...TONE_COLOR_ENUM] },
 	hasCheckbox: { type: 'boolean' },
-	checked: { type: 'boolean' }
+	checked: { type: 'boolean' },
+	tags: {
+		type: 'array',
+		items: {
+			anyOf: [{ type: 'string' }, { type: 'object', properties: tagInputProperties, required: ['label'] }]
+		},
+		description: 'Initial tags (string or { label, color? })'
+	}
 };
 
 export const webSearch = async (query: string): Promise<string> => {
@@ -112,7 +150,7 @@ export const OpenRouterTools = [
 		function: {
 			name: 'board_list_tasks',
 			description:
-				'List tasks in one column with refs, colors, and checkbox state. Use columnRef from board_list_columns or the board index. Paginate with offset when hasMore is true.',
+				'List tasks in one column with refs, colors, tags, and checkbox state. Use columnRef from board_list_columns or the board index. Paginate with offset when hasMore is true.',
 			parameters: {
 				type: 'object',
 				properties: {
@@ -128,7 +166,7 @@ export const OpenRouterTools = [
 		type: 'function',
 		function: {
 			name: 'add_tasks',
-			description: `Add new tasks to a column. Max ${WORKSPACE_AI_ADD_TASKS_MAX_TITLES} per call. Use titles for simple creates, or tasks for per-task description/checkbox/color. Call again in later tool rounds if more tasks are needed.`,
+			description: `Add new tasks to a column. Max ${WORKSPACE_AI_ADD_TASKS_MAX_TITLES} per call. Use titles for simple creates, or tasks[] for optional description, color, checkbox, and tags. Call again in later tool rounds if more tasks are needed.`,
 			parameters: {
 				type: 'object',
 				properties: {
@@ -145,7 +183,7 @@ export const OpenRouterTools = [
 							properties: taskDraftProperties,
 							required: ['title']
 						},
-						description: 'Rich task drafts with optional description, color, checkbox'
+						description: 'Rich task drafts with optional description, color, checkbox, tags'
 					}
 				},
 				required: ['columnRef']
@@ -157,7 +195,7 @@ export const OpenRouterTools = [
 		function: {
 			name: 'update_task',
 			description:
-				'Update one task by taskRef: title, description, color (tone:* or null to clear), hasCheckbox, checked.',
+				'Update one task by taskRef: title, description, color (tone:* or null to clear), hasCheckbox, checked, addTags, updateTags, removeTags.',
 			parameters: {
 				type: 'object',
 				properties: {
@@ -172,7 +210,7 @@ export const OpenRouterTools = [
 		type: 'function',
 		function: {
 			name: 'bulk_update_tasks',
-			description: `Update up to ${WORKSPACE_AI_BULK_UPDATE_TASKS_MAX} tasks in one call (title, description, color, hasCheckbox, checked). Use for batch checkbox/color changes.`,
+			description: `Update up to ${WORKSPACE_AI_BULK_UPDATE_TASKS_MAX} tasks in one call (title, description, color, hasCheckbox, checked, addTags, updateTags, removeTags). Use for batch checkbox/color/tag changes.`,
 			parameters: {
 				type: 'object',
 				properties: {

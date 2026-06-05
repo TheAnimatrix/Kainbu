@@ -1,11 +1,12 @@
 import fs from "fs/promises";
 import { randomUUID } from "crypto";
-import type { AiScopeHint, BoundTarget, KanbanData, Task } from "./types.js";
+import type { AiScopeHint, BoundTarget, KanbanData, Tag, Task } from "./types.js";
 import {
     purgeTaskLinks,
     removeTaskReferenceFromMarkdown,
 } from "../../src/lib/kainbu/taskLinks.js";
 import { TAG_COLORS } from "../../src/lib/kainbu/constants.js";
+import { formatTagsForAiContext } from "../../src/lib/kainbu/tags.js";
 import {
     WORKSPACE_AI_ADD_TASKS_MAX_TITLES,
     WORKSPACE_AI_BOARD_LIST_TASKS_DEFAULT_LIMIT,
@@ -17,8 +18,16 @@ import type { MaterializedWorkspace } from "./sync.js";
 import { serializeKanbanDocument } from "./sync.js";
 
 const DEFAULT_COLUMN_WIDTH = 268;
+const DEFAULT_TAG_COLOR = "tone:blue";
 
 const VALID_TONE_COLORS = new Set<string>(TAG_COLORS.map((entry) => entry.value));
+
+export type TagInput = {
+    label: string;
+    color?: string;
+};
+
+export type RawTagInput = TagInput | string;
 
 export type TaskUpdateFields = {
     title?: string;
@@ -26,6 +35,9 @@ export type TaskUpdateFields = {
     color?: string | null;
     hasCheckbox?: boolean;
     checked?: boolean;
+    addTags?: TagInput[];
+    updateTags?: TagInput[];
+    removeTags?: string[];
 };
 
 export type TaskDraft = {
@@ -34,6 +46,7 @@ export type TaskDraft = {
     color?: string;
     hasCheckbox?: boolean;
     checked?: boolean;
+    tags?: RawTagInput[];
 };
 
 export const validateToneColor = (
@@ -59,6 +72,159 @@ export const validateToneColor = (
     return { ok: true, color: trimmed };
 };
 
+const normalizeTagLabel = (label: string) => label.trim().toLowerCase();
+
+export const parseTagInputs = (
+    value: unknown
+): { ok: true; tags: TagInput[] } | { ok: false; error: string } => {
+    if (value === undefined) return { ok: true, tags: [] };
+    if (!Array.isArray(value)) {
+        return { ok: false, error: "Tags must be an array." };
+    }
+
+    const tags: TagInput[] = [];
+    for (const entry of value) {
+        if (typeof entry === "string") {
+            const label = trimString(entry);
+            if (label) tags.push({ label });
+            continue;
+        }
+
+        if (!entry || typeof entry !== "object") continue;
+
+        const raw = entry as Record<string, unknown>;
+        const label = trimString(raw.label);
+        if (!label) {
+            return { ok: false, error: "Each tag needs a non-empty label." };
+        }
+
+        const tag: TagInput = { label };
+        if (raw.color !== undefined) {
+            const colorResult = validateToneColor(raw.color);
+            if (!colorResult.ok) return colorResult;
+            tag.color = colorResult.color;
+        }
+        tags.push(tag);
+    }
+
+    return { ok: true, tags };
+};
+
+export const parseTagColorUpdates = (
+    value: unknown
+): { ok: true; tags: TagInput[] } | { ok: false; error: string } => {
+    if (value === undefined) return { ok: true, tags: [] };
+    if (!Array.isArray(value)) {
+        return { ok: false, error: "updateTags must be an array." };
+    }
+
+    const tags: TagInput[] = [];
+    for (const entry of value) {
+        if (!entry || typeof entry !== "object") {
+            return { ok: false, error: "Each updateTags entry must be an object with label and color." };
+        }
+
+        const raw = entry as Record<string, unknown>;
+        const label = trimString(raw.label);
+        if (!label) {
+            return { ok: false, error: "Each updateTags entry needs a non-empty label." };
+        }
+
+        const colorResult = validateToneColor(raw.color);
+        if (!colorResult.ok) {
+            return { ok: false, error: `Tag "${label}": ${colorResult.error}` };
+        }
+
+        tags.push({ label, color: colorResult.color });
+    }
+
+    return { ok: true, tags };
+};
+
+const parseRemoveTagLabels = (
+    value: unknown
+): { ok: true; labels: string[] } | { ok: false; error: string } => {
+    if (value === undefined) return { ok: true, labels: [] };
+    if (!Array.isArray(value)) {
+        return { ok: false, error: "removeTags must be an array of tag labels." };
+    }
+
+    const labels = value
+        .filter((entry): entry is string => typeof entry === "string")
+        .map((entry) => trimString(entry))
+        .filter(Boolean);
+
+    return { ok: true, labels };
+};
+
+const buildTagsFromInputs = (inputs: TagInput[]): Tag[] =>
+    inputs.map((input) => ({
+        id: randomUUID(),
+        label: input.label.trim(),
+        color: input.color || DEFAULT_TAG_COLOR,
+    }));
+
+const findTagIndexByLabel = (tags: Tag[], label: string) =>
+    tags.findIndex((tag) => normalizeTagLabel(tag.label) === normalizeTagLabel(label));
+
+const applyTagChanges = (
+    task: Task,
+    options?: {
+        addTags?: TagInput[];
+        updateTags?: TagInput[];
+        removeTags?: string[];
+    }
+): Task => {
+    let tags = [...(task.tags || [])];
+    const addTags = options?.addTags;
+    const updateTags = options?.updateTags;
+    const removeTags = options?.removeTags;
+
+    if (removeTags?.length) {
+        const removeSet = new Set(removeTags.map(normalizeTagLabel));
+        tags = tags.filter((tag) => !removeSet.has(normalizeTagLabel(tag.label)));
+    }
+
+    if (updateTags?.length) {
+        for (const input of updateTags) {
+            const index = findTagIndexByLabel(tags, input.label);
+            if (index === -1) {
+                tags.push({
+                    id: randomUUID(),
+                    label: input.label.trim(),
+                    color: input.color || DEFAULT_TAG_COLOR,
+                });
+                continue;
+            }
+
+            tags[index] = {
+                ...tags[index],
+                color: input.color || tags[index].color,
+            };
+        }
+    }
+
+    if (addTags?.length) {
+        for (const input of addTags) {
+            const index = findTagIndexByLabel(tags, input.label);
+            if (index !== -1) {
+                if (input.color) {
+                    tags[index] = { ...tags[index], color: input.color };
+                }
+                continue;
+            }
+
+            tags.push({
+                id: randomUUID(),
+                label: input.label.trim(),
+                color: input.color || DEFAULT_TAG_COLOR,
+            });
+        }
+    }
+
+    return { ...task, tags };
+};
+
 export const parseTaskUpdateFields = (
     raw: Record<string, unknown>
 ): { ok: true; fields: TaskUpdateFields } | { ok: false; error: string } => {
@@ -78,17 +244,64 @@ export const parseTaskUpdateFields = (
     if (typeof raw.hasCheckbox === "boolean") fields.hasCheckbox = raw.hasCheckbox;
     if (typeof raw.checked === "boolean") fields.checked = raw.checked;
 
+    if ("addTags" in raw) {
+        const addTagsResult = parseTagInputs(raw.addTags);
+        if (!addTagsResult.ok) return addTagsResult;
+        if (addTagsResult.tags.length) fields.addTags = addTagsResult.tags;
+    }
+
+    if ("updateTags" in raw) {
+        const updateTagsResult = parseTagColorUpdates(raw.updateTags);
+        if (!updateTagsResult.ok) return updateTagsResult;
+        if (updateTagsResult.tags.length) fields.updateTags = updateTagsResult.tags;
+    }
+
+    if ("removeTags" in raw) {
+        const removeTagsResult = parseRemoveTagLabels(raw.removeTags);
+        if (!removeTagsResult.ok) return removeTagsResult;
+        if (removeTagsResult.labels.length) fields.removeTags = removeTagsResult.labels;
+    }
+
     if (
         fields.title === undefined &&
         fields.description === undefined &&
         fields.color === undefined &&
         fields.hasCheckbox === undefined &&
-        fields.checked === undefined
+        fields.checked === undefined &&
+        fields.addTags === undefined &&
+        fields.updateTags === undefined &&
+        fields.removeTags === undefined
     ) {
         return { ok: false, error: "Provide at least one field to update." };
     }
 
     return { ok: true, fields };
+};
+
+export const normalizeTaskUpdateFields = (
+    fields: TaskUpdateFields & { addTags?: RawTagInput[] }
+): { ok: true; fields: TaskUpdateFields } | { ok: false; error: string } => {
+    const next: TaskUpdateFields = { ...fields };
+
+    if (fields.addTags !== undefined) {
+        const addTagsResult = parseTagInputs(fields.addTags);
+        if (!addTagsResult.ok) return addTagsResult;
+        next.addTags = addTagsResult.tags.length ? addTagsResult.tags : undefined;
+    }
+
+    if (fields.updateTags !== undefined) {
+        const updateTagsResult = parseTagColorUpdates(fields.updateTags);
+        if (!updateTagsResult.ok) return updateTagsResult;
+        next.updateTags = updateTagsResult.tags.length ? updateTagsResult.tags : undefined;
+    }
+
+    if (fields.removeTags !== undefined) {
+        const removeTagsResult = parseRemoveTagLabels(fields.removeTags);
+        if (!removeTagsResult.ok) return removeTagsResult;
+        next.removeTags = removeTagsResult.labels.length ? removeTagsResult.labels : undefined;
+    }
+
+    return { ok: true, fields: next };
 };
 
 const applyTaskUpdateFields = (task: Task, fields: TaskUpdateFields): Task => {
@@ -124,6 +337,18 @@ const applyTaskUpdateFields = (task: Task, fields: TaskUpdateFields): Task => {
         }
     }
 
+    if (
+        fields.addTags !== undefined ||
+        fields.updateTags !== undefined ||
+        fields.removeTags !== undefined
+    ) {
+        next = applyTagChanges(next, {
+            addTags: fields.addTags,
+            updateTags: fields.updateTags,
+            removeTags: fields.removeTags,
+        });
+    }
+
     return next;
 };
 
@@ -147,6 +372,7 @@ export type ToolResultPayload =
               color?: string;
               hasCheckbox?: boolean;
               checked?: boolean;
+              tags?: Array<{ label: string; color: string }>;
           }>;
           updatedCount?: number;
           hasMore?: boolean;
@@ -217,7 +443,10 @@ export const buildBoardRefIndex = (
             const taskRef = `T${taskCounter}`;
             taskRefToId.set(taskRef, task.id);
             taskIdToRef.set(task.id, taskRef);
-            lines.push(`  ${taskRef}  ${task.title}`);
+            const tagSuffix = task.tags?.length
+                ? ` [${formatTagsForAiContext(task.tags)}]`
+                : "";
+            lines.push(`  ${taskRef}  ${task.title}${tagSuffix}`);
         }
     }
 
@@ -316,6 +545,14 @@ export const listBoardTasks = (
             ...(task.color ? { color: task.color } : {}),
             ...(task.hasCheckbox ? { hasCheckbox: true } : {}),
             ...(task.checked ? { checked: true } : {}),
+            ...(task.tags?.length
+                ? {
+                      tags: task.tags.map((tag) => ({
+                          label: tag.label,
+                          color: tag.color,
+                      })),
+                  }
+                : {}),
         })),
         hasMore,
         ...(hasMore ? { nextOffset: safeOffset + slice.length } : {}),
@@ -417,6 +654,11 @@ export const parseTaskDraftsFromArgs = (
         }
         if (typeof raw.hasCheckbox === "boolean") draft.hasCheckbox = raw.hasCheckbox;
         if (typeof raw.checked === "boolean") draft.checked = raw.checked;
+        if (raw.tags !== undefined) {
+            const tagsResult = parseTagInputs(raw.tags);
+            if (!tagsResult.ok) return tagsResult;
+            if (tagsResult.tags.length) draft.tags = tagsResult.tags;
+        }
         drafts.push(draft);
     }
 
@@ -448,6 +690,12 @@ const buildTaskFromDraft = (draft: TaskDraft, id: string): Task | { error: strin
     if (draft.checked) {
         task.hasCheckbox = true;
         task.checked = true;
+    }
+
+    if (draft.tags?.length) {
+        const tagsResult = parseTagInputs(draft.tags);
+        if (!tagsResult.ok) return { error: tagsResult.error };
+        task.tags = buildTagsFromInputs(tagsResult.tags);
     }
 
     return task;
@@ -566,7 +814,7 @@ export const addTasks = async (
 export const updateTask = async (
     workspace: MaterializedWorkspace,
     taskRef: string,
-    fields: TaskUpdateFields,
+    fields: TaskUpdateFields & { addTags?: RawTagInput[] },
     scope?: AiScopeHint
 ): Promise<ToolResultPayload> => {
     const refs = workspace.boardRefs;
@@ -603,7 +851,10 @@ export const updateTask = async (
         fields = { ...fields, color: colorResult.color };
     }
 
-    const updatedTask = applyTaskUpdateFields(located.task, fields);
+    const normalizedFields = normalizeTaskUpdateFields(fields);
+    if (!normalizedFields.ok) return { ok: false, error: normalizedFields.error };
+
+    const updatedTask = applyTaskUpdateFields(located.task, normalizedFields.fields);
 
     if (!updatedTask.title) {
         return { ok: false, error: "Task title cannot be empty." };
