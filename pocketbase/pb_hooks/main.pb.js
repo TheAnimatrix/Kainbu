@@ -115,7 +115,6 @@ const getSender = (app) => {
 const interceptResendVerification = (e) => {
 	const settings = loadAppSettings(e.app);
 	if (mailProvider(settings) !== 'resend') return e.next();
-	throw new Error('[mail-hook-debug] onMailerRecordVerificationSend fired');
 
 	const { fromEmail, fromName } = getSender(e.app);
 	const appUrl = getAppUrl(e.app);
@@ -227,8 +226,8 @@ const interceptResendMail = (e) => {
 // PocketBase 0.23+: do not attach hooks to the `users` auth collection (breaks signup).
 // Signup disable is enforced in the Hono `/api/auth/signup` route and the app UI.
 
-onMailerRecordVerificationSend(interceptResendVerification);
-onMailerRecordPasswordResetSend(interceptResendPasswordReset);
+onMailerBeforeRecordVerificationSend(interceptResendVerification);
+onMailerBeforeRecordPasswordResetSend(interceptResendPasswordReset);
 onMailerRecordEmailChangeSend(interceptResendMail);
 onMailerRecordAuthAlertSend(interceptResendMail);
 
