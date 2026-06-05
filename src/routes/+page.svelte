@@ -150,6 +150,7 @@
 		setProjectActiveBoard,
 		setProjectActivePage,
 		updateProjectBoardData,
+		mergeProjectBoardsByUpdatedAt,
 		updateProjectBoardPreferences,
 		updateProjectPageContent as updateProjectPageState
 	} from '$lib/kainbu/projectStructure';
@@ -1775,7 +1776,9 @@
 				localProject.pages.length > remoteProject.pages.length ||
 				localChildListHasPendingDeletions(localProject.pages, remoteProject.pages);
 			const preferLocalAiState = pendingChatSyncs.has(remoteProject.id) || preferLocalFallback;
-			const mergedBoards = preferLocalBoardState ? localProject.boards : remoteProject.boards;
+			const mergedBoards = preferLocalBoardState
+				? localProject.boards
+				: mergeProjectBoardsByUpdatedAt(localProject.boards, remoteProject.boards);
 			const mergedPages = preferLocalPageState ? localProject.pages : remoteProject.pages;
 			const activeBoardId = resolveMergedActiveId(
 				mergedBoards,

@@ -147,24 +147,59 @@ export const updateProjectBoardData = (project: Project, boardId: string, kanban
 	return setProjectActiveBoard(nextProject, boardId);
 };
 
+export const mergeProjectBoardsByUpdatedAt = (
+	localBoards: ProjectBoard[],
+	remoteBoards: ProjectBoard[]
+): ProjectBoard[] => {
+	const localById = new Map(localBoards.map((board) => [board.id, board]));
+	const remoteById = new Map(remoteBoards.map((board) => [board.id, board]));
+	const mergedIds = new Set([...localById.keys(), ...remoteById.keys()]);
+	const merged: ProjectBoard[] = [];
+
+	for (const boardId of mergedIds) {
+		const localBoard = localById.get(boardId);
+		const remoteBoard = remoteById.get(boardId);
+
+		if (localBoard && remoteBoard) {
+			merged.push(localBoard.updatedAt >= remoteBoard.updatedAt ? localBoard : remoteBoard);
+			continue;
+		}
+
+		if (localBoard) {
+			merged.push(localBoard);
+			continue;
+		}
+
+		if (remoteBoard) {
+			merged.push(remoteBoard);
+		}
+	}
+
+	return merged.sort(
+		(left, right) => left.position - right.position || left.createdAt - right.createdAt
+	);
+};
+
 export const updateProjectBoardPreferences = (
 	project: Project,
 	boardId: string,
 	preferences: BoardPreferences
 ) => {
+	const now = Date.now();
 	const nextBoards = project.boards.map((board) =>
 		board.id === boardId
 			? {
 					...board,
 					preferences: normalizeBoardPreferences(preferences),
-					updatedAt: Date.now()
+					updatedAt: now
 				}
 			: board
 	);
 
 	return {
 		...project,
-		boards: nextBoards
+		boards: nextBoards,
+		updatedAt: Math.max(project.updatedAt, now)
 	};
 };
 
