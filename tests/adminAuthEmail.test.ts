@@ -1,52 +1,50 @@
 import { describe, expect, it } from 'vitest';
+import { isMailDeliveryReady } from '../server/mailDelivery.js';
 
-const normalizeMailProvider = (value: unknown): 'off' | 'smtp' | 'resend' => {
-	const normalized = typeof value === 'string' ? value.trim().toLowerCase() : '';
-	return normalized === 'smtp' || normalized === 'resend' ? normalized : 'off';
-};
-
-const settingsText = (record: Record<string, unknown> | null | undefined, name: string) => {
-	const value = record?.[name];
-	return typeof value === 'string' ? value.trim() : '';
-};
-
-const isMailConfiguredRecord = (
-	record: Record<string, unknown> | null | undefined,
-	smtp?: Record<string, unknown>
-) => {
-	const provider = normalizeMailProvider(record?.mail_provider);
-	if (provider === 'off') return false;
-	if (provider === 'resend') {
-		return Boolean(settingsText(record, 'resend_api_key'));
-	}
-	if (provider === 'smtp') {
-		return (
-			smtp?.enabled === true &&
-			typeof smtp.host === 'string' &&
-			smtp.host.trim().length > 0
-		);
-	}
-	return false;
-};
-
-describe('admin auth email configured state', () => {
-	it('treats resend as configured only when API key is stored', () => {
+describe('mail delivery readiness for auth email', () => {
+	it('treats resend as ready only with API key, sender, and app URL', () => {
 		expect(
-			isMailConfiguredRecord({ mail_provider: 'resend', resend_api_key: 're_abc123' })
+			isMailDeliveryReady({
+				provider: 'resend',
+				resendApiKey: 're_abc123',
+				fromEmail: 'noreply@example.com',
+				appUrl: 'https://kainbu.test'
+			})
 		).toBe(true);
-		expect(isMailConfiguredRecord({ mail_provider: 'resend', resend_api_key: '' })).toBe(false);
-		expect(isMailConfiguredRecord({ mail_provider: 'resend' })).toBe(false);
+		expect(
+			isMailDeliveryReady({
+				provider: 'resend',
+				resendApiKey: 're_abc123',
+				fromEmail: '',
+				appUrl: 'https://kainbu.test'
+			})
+		).toBe(false);
+		expect(
+			isMailDeliveryReady({
+				provider: 'resend',
+				resendApiKey: '',
+				fromEmail: 'noreply@example.com',
+				appUrl: 'https://kainbu.test'
+			})
+		).toBe(false);
 	});
 
-	it('treats smtp as configured only when PB SMTP is enabled with a host', () => {
+	it('treats smtp as ready only when enabled with sender and app URL', () => {
 		expect(
-			isMailConfiguredRecord(
-				{ mail_provider: 'smtp' },
-				{ enabled: true, host: 'smtp.example.com' }
-			)
+			isMailDeliveryReady({
+				provider: 'smtp',
+				smtpEnabled: true,
+				fromEmail: 'noreply@example.com',
+				appUrl: 'https://kainbu.test'
+			})
 		).toBe(true);
 		expect(
-			isMailConfiguredRecord({ mail_provider: 'smtp' }, { enabled: false, host: 'smtp.example.com' })
+			isMailDeliveryReady({
+				provider: 'smtp',
+				smtpEnabled: false,
+				fromEmail: 'noreply@example.com',
+				appUrl: 'https://kainbu.test'
+			})
 		).toBe(false);
 	});
 });

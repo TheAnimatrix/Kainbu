@@ -23,9 +23,29 @@ const settingsText = (record: Record<string, unknown> | undefined, key: string) 
 	return typeof value === 'string' ? value.trim() : '';
 };
 
-const normalizeMailProvider = (value: unknown): 'off' | 'smtp' | 'resend' => {
+export const normalizeMailProvider = (value: unknown): 'off' | 'smtp' | 'resend' => {
 	const normalized = typeof value === 'string' ? value.trim().toLowerCase() : '';
 	return normalized === 'smtp' || normalized === 'resend' ? normalized : 'off';
+};
+
+/** Same readiness gate used for invite delivery and signup verification. */
+export const isMailDeliveryReady = (input: {
+	provider: 'off' | 'smtp' | 'resend';
+	resendApiKey?: string;
+	fromEmail?: string;
+	appUrl?: string;
+	smtpEnabled?: boolean;
+}) => {
+	const fromEmail = input.fromEmail?.trim() || '';
+	const appUrl = input.appUrl?.trim().replace(/\/+$/, '') || '';
+	const resendApiKey = input.resendApiKey?.trim() || '';
+	if (input.provider === 'resend') {
+		return Boolean(resendApiKey && fromEmail && appUrl);
+	}
+	if (input.provider === 'smtp') {
+		return Boolean(input.smtpEnabled && fromEmail && appUrl);
+	}
+	return false;
 };
 
 export const loadMailDeliveryConfig = async (admin: PocketBase): Promise<MailDeliveryConfig> => {
@@ -50,12 +70,13 @@ export const loadMailDeliveryConfig = async (admin: PocketBase): Promise<MailDel
 	const appUrl = typeof meta.appURL === 'string' ? meta.appURL.trim().replace(/\/+$/, '') : '';
 	const smtpEnabled = smtp.enabled === true;
 
-	const ready =
-		provider === 'resend'
-			? Boolean(resendApiKey && fromEmail && appUrl)
-			: provider === 'smtp'
-				? Boolean(smtpEnabled && fromEmail && appUrl)
-				: false;
+	const ready = isMailDeliveryReady({
+		provider,
+		resendApiKey,
+		fromEmail,
+		appUrl,
+		smtpEnabled
+	});
 
 	return {
 		provider,

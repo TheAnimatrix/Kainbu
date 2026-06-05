@@ -9,6 +9,7 @@
 	export let configured = true;
 	export let signupsEnabled = true;
 	export let emailConfigured = false;
+	export let showResendVerification = false;
 	export let infoMessage = '';
 	export let errorMessage = '';
 	export let theme: BackgroundTheme | undefined = undefined;
@@ -26,6 +27,7 @@
 	const dispatch = createEventDispatcher<{
 		submit: { email: string; password: string; isSignUp: boolean };
 		resetPassword: { email: string };
+		resendVerification: { email: string };
 	}>();
 
 	const submit = () => {
@@ -34,6 +36,10 @@
 
 	const requestPasswordReset = () => {
 		dispatch('resetPassword', { email });
+	};
+
+	const requestVerificationResend = () => {
+		dispatch('resendVerification', { email });
 	};
 
 	$: if (!signupsEnabled && isSignUp) {
@@ -148,6 +154,16 @@
 		</form>
 
 		<div class="mt-4 flex flex-col items-center gap-2 text-center">
+			{#if emailConfigured && showResendVerification}
+				<button
+					type="button"
+					class="text-xs text-app-subtext transition hover:text-app-primary"
+					disabled={loading}
+					on:click={requestVerificationResend}
+				>
+					Resend verification email
+				</button>
+			{/if}
 			{#if emailConfigured && !isSignUp}
 				<button
 					type="button"

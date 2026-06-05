@@ -22,6 +22,7 @@ import { normalizeAiModelCatalog } from '../src/lib/kainbu/aiModelCatalog.js';
 import { invalidateProviderKeyCache } from './openrouter-key.js';
 import { repairUsersCollectionApiRules } from './usersCollectionRules.js';
 import { getEnv } from './env.js';
+import { isMailDeliveryReady, loadMailDeliveryConfig, normalizeMailProvider } from './mailDelivery.js';
 
 const parseDays = (value: string | undefined, fallback = 30) => {
 	const parsed = Number.parseInt(value || '', 10);
@@ -152,56 +153,28 @@ const getSettingsRecord = async () => {
 	return rows[0] ?? null;
 };
 
-const normalizeMailProvider = (value: unknown): 'off' | 'smtp' | 'resend' => {
-	const normalized = typeof value === 'string' ? value.trim().toLowerCase() : '';
-	return normalized === 'smtp' || normalized === 'resend' ? normalized : 'off';
-};
-
-const isMailConfiguredRecord = (
-	record: Record<string, unknown> | null | undefined,
-	smtp?: Record<string, unknown>
-) => {
-	const provider = normalizeMailProvider(record?.mail_provider);
-	if (provider === 'off') return false;
-	if (provider === 'resend') {
-		return Boolean(settingsText(record, 'resend_api_key'));
-	}
-	if (provider === 'smtp') {
-		return smtp?.enabled === true && typeof smtp.host === 'string' && smtp.host.trim().length > 0;
-	}
-	return false;
-};
-
 const toBool = (value: unknown, fallback: boolean) =>
 	typeof value === 'boolean' ? value : fallback;
 
-const syncUsersAuthCollectionSettings = async (emailConfigured: boolean, appUrl = '') => {
-	const pb = await createAdminPb();
-	const templates =
-		emailConfigured && appUrl
-			? {
-					verificationTemplate: {
-						subject: 'Verify your Kainbu email',
-						body: `<p>Welcome to Kainbu.</p><p><a href="${appUrl}/auth/confirm-verification/{TOKEN}">Verify your email</a></p>`
-					},
-					resetPasswordTemplate: {
-						subject: 'Reset your Kainbu password',
-						body: `<p>Use this link to set a new Kainbu password.</p><p><a href="${appUrl}/auth/confirm-password-reset/{TOKEN}">Reset password</a></p>`
-					}
-				}
-			: {};
-
-	await repairUsersCollectionApiRules(pb, templates);
-
-	// Verification is enforced in app signup/login — not via PB authRule (breaks record API).
-	if (emailConfigured) {
-		const unverified = await pb.collection('users').getFullList({
-			filter: 'verified = false'
-		});
-		for (const user of unverified) {
-			await pb.collection('users').update(user.id, { verified: true });
-		}
+const verificationEmailTemplates = (appUrl: string) => ({
+	verificationTemplate: {
+		subject: 'Verify your Kainbu email',
+		body: `<p>Welcome to Kainbu.</p><p><a href="${appUrl}/auth/confirm-verification/{TOKEN}">Verify your email</a></p>`
+	},
+	resetPasswordTemplate: {
+		subject: 'Reset your Kainbu password',
+		body: `<p>Use this link to set a new Kainbu password.</p><p><a href="${appUrl}/auth/confirm-password-reset/{TOKEN}">Reset password</a></p>`
 	}
+});
+
+/** Install PB verification/reset templates when outbound mail is ready. */
+export const syncAuthEmailTemplates = async (pb?: PocketBase) => {
+	const client = pb ?? (await createAdminPb());
+	const mail = await loadMailDeliveryConfig(client);
+	if (!mail.ready || !mail.appUrl) return { synced: false as const, mail };
+
+	await repairUsersCollectionApiRules(client, verificationEmailTemplates(mail.appUrl));
+	return { synced: true as const, mail };
 };
 
 export const handleAdminRepairUsersCollection = async (c: Context) => {
@@ -215,17 +188,14 @@ export const handleAdminRepairUsersCollection = async (c: Context) => {
 	}
 };
 
-const publicAuthSettingsFromRecord = (
+const publicAuthSettings = (
 	record: Record<string, unknown> | null | undefined,
-	smtp?: Record<string, unknown>
-) => {
-	const emailConfigured = isMailConfiguredRecord(record, smtp);
-	return {
-		signupsEnabled: toBool(record?.signups_enabled, true),
-		emailConfigured,
-		emailVerificationEnabled: emailConfigured
-	};
-};
+	mail: Awaited<ReturnType<typeof loadMailDeliveryConfig>>
+) => ({
+	signupsEnabled: toBool(record?.signups_enabled, true),
+	emailConfigured: mail.ready,
+	emailVerificationEnabled: mail.ready
+});
 
 const randomPassword = () => `${randomBytes(18).toString('base64url')}A1!`.slice(0, 24);
 
@@ -263,9 +233,8 @@ export const handleGetAuthSettings = async (c: Context) => {
 	try {
 		const record = settingsRecordAsData(await getSettingsRecord());
 		const pb = await createAdminPb();
-		const pbSettings = await pb.settings.getAll();
-		const smtp = (pbSettings.smtp || {}) as Record<string, unknown>;
-		return c.json(publicAuthSettingsFromRecord(record, smtp));
+		const mail = await loadMailDeliveryConfig(pb);
+		return c.json(publicAuthSettings(record, mail));
 	} catch (error) {
 		const { status, message } = adminError(error);
 		return c.json({ error: message }, status as 500);
@@ -276,9 +245,8 @@ export const handleAuthSignup = async (c: Context) => {
 	try {
 		const record = settingsRecordAsData(await getSettingsRecord());
 		const pb = await createAdminPb();
-		const pbSettings = await pb.settings.getAll();
-		const smtp = (pbSettings.smtp || {}) as Record<string, unknown>;
-		const settings = publicAuthSettingsFromRecord(record, smtp);
+		const mail = await loadMailDeliveryConfig(pb);
+		const settings = publicAuthSettings(record, mail);
 		if (!settings.signupsEnabled) {
 			return c.json({ error: 'Signups are disabled.' }, 403);
 		}
@@ -288,6 +256,10 @@ export const handleAuthSignup = async (c: Context) => {
 		const password = typeof body.password === 'string' ? body.password : '';
 		if (!email || !password) {
 			return c.json({ error: 'Email and password are required.' }, 400);
+		}
+
+		if (settings.emailVerificationEnabled) {
+			await syncAuthEmailTemplates(pb);
 		}
 
 		const user = await pb.collection('users').create({
@@ -308,7 +280,24 @@ export const handleAuthSignup = async (c: Context) => {
 		}
 
 		if (settings.emailVerificationEnabled) {
-			await pb.collection('users').requestVerification(email);
+			try {
+				await pb.collection('users').requestVerification(email);
+			} catch (verifyError) {
+				console.error('[auth] signup: verification email failed', {
+					email,
+					userId: user.id,
+					error: verifyError
+				});
+				const { message } = adminError(verifyError);
+				return c.json(
+					{
+						error:
+							message ||
+							'Account created but the verification email could not be sent. Try again or contact support.'
+					},
+					503
+				);
+			}
 		}
 
 		return c.json({
@@ -447,8 +436,18 @@ const buildAdminAuthEmailPayload = (
 	const provider = normalizeMailProvider(record?.mail_provider);
 	const resendKey = settingsText(record, 'resend_api_key');
 
+	const mail = isMailDeliveryReady({
+		provider,
+		resendApiKey: resendKey,
+		fromEmail: typeof meta.senderAddress === 'string' ? meta.senderAddress : '',
+		appUrl: typeof meta.appURL === 'string' ? meta.appURL : '',
+		smtpEnabled: smtp.enabled === true
+	});
+
 	return {
-		...publicAuthSettingsFromRecord(record, smtp),
+		signupsEnabled: toBool(record?.signups_enabled, true),
+		emailConfigured: mail,
+		emailVerificationEnabled: mail,
 		mailProvider: provider,
 		resendKeyHint: provider === 'resend' && resendKey ? maskApiKey(resendKey) : '',
 		appUrl: typeof meta.appURL === 'string' ? meta.appURL : '',
@@ -566,9 +565,7 @@ export const handleAdminPutAuthEmailSettings = async (c: Context) => {
 		const saved = await upsertSettingsRecord(patch);
 		const updated = settingsRecordAsData(saved) ?? settingsRecordAsData(await getSettingsRecord());
 		const pbSettingsAfter = await pb.settings.getAll();
-		const smtpAfter = (pbSettingsAfter.smtp || {}) as Record<string, unknown>;
-		const emailConfigured = isMailConfiguredRecord(updated, smtpAfter);
-		await syncUsersAuthCollectionSettings(emailConfigured, appUrl);
+		await syncAuthEmailTemplates(pb);
 		if (provider === 'resend' && !settingsText(updated, 'resend_api_key')) {
 			console.error(
 				'[admin] auth-email save: mail_provider=resend but resend_api_key missing after upsert'

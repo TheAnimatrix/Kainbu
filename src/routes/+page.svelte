@@ -241,6 +241,8 @@
 	let authErrorMessage = '';
 	let signupsEnabled = true;
 	let emailConfigured = false;
+	let emailVerificationEnabled = false;
+	let showResendVerification = false;
 	let workspaceError = '';
 	let syncErrorMessage = '';
 	let inviteFeedback: { projectId: string; kind: 'success' | 'error'; message: string } | null =
@@ -2048,6 +2050,38 @@
 		return false;
 	};
 
+	const rejectUnverifiedSession = (email: string) => {
+		if (!emailVerificationEnabled || pocketbase.authStore.record?.verified !== false) {
+			return false;
+		}
+		pocketbase.authStore.clear();
+		authErrorMessage =
+			'Verify your email before signing in. Check your inbox for the verification link.';
+		showResendVerification = true;
+		return true;
+	};
+
+	const handleResendVerificationRequest = async (email: string) => {
+		authErrorMessage = '';
+		authInfoMessage = '';
+		const normalizedEmail = email.trim().toLowerCase();
+		if (!normalizedEmail) {
+			authErrorMessage = 'Enter your email before requesting a verification link.';
+			return;
+		}
+		isAuthLoading = true;
+		try {
+			await pocketbase.collection('users').requestVerification(normalizedEmail);
+			showResendVerification = false;
+			authInfoMessage = 'Verification email sent if that account is unverified.';
+		} catch (error) {
+			console.error(error);
+			authErrorMessage = formatPocketBaseError(error, 'Unable to send verification email.');
+		} finally {
+			isAuthLoading = false;
+		}
+	};
+
 	const handleAuthSubmit = async (payload: {
 		email: string;
 		password: string;
@@ -2055,6 +2089,7 @@
 	}) => {
 		authErrorMessage = '';
 		authInfoMessage = '';
+		showResendVerification = false;
 		isAuthLoading = true;
 
 		try {
@@ -2063,14 +2098,17 @@
 				if (result.requiresVerification) {
 					authInfoMessage =
 						'Account created. Check your email to verify your address before signing in.';
+					showResendVerification = true;
 					return;
 				}
 				await pocketbase.collection('users').authWithPassword(payload.email, payload.password);
+				if (rejectUnverifiedSession(payload.email)) return;
 				authInfoMessage = 'Account created.';
 				return;
 			}
 
 			await pocketbase.collection('users').authWithPassword(payload.email, payload.password);
+			if (rejectUnverifiedSession(payload.email)) return;
 		} catch (error) {
 			console.error(error);
 			authErrorMessage = formatPocketBaseError(error, 'Unable to authenticate right now.');
@@ -4323,6 +4361,13 @@
 			.then((settings) => {
 				signupsEnabled = settings.signupsEnabled;
 				emailConfigured = settings.emailConfigured;
+				emailVerificationEnabled = settings.emailVerificationEnabled;
+				if (emailVerificationEnabled && pocketbase.authStore.record?.verified === false) {
+					pocketbase.authStore.clear();
+					authErrorMessage =
+						'Verify your email before signing in. Check your inbox for the verification link.';
+					showResendVerification = true;
+				}
 			})
 			.catch((error) => {
 				console.error(error);
@@ -4414,10 +4459,12 @@
 		errorMessage={authErrorMessage}
 		{signupsEnabled}
 		{emailConfigured}
+		{showResendVerification}
 		theme={settings.backgroundTheme}
 		backgroundImageUrl={personalBackgroundImageUrl}
 		on:submit={(event) => handleAuthSubmit(event.detail)}
 		on:resetPassword={(event) => handlePasswordResetRequest(event.detail.email)}
+		on:resendVerification={(event) => handleResendVerificationRequest(event.detail.email)}
 	/>
 {:else}
 	<div
