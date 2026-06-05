@@ -175,7 +175,10 @@
 	}) => void = () => {};
 	export let onAddAttachments: (attachments: ChatAttachment[]) => void = () => {};
 	export let onDockedEditorChange: (isDocked: boolean) => void = () => {};
-	export let onBoardPreferencesChange: (nextPreferences: BoardPreferences) => void = () => {};
+	export let onBoardPreferencesChange: (
+		boardId: string,
+		nextPreferences: BoardPreferences
+	) => void = () => {};
 	export let boardSearchActive = false;
 	export let boardSearchQuery = '';
 
@@ -3174,6 +3177,6 @@
 		preferences={boardPreferences}
 		columns={boardData}
 		onClose={() => (boardOptionsOpen = false)}
-		onChange={onBoardPreferencesChange}
+		onChange={(nextPreferences) => onBoardPreferencesChange(activeBoardId, nextPreferences)}
 	/>
 </div>

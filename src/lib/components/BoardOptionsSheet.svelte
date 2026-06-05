@@ -10,6 +10,15 @@
 	export let onChange: (next: BoardPreferences) => void;
 
 	let pickingColumn = false;
+	let draftPreferences = preferences;
+	let wasOpen = false;
+
+	$: {
+		if (open && !wasOpen) {
+			draftPreferences = preferences;
+		}
+		wasOpen = open;
+	}
 
 	const close = () => {
 		pickingColumn = false;
@@ -17,7 +26,8 @@
 	};
 
 	const updatePreferences = (patch: Partial<BoardPreferences>) => {
-		onChange({ ...preferences, ...patch });
+		draftPreferences = { ...draftPreferences, ...patch };
+		onChange(draftPreferences);
 	};
 
 	const selectMoveTarget = (target: 'off' | 'default' | string) => {
@@ -31,7 +41,7 @@
 		pickingColumn = false;
 	};
 
-	$: moveTargetLabel = getCheckedMoveTargetLabel(columns, preferences);
+	$: moveTargetLabel = getCheckedMoveTargetLabel(columns, draftPreferences);
 	$: hasDoneColumn = columns.some((column) => column.title.trim().toLowerCase() === 'done');
 </script>
 
@@ -75,7 +85,7 @@
 							onclick={() => selectMoveTarget('off')}
 						>
 							<span class="text-sm text-app-text">Off</span>
-							{#if !preferences.moveCheckedTasks}
+							{#if !draftPreferences.moveCheckedTasks}
 								<Check size={16} class="text-app-primary" />
 							{/if}
 						</button>
@@ -90,7 +100,7 @@
 									<p class="mt-0.5 text-xs text-app-subtext">Uses a column titled Done when it exists.</p>
 								{/if}
 							</div>
-							{#if preferences.moveCheckedTasks && !preferences.checkedTaskTargetColumnId.trim()}
+							{#if draftPreferences.moveCheckedTasks && !draftPreferences.checkedTaskTargetColumnId.trim()}
 								<Check size={16} class="text-app-primary" />
 							{/if}
 						</button>
@@ -101,7 +111,7 @@
 								onclick={() => selectMoveTarget(column.id)}
 							>
 								<span class="text-sm text-app-text">{column.title}</span>
-								{#if preferences.moveCheckedTasks && preferences.checkedTaskTargetColumnId === column.id}
+								{#if draftPreferences.moveCheckedTasks && draftPreferences.checkedTaskTargetColumnId === column.id}
 									<Check size={16} class="text-app-primary" />
 								{/if}
 							</button>
@@ -120,7 +130,7 @@
 						<input
 							type="checkbox"
 							class="h-4 w-4 accent-app-primary"
-							checked={preferences.defaultShowCheckbox}
+							checked={draftPreferences.defaultShowCheckbox}
 							onchange={(event) =>
 								updatePreferences({
 									defaultShowCheckbox: (event.currentTarget as HTMLInputElement).checked

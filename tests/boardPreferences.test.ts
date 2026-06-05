@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
 	findDefaultDoneColumnId,
 	getCheckedMoveTargetLabel,
+	mergeBoardPreferences,
 	normalizeBoardPreferences,
 	resolveCheckedMoveTargetColumnId
 } from '$lib/kainbu/boardPreferences';
@@ -52,5 +53,12 @@ describe('boardPreferences', () => {
 				normalizeBoardPreferences({ moveCheckedTasks: true })
 			)
 		).toBeNull();
+	});
+
+	it('keeps customized local preferences when remote only has defaults', () => {
+		const local = normalizeBoardPreferences({ moveCheckedTasks: false });
+		const remote = normalizeBoardPreferences(undefined);
+
+		expect(mergeBoardPreferences(local, remote, false)).toEqual(local);
 	});
 });

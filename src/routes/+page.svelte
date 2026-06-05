@@ -140,7 +140,7 @@
 		workspaceSearchParamsEqual,
 		type WorkspaceUrlState
 	} from '$lib/kainbu/workspaceUrl';
-	import { normalizeBoardPreferences } from '$lib/kainbu/boardPreferences';
+	import { normalizeBoardPreferences, boardPreferencesEqual } from '$lib/kainbu/boardPreferences';
 	import { getProjectMemberDisplayName, getProjectMemberSearchText } from '$lib/kainbu/members';
 	import {
 		getProjectBoard,
@@ -363,6 +363,8 @@
 	>();
 	const chatSyncTimeouts = new Map<string, ReturnType<typeof setTimeout>>();
 	const pendingChatSyncs = new Set<string>();
+	const pendingBoardPreferenceSyncs = new Set<string>();
+	const boardPreferenceSyncTargets = new Map<string, BoardPreferences>();
 	const pendingBackgroundSignedUrlLoads = new Map<BackgroundImageScope, Promise<void>>();
 	const backgroundSignedUrlMeta = new Map<
 		BackgroundImageScope,
@@ -382,8 +384,8 @@
 			lastSyncedAiThinkingModelId = activeAiModelId;
 		}
 	}
-	$: currentBoardId = currentProject?.activeBoardId || '';
-	$: currentBoard = currentProject ? getProjectBoard(currentProject, currentBoardId) : null;
+	$: currentBoard = currentProject ? getProjectBoard(currentProject) : null;
+	$: currentBoardId = currentBoard?.id || '';
 	$: boardPreferences = currentBoard
 		? normalizeBoardPreferences(currentBoard.preferences, settings.defaultShowCheckbox)
 		: normalizeBoardPreferences(undefined, settings.defaultShowCheckbox);
@@ -595,6 +597,41 @@
 	};
 	const hasPendingBoardSyncForProject = (projectId: string) =>
 		hasKeyWithPrefix(pendingBoardSyncs.keys(), `${projectId}::board::`);
+
+	const getBoardPreferenceSyncKey = (projectId: string, boardId: string) =>
+		`${projectId}::board-pref::${boardId}`;
+
+	const getPendingBoardPreferenceBoardIds = (projectId: string) =>
+		new Set(
+			[...new Set([...pendingBoardPreferenceSyncs, ...boardPreferenceSyncTargets.keys()])]
+				.filter((key) => key.startsWith(`${projectId}::board-pref::`))
+				.map((key) => key.slice(`${projectId}::board-pref::`.length))
+		);
+
+	const reconcileBoardPreferenceSyncTargets = (nextProjects: Project[]) => {
+		const marker = '::board-pref::';
+
+		for (const [syncKey, targetPreferences] of boardPreferenceSyncTargets.entries()) {
+			const markerIndex = syncKey.indexOf(marker);
+			if (markerIndex === -1) continue;
+
+			const projectId = syncKey.slice(0, markerIndex);
+			const boardId = syncKey.slice(markerIndex + marker.length);
+			const project = nextProjects.find((entry) => entry.id === projectId);
+			const board = project ? getProjectBoard(project, boardId) : null;
+
+			if (
+				board &&
+				boardPreferencesEqual(
+					normalizeBoardPreferences(board.preferences),
+					normalizeBoardPreferences(targetPreferences)
+				)
+			) {
+				boardPreferenceSyncTargets.delete(syncKey);
+				pendingBoardPreferenceSyncs.delete(syncKey);
+			}
+		}
+	};
 	const hasPendingPageSyncForProject = (projectId: string) =>
 		hasKeyWithPrefix(pendingScratchpadSyncs.keys(), `${projectId}::page::`);
 	const compareProjects = (left: Project, right: Project) => {
@@ -1280,6 +1317,8 @@
 		pendingScratchpadSyncs.clear();
 		chatSyncTimeouts.clear();
 		pendingChatSyncs.clear();
+		pendingBoardPreferenceSyncs.clear();
+		boardPreferenceSyncTargets.clear();
 		stopWorkspaceSubscription?.();
 		stopWorkspaceSubscription = null;
 
@@ -1778,7 +1817,11 @@
 			const preferLocalAiState = pendingChatSyncs.has(remoteProject.id) || preferLocalFallback;
 			const mergedBoards = preferLocalBoardState
 				? localProject.boards
-				: mergeProjectBoardsByUpdatedAt(localProject.boards, remoteProject.boards);
+				: mergeProjectBoardsByUpdatedAt(
+						localProject.boards,
+						remoteProject.boards,
+						getPendingBoardPreferenceBoardIds(remoteProject.id)
+					);
 			const mergedPages = preferLocalPageState ? localProject.pages : remoteProject.pages;
 			const activeBoardId = resolveMergedActiveId(
 				mergedBoards,
@@ -2024,8 +2067,10 @@
 		workspaceRefreshPromise = (async () => {
 			try {
 				const workspace = await fetchWorkspace(currentUser.id, { fresh: true });
+				const mergedProjects = mergeRemoteProjects(projects, workspace.projects);
+				reconcileBoardPreferenceSyncTargets(mergedProjects);
 				applyWorkspaceState({
-					nextProjects: mergeRemoteProjects(projects, workspace.projects),
+					nextProjects: mergedProjects,
 					nextIncomingInvites: workspace.incomingInvites,
 					preferredProjectId: currentProjectId
 				});
@@ -3304,40 +3349,34 @@
 		applyLocalKanbanChange(currentProject, nextKanbanData, options);
 	};
 
-	const handleBoardPreferencesChange = (nextPreferences: BoardPreferences) => {
-		if (!currentProject || !currentBoardId) return;
+	const handleBoardPreferencesChange = (boardId: string, nextPreferences: BoardPreferences) => {
+		if (!currentProject || !boardId) return;
+		if (!getProjectBoard(currentProject, boardId)) return;
 
-		const previousProjects = projects;
-		const nextProject = updateProjectBoardPreferences(
-			currentProject,
-			currentBoardId,
-			nextPreferences
+		const projectId = currentProject.id;
+		const normalizedPreferences = normalizeBoardPreferences(nextPreferences);
+		const preferenceSyncKey = getBoardPreferenceSyncKey(projectId, boardId);
+
+		updateProjectLocal(projectId, (project) =>
+			updateProjectBoardPreferences(project, boardId, normalizedPreferences)
 		);
 
-		applyWorkspaceState({
-			nextProjects: projects.map((entry) =>
-				entry.id === currentProject.id ? nextProject : entry
-			),
-			preferredProjectId: currentProjectId
-		});
+		boardPreferenceSyncTargets.set(preferenceSyncKey, normalizedPreferences);
+		pendingBoardPreferenceSyncs.add(preferenceSyncKey);
+		refreshSyncStatus();
 
 		void (async () => {
 			try {
 				await runSyncAction(
 					() =>
-						updateProjectBoardPreferencesRemote(
-							currentProject.id,
-							currentBoardId,
-							nextPreferences
-						),
+						updateProjectBoardPreferencesRemote(projectId, boardId, normalizedPreferences),
 					'Unable to save board options right now.'
 				);
 			} catch (error) {
 				console.error(error);
-				applyWorkspaceState({
-					nextProjects: previousProjects,
-					preferredProjectId: currentProjectId
-				});
+			} finally {
+				pendingBoardPreferenceSyncs.delete(preferenceSyncKey);
+				refreshSyncStatus();
 			}
 		})();
 	};

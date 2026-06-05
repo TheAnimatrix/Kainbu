@@ -4,6 +4,33 @@ import type { BoardPreferences, KanbanData } from '$lib/kainbu/types';
 const isObject = (value: unknown): value is Record<string, unknown> =>
 	typeof value === 'object' && value !== null;
 
+export const boardPreferencesEqual = (left: BoardPreferences, right: BoardPreferences) =>
+	left.defaultShowCheckbox === right.defaultShowCheckbox &&
+	left.moveCheckedTasks === right.moveCheckedTasks &&
+	left.checkedTaskTargetColumnId === right.checkedTaskTargetColumnId;
+
+export const mergeBoardPreferences = (
+	local: BoardPreferences,
+	remote: BoardPreferences,
+	preferLocal: boolean
+): BoardPreferences => {
+	const normalizedLocal = normalizeBoardPreferences(local);
+	const normalizedRemote = normalizeBoardPreferences(remote);
+
+	if (preferLocal) return normalizedLocal;
+	if (boardPreferencesEqual(normalizedLocal, normalizedRemote)) return normalizedRemote;
+
+	// Remote can look newer while still carrying factory defaults if preferences were not stored.
+	if (
+		boardPreferencesEqual(normalizedRemote, DEFAULT_BOARD_PREFERENCES) &&
+		!boardPreferencesEqual(normalizedLocal, DEFAULT_BOARD_PREFERENCES)
+	) {
+		return normalizedLocal;
+	}
+
+	return normalizedRemote;
+};
+
 export const normalizeBoardPreferences = (
 	value: unknown,
 	fallbackDefaultShowCheckbox = DEFAULT_BOARD_PREFERENCES.defaultShowCheckbox

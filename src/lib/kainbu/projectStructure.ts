@@ -1,4 +1,4 @@
-import { normalizeBoardPreferences } from '$lib/kainbu/boardPreferences';
+import { mergeBoardPreferences, normalizeBoardPreferences } from '$lib/kainbu/boardPreferences';
 import { createId } from '$lib/kainbu/id';
 import { normalizeProjectAiState } from '$lib/kainbu/aiSessions';
 import { getActiveScratchpadPad, normalizeScratchpadData } from '$lib/kainbu/scratchpad';
@@ -53,6 +53,11 @@ export const pageToScratchpadData = (
 
 export const getProjectBoard = (project: Pick<Project, 'boards' | 'activeBoardId'>, boardId?: string | null) =>
 	project.boards.find((board) => board.id === (boardId || project.activeBoardId)) || project.boards[0] || null;
+
+export const resolveProjectBoardId = (
+	project: Pick<Project, 'boards' | 'activeBoardId'>,
+	boardId?: string | null
+) => getProjectBoard(project, boardId)?.id ?? null;
 
 export const getProjectPage = (project: Pick<Project, 'pages' | 'activePageId'>, pageId?: string | null) =>
 	project.pages.find((page) => page.id === (pageId || project.activePageId)) || project.pages[0] || null;
@@ -149,7 +154,8 @@ export const updateProjectBoardData = (project: Project, boardId: string, kanban
 
 export const mergeProjectBoardsByUpdatedAt = (
 	localBoards: ProjectBoard[],
-	remoteBoards: ProjectBoard[]
+	remoteBoards: ProjectBoard[],
+	preferLocalBoardIds: ReadonlySet<string> = new Set()
 ): ProjectBoard[] => {
 	const localById = new Map(localBoards.map((board) => [board.id, board]));
 	const remoteById = new Map(remoteBoards.map((board) => [board.id, board]));
@@ -161,7 +167,23 @@ export const mergeProjectBoardsByUpdatedAt = (
 		const remoteBoard = remoteById.get(boardId);
 
 		if (localBoard && remoteBoard) {
-			merged.push(localBoard.updatedAt >= remoteBoard.updatedAt ? localBoard : remoteBoard);
+			const preferLocalBoard = preferLocalBoardIds.has(boardId);
+			const remoteIsNewer = remoteBoard.updatedAt > localBoard.updatedAt;
+			const winner = preferLocalBoard
+				? localBoard
+				: remoteIsNewer
+					? remoteBoard
+					: localBoard;
+
+			merged.push({
+				...winner,
+				preferences: mergeBoardPreferences(
+					localBoard.preferences,
+					remoteBoard.preferences,
+					preferLocalBoard || !remoteIsNewer
+				),
+				updatedAt: Math.max(localBoard.updatedAt, remoteBoard.updatedAt)
+			});
 			continue;
 		}
 
@@ -185,9 +207,12 @@ export const updateProjectBoardPreferences = (
 	boardId: string,
 	preferences: BoardPreferences
 ) => {
+	const resolvedBoardId = resolveProjectBoardId(project, boardId);
+	if (!resolvedBoardId) return project;
+
 	const now = Date.now();
 	const nextBoards = project.boards.map((board) =>
-		board.id === boardId
+		board.id === resolvedBoardId
 			? {
 					...board,
 					preferences: normalizeBoardPreferences(preferences),
@@ -196,11 +221,15 @@ export const updateProjectBoardPreferences = (
 			: board
 	);
 
-	return {
-		...project,
-		boards: nextBoards,
-		updatedAt: Math.max(project.updatedAt, now)
-	};
+	return setProjectActiveBoard(
+		{
+			...project,
+			boards: nextBoards,
+			activeBoardId: resolvedBoardId,
+			updatedAt: Math.max(project.updatedAt, now)
+		},
+		resolvedBoardId
+	);
 };
 
 export const updateProjectPageContent = (project: Project, pageId: string, content: string) => {
