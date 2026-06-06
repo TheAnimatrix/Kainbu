@@ -67,6 +67,12 @@
 		DESKTOP_CHAT_MIN,
 		DESKTOP_CHAT_WIDTH
 	} from '$lib/kainbu/constants';
+	import {
+		collectStagedProposalsFromHistory,
+		clearStagedProposalsForTargets,
+		removeStagedProposalFromHistory,
+		toPendingProposals
+	} from '$lib/kainbu/aiProposals';
 	import { fetchWorkspaceAiModels, generateSessionTitle, invokeWorkspaceAi } from '$lib/kainbu/ai';
 	import { prepareChatHistoryForModel } from '$lib/kainbu/aiVision';
 	import { exportProjectsToFile, parseProjectsImport } from '$lib/kainbu/backup';
@@ -133,9 +139,9 @@
 		upsertUserSettings
 	} from '$lib/kainbu/persistence';
 	import { BOARD_PRESENCE_INTERVAL_MS } from '$lib/kainbu/boardPresence';
+	import { updateBoardShareSettings } from '$lib/kainbu/shareApi';
 	import {
 		buildWorkspaceSearchParams,
-		buildWorkspaceShareUrl,
 		parseWorkspaceUrl,
 		workspaceSearchParamsEqual,
 		type WorkspaceUrlState
@@ -266,6 +272,8 @@
 	let showResendVerification = false;
 	let workspaceError = '';
 	let syncErrorMessage = '';
+	let boardShareSaving = false;
+	let boardShareErrorMessage = '';
 	let inviteFeedback: { projectId: string; kind: 'success' | 'error'; message: string } | null =
 		null;
 	let syncStatus: SyncStatus = 'idle';
@@ -375,6 +383,17 @@
 	$: applyColorMode(settings.colorMode);
 	$: currentProject = projects.find((project) => project.id === currentProjectId) || null;
 	$: activeAiSession = currentProject ? getActiveProjectAiSession(currentProject) : null;
+	$: if (currentProject && activeAiSession && !isAiProcessing) {
+		const restored = toPendingProposals(
+			currentProject,
+			collectStagedProposalsFromHistory(activeAiSession.history)
+		);
+		pendingProposals = [
+			...pendingProposals.filter((proposal) => proposal.projectId !== currentProject.id),
+			...restored
+		];
+		refreshPendingProposalStaleness();
+	}
 	$: activeAiModelId =
 		activeAiSession?.modelId || settings.preferredAiModelId || DEFAULT_AI_MODEL_ID;
 	$: if (activeAiModelId && activeAiModelId !== lastSyncedAiThinkingModelId) {
@@ -452,12 +471,6 @@
 	$: timedTasks = buildTimedTasks(projects);
 	$: visibleWorkspaceTab = isMobile ? mobileTab : desktopWorkspaceTab;
 	$: workspaceUrlState = parseWorkspaceUrl($page.url.searchParams);
-	$: workspaceShareUrl = buildWorkspaceShareUrl({
-		projectId: currentProjectId || undefined,
-		boardId: currentBoardId || undefined,
-		pageId: visibleWorkspaceTab === 'scratchpad' ? currentPageId : undefined,
-		view: visibleWorkspaceTab
-	});
 	$: presenceProjectId = workspaceUrlState.projectId || currentProjectId || '';
 	$: presenceBoardId = visibleWorkspaceTab === 'kanban' ? currentBoardId : '';
 	$: if (workspaceUrlReady && user && projects.length) {
@@ -3349,6 +3362,42 @@
 		applyLocalKanbanChange(currentProject, nextKanbanData, options);
 	};
 
+	const handleBoardShareSettingsChange = async (
+		boardId: string,
+		payload: { sharePublic?: boolean }
+	) => {
+		if (!currentProject || !boardId) return;
+
+		boardShareSaving = true;
+		boardShareErrorMessage = '';
+
+		try {
+			const result = await updateBoardShareSettings({
+				projectId: currentProject.id,
+				boardId,
+				...(typeof payload.sharePublic === 'boolean' ? { sharePublic: payload.sharePublic } : {})
+			});
+
+			updateProjectLocal(currentProject.id, (project) => ({
+				...project,
+				boards: project.boards.map((board) =>
+					board.id === boardId
+						? {
+								...board,
+								shareSlug: result.shareSlug,
+								sharePublic: result.sharePublic
+							}
+						: board
+				)
+			}));
+		} catch (error) {
+			boardShareErrorMessage =
+				error instanceof Error ? error.message : 'Unable to update share settings right now.';
+		} finally {
+			boardShareSaving = false;
+		}
+	};
+
 	const handleBoardPreferencesChange = (boardId: string, nextPreferences: BoardPreferences) => {
 		if (!currentProject || !boardId) return;
 		if (!getProjectBoard(currentProject, boardId)) return;
@@ -3596,21 +3645,7 @@
 			return;
 		}
 
-		const nextPendingProposals = response.proposals.map((proposal) =>
-			proposal.target === 'kanban'
-				? {
-						...proposal,
-						projectId: projectSnapshot.id,
-						stale: getKanbanFingerprint(projectSnapshot.kanbanData) !== proposal.baseFingerprint,
-						originalKanbanData: structuredClone(proposal.originalKanbanData)
-					}
-				: {
-						...proposal,
-						projectId: projectSnapshot.id,
-						stale: getProjectPagesFingerprint(projectSnapshot.pages) !== proposal.baseFingerprint,
-						originalScratchpadState: structuredClone(projectSnapshot.scratchpadData)
-					}
-		);
+		const nextPendingProposals = toPendingProposals(projectSnapshot, response.proposals);
 
 		pendingProposals = [
 			...pendingProposals.filter(
@@ -3867,7 +3902,10 @@
 		updateProjectLocal(nextProject.id, (project) => ({
 			...updateActiveProjectAiSession(project, (session) => ({
 				...session,
-				history: [...session.history, buildProposalAppliedMessage(refreshedProposal)],
+				history: [
+					...removeStagedProposalFromHistory(session.history, refreshedProposal.id),
+					buildProposalAppliedMessage(refreshedProposal)
+				],
 				updatedAt: Date.now(),
 				lastMessageAt: Date.now()
 			}))
@@ -3885,7 +3923,16 @@
 
 	const handleRejectProposal = (proposalId: string) => {
 		const proposal = activePendingProposals.find((entry) => entry.id === proposalId);
-		if (!proposal) return;
+		if (!proposal || !currentProject) return;
+
+		updateProjectLocal(currentProject.id, (project) =>
+			updateActiveProjectAiSession(project, (session) => ({
+				...session,
+				history: removeStagedProposalFromHistory(session.history, proposalId),
+				updatedAt: Date.now()
+			}))
+		);
+		scheduleChatSync(currentProject.id);
 
 		pendingProposals = pendingProposals.filter((entry) => entry.id !== proposal.id);
 		if (proposalPreviewTarget === proposal.target) {
@@ -4021,6 +4068,7 @@
 				: response.question
 					? [response.question]
 					: [];
+			const supersededProposalTargets = response.proposals.map((proposal) => proposal.target);
 			const assistantMessage: ChatMessage = {
 				id: createId(),
 				role: 'assistant',
@@ -4034,6 +4082,7 @@
 				},
 				annotations: response.annotations,
 				toolActions: response.toolActions,
+				...(response.proposals.length ? { stagedProposals: response.proposals } : {}),
 				progressEvents: aiProgressEvents.filter(
 					(e) =>
 						e.kind !== 'assistant_draft' &&
@@ -4055,7 +4104,11 @@
 			updateProjectLocal(projectSnapshot.id, (project) =>
 				updateActiveProjectAiSession(project, (session) => ({
 					...session,
-					history: [...session.history, assistantMessage, ...extraQuestionMessages],
+					history: [
+						...clearStagedProposalsForTargets(session.history, supersededProposalTargets),
+						assistantMessage,
+						...extraQuestionMessages
+					],
 					...(response.compacted
 						? {
 								contextSummary: response.contextSummary,
@@ -4951,7 +5004,12 @@
 													activeBoardId={currentProject.activeBoardId}
 													currentUserId={user?.id || ''}
 													currentUserAvatarUrl={profile?.avatarUrl ?? null}
-													shareUrl={workspaceShareUrl}
+													boardName={currentBoard?.name || 'Board'}
+													shareSlug={currentBoard?.shareSlug ?? null}
+													sharePublic={currentBoard?.sharePublic ?? false}
+													isOwner={currentProject.accessRole === 'owner'}
+													shareSaving={boardShareSaving}
+													shareErrorMessage={boardShareErrorMessage}
 													data={kanbanData}
 													comparisonData={kanbanComparisonData}
 													{highlightedTaskIds}
@@ -4965,6 +5023,8 @@
 													bind:boardSearchQuery
 													onChange={handleKanbanChange}
 													onBoardPreferencesChange={handleBoardPreferencesChange}
+													onShareSettingsChange={(payload) =>
+														handleBoardShareSettingsChange(currentBoardId, payload)}
 													onSendToChat={handleSendTaskToChat}
 													onActiveTaskChange={handleActiveTaskChange}
 													onTaskReferenceNavigate={handleTaskReferenceNavigate}
@@ -5137,7 +5197,12 @@
 													activeBoardId={currentProject.activeBoardId}
 													currentUserId={user?.id || ''}
 													currentUserAvatarUrl={profile?.avatarUrl ?? null}
-													shareUrl={workspaceShareUrl}
+													boardName={currentBoard?.name || 'Board'}
+													shareSlug={currentBoard?.shareSlug ?? null}
+													sharePublic={currentBoard?.sharePublic ?? false}
+													isOwner={currentProject.accessRole === 'owner'}
+													shareSaving={boardShareSaving}
+													shareErrorMessage={boardShareErrorMessage}
 													data={kanbanData}
 													comparisonData={kanbanComparisonData}
 													{highlightedTaskIds}
@@ -5151,6 +5216,8 @@
 													bind:boardSearchQuery
 													onChange={handleKanbanChange}
 													onBoardPreferencesChange={handleBoardPreferencesChange}
+													onShareSettingsChange={(payload) =>
+														handleBoardShareSettingsChange(currentBoardId, payload)}
 													onSendToChat={handleSendTaskToChat}
 													onActiveTaskChange={handleActiveTaskChange}
 													onTaskReferenceNavigate={handleTaskReferenceNavigate}

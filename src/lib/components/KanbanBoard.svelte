@@ -70,7 +70,7 @@
 	import BoardOptionsSheet from '$lib/components/BoardOptionsSheet.svelte';
 	import BoardViewersPill from '$lib/components/BoardViewersPill.svelte';
 	import { resolveCheckedMoveTargetColumnId } from '$lib/kainbu/boardPreferences';
-	import ShareWorkspaceLinkButton from '$lib/components/ShareWorkspaceLinkButton.svelte';
+	import ShareBoardModal from '$lib/components/ShareBoardModal.svelte';
 	import {
 		addBidirectionalLink,
 		buildLinkGroupLayout,
@@ -163,7 +163,17 @@
 	export let activeBoardId = '';
 	export let currentUserId = '';
 	export let currentUserAvatarUrl: string | null = null;
-	export let shareUrl = '';
+	export let boardName = '';
+	export let shareSlug: string | null = null;
+	export let sharePublic = false;
+	export let isOwner = false;
+	export let showShareButton = true;
+	export let showCollaborationChrome = true;
+	export let shareSaving = false;
+	export let shareErrorMessage = '';
+	export let onShareSettingsChange: (payload: {
+		sharePublic?: boolean;
+	}) => void | Promise<void> = () => {};
 	export let onChange: (nextData: KanbanData, options?: BoardChangeOptions) => void;
 	export let onSendToChat: (payload: { task: Task; column: Column }) => void;
 	export let onActiveTaskChange: (
@@ -203,6 +213,7 @@
 	let editingColumnId: string | null = null;
 	let editingColumnTitle = '';
 	let openColumnMenu: ColumnMenuState | null = null;
+	let shareModalOpen = false;
 	let openTaskMenu: TaskMenuState | null = null;
 	let rewritingTaskId: string | null = null;
 	let rewriteTaskError = '';
@@ -1754,57 +1765,73 @@
 				{#if !isDiffMode}
 					<div class="flex h-full min-h-0 min-w-min flex-col">
 						<div class="flex shrink-0 min-w-max items-center gap-2 px-3 pb-2">
-							<button
-								type="button"
-								class={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-[11px] font-semibold transition ${
-									boardLayoutMode === 'link-groups'
-										? 'border-app-primary/40 bg-app-primary/10 text-app-primary'
-										: 'border-app-border bg-app-surface text-app-subtext hover:text-app-text'
-								}`}
-								onclick={toggleBoardLayoutMode}
-							>
-								<Network size={13} />
-								Link groups
-							</button>
-							<BoardViewersPill viewers={boardPresenceViewers} />
-							<ShareWorkspaceLinkButton url={shareUrl} />
-							<button
-								type="button"
-								class={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-[11px] font-semibold transition ${
-									boardSearchActive
-										? 'border-app-primary/40 bg-app-primary/10 text-app-primary'
-										: 'border-app-border bg-app-surface text-app-subtext hover:text-app-text'
-								}`}
-								title="Search cards (Ctrl+F)"
-								aria-label="Search cards"
-								onclick={() => {
-									if (boardSearchActive) {
-										closeBoardSearch();
-										return;
-									}
-									void openBoardSearch();
-								}}
-							>
-								<Search size={13} />
-								Search
-							</button>
-							<button
-								type="button"
-								class={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-[11px] font-semibold transition ${
-									boardOptionsOpen
-										? 'border-app-primary/40 bg-app-primary/10 text-app-primary'
-										: 'border-app-border bg-app-surface text-app-subtext hover:text-app-text'
-								}`}
-								title="Board options"
-								aria-label="Board options"
-								onclick={() => {
-									closeMenus();
-									boardOptionsOpen = true;
-								}}
-							>
-								<Settings2 size={13} />
-								Options
-							</button>
+							{#if showCollaborationChrome}
+								<button
+									type="button"
+									class={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-[11px] font-semibold transition ${
+										boardLayoutMode === 'link-groups'
+											? 'border-app-primary/40 bg-app-primary/10 text-app-primary'
+											: 'border-app-border bg-app-surface text-app-subtext hover:text-app-text'
+									}`}
+									onclick={toggleBoardLayoutMode}
+								>
+									<Network size={13} />
+									Link groups
+								</button>
+								{#if showShareButton}
+									<BoardViewersPill viewers={boardPresenceViewers} />
+									<button
+										type="button"
+										class="inline-flex items-center gap-1.5 rounded-full border border-app-border bg-app-surface px-3 py-1.5 text-[11px] font-semibold text-app-subtext transition hover:border-app-primary/30 hover:text-app-text"
+										title="Share board"
+										onclick={() => {
+											shareModalOpen = true;
+										}}
+									>
+										<Link2 size={13} />
+										Share
+									</button>
+								{/if}
+								<button
+									type="button"
+									class={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-[11px] font-semibold transition ${
+										boardSearchActive
+											? 'border-app-primary/40 bg-app-primary/10 text-app-primary'
+											: 'border-app-border bg-app-surface text-app-subtext hover:text-app-text'
+									}`}
+									title="Search cards (Ctrl+F)"
+									aria-label="Search cards"
+									onclick={() => {
+										if (boardSearchActive) {
+											closeBoardSearch();
+											return;
+										}
+										void openBoardSearch();
+									}}
+								>
+									<Search size={13} />
+									Search
+								</button>
+							{/if}
+							{#if showCollaborationChrome}
+								<button
+									type="button"
+									class={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-[11px] font-semibold transition ${
+										boardOptionsOpen
+											? 'border-app-primary/40 bg-app-primary/10 text-app-primary'
+											: 'border-app-border bg-app-surface text-app-subtext hover:text-app-text'
+									}`}
+									title="Board options"
+									aria-label="Board options"
+									onclick={() => {
+										closeMenus();
+										boardOptionsOpen = true;
+									}}
+								>
+									<Settings2 size={13} />
+									Options
+								</button>
+							{/if}
 							{#if boardSearchActive}
 								<div class="flex min-w-[12rem] max-w-sm flex-1 items-center gap-1.5">
 									<input
@@ -3178,5 +3205,20 @@
 		columns={boardData}
 		onClose={() => (boardOptionsOpen = false)}
 		onChange={(nextPreferences) => onBoardPreferencesChange(activeBoardId, nextPreferences)}
+	/>
+
+	<ShareBoardModal
+		open={shareModalOpen}
+		boardName={boardName}
+		{shareSlug}
+		{sharePublic}
+		{isOwner}
+		saving={shareSaving}
+		errorMessage={shareErrorMessage}
+		onClose={() => {
+			shareModalOpen = false;
+		}}
+		onEnsureSlug={() => onShareSettingsChange({})}
+		onSave={(nextSharePublic) => onShareSettingsChange({ sharePublic: nextSharePublic })}
 	/>
 </div>

@@ -20,6 +20,7 @@ const createFallbackBoard = (project: Pick<Project, 'id' | 'kanbanData' | 'creat
 	position: 0,
 	kanbanData: cloneKanbanData(project.kanbanData || []),
 	preferences: normalizeBoardPreferences(undefined),
+	sharePublic: false,
 	createdAt: project.createdAt,
 	updatedAt: project.updatedAt
 });
@@ -73,6 +74,7 @@ export const normalizeProjectStructure = (project: Project): Project => {
 					position: Number.isFinite(board.position) ? board.position : index,
 					kanbanData: cloneKanbanData(board.kanbanData || []),
 					preferences: normalizeBoardPreferences(board.preferences),
+					sharePublic: board.sharePublic === true,
 					createdAt: board.createdAt || project.createdAt,
 					updatedAt: board.updatedAt || project.updatedAt
 				}))

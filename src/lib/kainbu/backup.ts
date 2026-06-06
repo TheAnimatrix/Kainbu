@@ -292,6 +292,7 @@ const normalizeProject = (
 					position: typeof board.position === 'number' ? board.position : index,
 					kanbanData,
 					preferences: normalizeBoardPreferences(board.preferences),
+					sharePublic: false,
 					createdAt: now,
 					updatedAt: now
 				};
@@ -304,6 +305,7 @@ const normalizeProject = (
 					position: 0,
 					kanbanData: importKanbanData(legacyKanban, seed.kanbanData).kanbanData,
 					preferences: normalizeBoardPreferences(undefined),
+					sharePublic: false,
 					createdAt: now,
 					updatedAt: now
 				}
@@ -388,6 +390,7 @@ const normalizeLegacySession = (session: LegacySession, userId: string): Project
 				position: 0,
 				kanbanData,
 				preferences: normalizeBoardPreferences(undefined),
+				sharePublic: false,
 				createdAt: seed.createdAt,
 				updatedAt: seed.updatedAt
 			}

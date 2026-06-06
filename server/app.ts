@@ -41,6 +41,11 @@ import {
 	handleCliDeviceStart
 } from './cli-auth.js';
 import {
+	handlePublicBoardShareRequest,
+	handleWorkspaceBoardShareRequest,
+	toShareApiError
+} from './share.js';
+import {
 	handleWorkspaceBoardPresenceRequest,
 	handleWorkspaceCancelInviteRequest,
 	handleWorkspaceCreateInviteRequest,
@@ -422,6 +427,42 @@ app.post('/api/workspace/projects/touch', async (c) => {
 		return c.json(payload);
 	} catch (error) {
 		return handleWorkspaceMutationError(c, error);
+	}
+});
+
+app.get('/api/share/:slug', async (c) => {
+	try {
+		const payload = await handlePublicBoardShareRequest(
+			c.req.param('slug'),
+			c.req.header('Authorization')
+		);
+		return c.json(payload);
+	} catch (error) {
+		const mapped = toShareApiError(error);
+		const body =
+			mapped.status === 403
+				? { error: mapped.message, requiresAuth: true }
+				: { error: mapped.message };
+		return c.json(body, mapped.status as 400 | 401 | 403 | 404 | 500);
+	}
+});
+
+app.post('/api/workspace/boards/share', async (c) => {
+	try {
+		const origin = c.req.header('Origin') || c.req.header('Referer')?.replace(/\/[^/]*$/, '');
+		const payload = await handleWorkspaceBoardShareRequest(
+			(await c.req.json()) as {
+				projectId: string;
+				boardId: string;
+				sharePublic?: boolean;
+			},
+			c.req.header('Authorization'),
+			origin || undefined
+		);
+		return c.json(payload);
+	} catch (error) {
+		const mapped = toShareApiError(error);
+		return c.json({ error: mapped.message }, mapped.status as 400 | 401 | 403 | 404 | 500);
 	}
 });
 

@@ -16,6 +16,7 @@ import {
 } from "./constants.js";
 import type { MaterializedWorkspace } from "./sync.js";
 import { serializeKanbanDocument } from "./sync.js";
+import { sanitizeUserFacingAiReply } from "../../src/lib/kainbu/sanitizeAiReply.js";
 
 const DEFAULT_COLUMN_WIDTH = 268;
 const DEFAULT_TAG_COLOR = "tone:blue";
@@ -1270,12 +1271,4 @@ export const deleteTasks = async (
 
 export const formatToolResult = (payload: ToolResultPayload) => JSON.stringify(payload);
 
-export const sanitizeUserFacingReply = (text: string) =>
-    text
-        .replace(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi, "")
-        .replace(/\((?:taskId|columnId|taskRef|columnRef):[^)]+\)/gi, "")
-        .replace(/\b(?:taskId|columnId|taskRef|columnRef):\s*[^\s,)]+/gi, "")
-        .replace(/\(\s*\)/g, "")
-        .replace(/[ \t]+\n/g, "\n")
-        .replace(/\n{3,}/g, "\n\n")
-        .trim();
+export const sanitizeUserFacingReply = sanitizeUserFacingAiReply;

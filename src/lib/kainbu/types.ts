@@ -226,6 +226,8 @@ export interface ChatMessage {
 	metadata?: MessageMetadata;
 	annotations?: CitationAnnotation[];
 	toolActions?: WorkspaceAction[];
+	/** Unapplied AI proposals tied to this assistant turn (restored after refresh). */
+	stagedProposals?: AiProposal[];
 	progressEvents?: AiProgressEvent[];
 	question?: AiQuestion;
 	usage?: AiUsage;
@@ -273,8 +275,29 @@ export interface ProjectBoard {
 	position: number;
 	kanbanData: KanbanData;
 	preferences: BoardPreferences;
+	shareSlug?: string | null;
+	sharePublic: boolean;
 	createdAt: number;
 	updatedAt: number;
+}
+
+export interface BoardShareSettingsResponse {
+	shareSlug: string;
+	sharePublic: boolean;
+	shareUrl: string;
+}
+
+export interface PublicBoardShareResponse {
+	sharePublic: boolean;
+	canEdit: boolean;
+	redirectTo?: string;
+	projectId: string;
+	boardId: string;
+	projectName: string;
+	boardName: string;
+	kanbanData: KanbanData;
+	boardPreferences: BoardPreferences;
+	backgroundTheme?: BackgroundTheme | null;
 }
 
 export interface ProjectPage {
@@ -789,6 +812,8 @@ export interface ProjectBoardRow {
 	name: string;
 	position: number;
 	preferences?: BoardPreferences | null;
+	share_slug?: string | null;
+	share_public?: boolean;
 	created_at: string;
 	updated_at: string;
 }

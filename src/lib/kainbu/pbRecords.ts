@@ -98,6 +98,11 @@ export const mapBoardRecord = (record: PbRecord, projectClientId: string): Proje
 		record.preferences && typeof record.preferences === 'object'
 			? (record.preferences as ProjectBoardRow['preferences'])
 			: null,
+	share_slug:
+		typeof record.share_slug === 'string' && record.share_slug.trim()
+			? record.share_slug.trim()
+			: null,
+	share_public: record.share_public === true,
 	created_at: iso(record.created),
 	updated_at: iso(record.updated)
 });

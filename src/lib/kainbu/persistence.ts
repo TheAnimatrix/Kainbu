@@ -67,7 +67,9 @@ import type {
 	UserSettings,
 	WorkspaceAction,
 	AiProgressEvent,
-	AiProgressEventKind
+	AiProgressEventKind,
+	AiProposal,
+	ProposalTarget
 } from '$lib/kainbu/types';
 
 const isObject = (value: unknown): value is Record<string, unknown> =>
@@ -170,6 +172,29 @@ const normalizeTaskCards = (value: unknown): ChatTaskCard[] => {
 			}
 		];
 	});
+};
+
+const isProposalTarget = (value: unknown): value is ProposalTarget =>
+	value === 'kanban' || value === 'scratchpad';
+
+const normalizeStagedProposals = (value: unknown): AiProposal[] | undefined => {
+	if (!Array.isArray(value)) return undefined;
+
+	const proposals = value.flatMap((entry) => {
+		if (!isObject(entry) || typeof entry.id !== 'string' || !entry.id.trim()) return [];
+		if (!isProposalTarget(entry.target) || !isObject(entry.preview)) return [];
+
+		if (entry.target === 'kanban') {
+			const preview = entry.preview;
+			if (!Array.isArray(preview.kanbanData)) return [];
+		} else if (!isObject(entry.preview.scratchpadState)) {
+			return [];
+		}
+
+		return [entry as unknown as AiProposal];
+	});
+
+	return proposals.length ? proposals : undefined;
 };
 
 const normalizeToolActions = (value: unknown): WorkspaceAction[] =>
@@ -322,6 +347,7 @@ const normalizeChatHistory = (history: unknown): ChatMessage[] => {
 
 		const timestamp = toNumber(entry.timestamp) ?? Date.now() + index;
 		const toolActions = normalizeToolActions(entry.toolActions);
+		const stagedProposals = normalizeStagedProposals(entry.stagedProposals);
 		const progressEvents = normalizeProgressEvents(entry.progressEvents);
 		const attachments = normalizeAttachments(entry);
 		const taskCards = normalizeTaskCards(entry.taskCards);
@@ -356,6 +382,7 @@ const normalizeChatHistory = (history: unknown): ChatMessage[] => {
 					: {}),
 				...(annotations.length ? { annotations } : {}),
 				...(toolActions.length ? { toolActions } : {}),
+				...(stagedProposals?.length ? { stagedProposals } : {}),
 				...(progressEvents.length ? { progressEvents } : {})
 			}
 		];
@@ -531,6 +558,8 @@ const mapBoardRow = (
 	position: row.position,
 	kanbanData: buildKanbanData(columns, tasks),
 	preferences: normalizeBoardPreferences(row.preferences),
+	shareSlug: row.share_slug ?? null,
+	sharePublic: row.share_public === true,
 	createdAt: new Date(row.created_at).getTime(),
 	updatedAt: new Date(row.updated_at).getTime()
 });

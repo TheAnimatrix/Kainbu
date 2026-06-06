@@ -39,6 +39,7 @@
 		ProposalTarget
 	} from '$lib/kainbu/types';
 	import RichText from '$lib/components/RichText.svelte';
+	import { sanitizeUserFacingAiReply } from '$lib/kainbu/sanitizeAiReply';
 	import AiActivityTrace from '$lib/components/AiActivityTrace.svelte';
 
 	export let history: ChatMessage[] = [];
@@ -1136,7 +1137,7 @@
 
 								{#if message.role === 'assistant'}
 									<RichText
-										value={message.text}
+										value={sanitizeUserFacingAiReply(message.text)}
 										className={`kainbu-prose kainbu-chat-prose${isMobileChrome ? ' kainbu-chat-prose--mobile' : ''}`}
 									/>
 								{:else if hasMessageText}

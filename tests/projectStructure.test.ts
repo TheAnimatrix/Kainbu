@@ -22,6 +22,7 @@ const board = (
 		moveCheckedTasks: true,
 		checkedTaskTargetColumnId: ''
 	},
+	sharePublic: false,
 	createdAt: 0,
 	updatedAt,
 	...overrides

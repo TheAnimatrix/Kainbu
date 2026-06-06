@@ -213,6 +213,7 @@ export const EMPTY_PROJECT = (userId: string, name = 'New Project'): Project => 
 				position: 0,
 				kanbanData: structuredClone(INITIAL_KANBAN),
 				preferences: structuredClone(DEFAULT_BOARD_PREFERENCES),
+				sharePublic: false,
 				createdAt: now,
 				updatedAt: now
 			}
