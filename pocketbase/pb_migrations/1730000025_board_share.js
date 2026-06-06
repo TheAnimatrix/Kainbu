@@ -40,13 +40,6 @@ migrate(
 		}
 
 		app.save(boards);
-
-		const existingIndexes = boards.indexes || [];
-		const shareSlugIndex = 'CREATE UNIQUE INDEX idx_project_boards_share_slug ON project_boards (share_slug) WHERE share_slug != ""';
-		if (!existingIndexes.some((entry) => entry.includes('idx_project_boards_share_slug'))) {
-			boards.indexes = [...existingIndexes, shareSlugIndex];
-			app.save(boards);
-		}
 	},
 	() => {}
 );
