@@ -208,6 +208,34 @@ const buildShareUrl = (slug: string, origin?: string) => {
 	return base ? `${base}/b/${slug}` : `/b/${slug}`;
 };
 
+const shareFieldMigrationHint =
+	'Board sharing requires the PocketBase migration (1730000025_board_share). Restart the pocketbase service after deploy.';
+
+const mapSharePocketBaseError = (error: unknown, fallback: string): ShareApiError => {
+	if (error instanceof ClientResponseError) {
+		const rawMessage =
+			typeof error.response?.message === 'string'
+				? error.response.message
+				: typeof error.message === 'string'
+					? error.message
+					: fallback;
+		const message = rawMessage.trim() || fallback;
+		if (/share_slug|share_public|unknown field|no such column/i.test(message)) {
+			return new ShareApiError(503, shareFieldMigrationHint);
+		}
+		const status =
+			error.status === 404 ? 404 : error.status >= 400 && error.status < 600 ? error.status : 500;
+		return new ShareApiError(status, message);
+	}
+	if (error instanceof ShareApiError) {
+		return error;
+	}
+	if (error instanceof Error) {
+		return new ShareApiError(error.message === 'Unauthorized' ? 401 : 500, error.message);
+	}
+	return new ShareApiError(500, fallback);
+};
+
 const allocateShareSlug = async (admin: PocketBase) => {
 	for (let attempt = 0; attempt < 8; attempt += 1) {
 		const slug = createShareSlug();
@@ -219,7 +247,11 @@ const allocateShareSlug = async (admin: PocketBase) => {
 			if (error instanceof ClientResponseError && error.status === 404) {
 				return slug;
 			}
-			throw error;
+			if (error instanceof ClientResponseError && error.status === 400) {
+				// share_slug field missing or filter unsupported — caller update will surface migration hint.
+				return slug;
+			}
+			throw mapSharePocketBaseError(error, 'Unable to allocate a unique share slug.');
 		}
 	}
 	throw new ShareApiError(500, 'Unable to allocate a unique share slug.');
@@ -308,16 +340,11 @@ const loadBoardSnapshot = async (
 };
 
 export const toShareApiError = (error: unknown) => {
-	if (error instanceof ShareApiError) {
-		return { status: error.status, message: error.message };
-	}
-	if (error instanceof Error) {
-		return {
-			status: error.message === 'Unauthorized' ? 401 : 500,
-			message: error.message
-		};
-	}
-	return { status: 500, message: 'Unknown error' };
+	const mapped =
+		error instanceof ShareApiError
+			? error
+			: mapSharePocketBaseError(error, 'Unknown error');
+	return { status: mapped.status, message: mapped.message };
 };
 
 export const handleWorkspaceBoardShareRequest = async (
@@ -344,10 +371,15 @@ export const handleWorkspaceBoardShareRequest = async (
 	const sharePublic =
 		typeof body.sharePublic === 'boolean' ? body.sharePublic : boardRecord.share_public === true;
 
-	const updated = await admin.collection('project_boards').update(boardRecord.id, {
-		share_slug: shareSlug,
-		share_public: sharePublic
-	});
+	let updated;
+	try {
+		updated = await admin.collection('project_boards').update(boardRecord.id, {
+			share_slug: shareSlug,
+			share_public: sharePublic
+		});
+	} catch (error) {
+		throw mapSharePocketBaseError(error, 'Unable to save board share settings.');
+	}
 
 	const resolvedSlug = String(updated.share_slug || shareSlug);
 	return {

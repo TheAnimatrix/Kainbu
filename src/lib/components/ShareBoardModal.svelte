@@ -18,17 +18,23 @@
 	let draftPublic = sharePublic;
 	let wasOpen = false;
 	let ensuringSlug = false;
+	let slugEnsureAttempted = false;
 
 	$: shareUrl = shareSlug ? buildBoardShareUrl(shareSlug) : '';
 
 	$: {
 		if (open && !wasOpen) {
 			draftPublic = sharePublic;
+			slugEnsureAttempted = false;
+		}
+		if (!open && wasOpen) {
+			slugEnsureAttempted = false;
 		}
 		wasOpen = open;
 	}
 
-	$: if (open && isOwner && !shareSlug && !ensuringSlug) {
+	$: if (open && isOwner && !shareSlug && !slugEnsureAttempted && !ensuringSlug) {
+		slugEnsureAttempted = true;
 		ensuringSlug = true;
 		void Promise.resolve(onEnsureSlug()).finally(() => {
 			ensuringSlug = false;
@@ -151,9 +157,24 @@
 							readonly
 							value={shareUrl ||
 								(isOwner
-									? 'Generating link…'
+									? ensuringSlug
+										? 'Generating link…'
+										: errorMessage
+											? 'Could not generate link'
+											: 'Generating link…'
 									: 'Ask the project owner to open share settings first.')}
 						/>
+						{#if isOwner && !shareUrl && !ensuringSlug && errorMessage}
+							<button
+								type="button"
+								class="shrink-0 text-[11px] font-semibold text-app-primary transition hover:opacity-80"
+								onclick={() => {
+									slugEnsureAttempted = false;
+								}}
+							>
+								Retry
+							</button>
+						{/if}
 						<button
 							type="button"
 							class="inline-flex items-center gap-1 rounded-lg border border-app-border px-2 py-1 text-[11px] font-semibold text-app-subtext transition hover:text-app-text disabled:opacity-50"

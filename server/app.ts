@@ -462,7 +462,10 @@ app.post('/api/workspace/boards/share', async (c) => {
 		return c.json(payload);
 	} catch (error) {
 		const mapped = toShareApiError(error);
-		return c.json({ error: mapped.message }, mapped.status as 400 | 401 | 403 | 404 | 500);
+		return c.json(
+			{ error: mapped.message },
+			mapped.status as 400 | 401 | 403 | 404 | 500 | 503
+		);
 	}
 });
 
