@@ -229,8 +229,8 @@ const interceptResendMail = (e) => {
 /** Kainbu: new-device login alerts are disabled (see users.authAlert + migration 1730000023). */
 const suppressAuthAlertMail = () => {};
 
-onMailerBeforeRecordVerificationSend(interceptResendVerification);
-onMailerBeforeRecordPasswordResetSend(interceptResendPasswordReset);
+onMailerRecordVerificationSend(interceptResendVerification);
+onMailerRecordPasswordResetSend(interceptResendPasswordReset);
 onMailerRecordEmailChangeSend(interceptResendMail);
 onMailerRecordAuthAlertSend(suppressAuthAlertMail);
 

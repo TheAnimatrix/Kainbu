@@ -39,6 +39,11 @@ migrate(
 			);
 		}
 
+		// Drop a broken index from failed earlier deploys (column/index ordering).
+		boards.indexes = (boards.indexes || []).filter(
+			(entry) => !String(entry).includes('idx_project_boards_share_slug')
+		);
+
 		app.save(boards);
 	},
 	() => {}
