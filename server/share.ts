@@ -1,7 +1,7 @@
 import type PocketBase from 'pocketbase';
 import { ClientResponseError } from 'pocketbase';
 import { normalizeBoardPreferences } from '../src/lib/kainbu/boardPreferences.js';
-import { createShareSlug } from '../src/lib/kainbu/shareSlug.js';
+import { createShareSlug, isValidShareSlug } from '../src/lib/kainbu/shareSlug.js';
 import type {
 	BackgroundTheme,
 	BoardPreferences,
@@ -258,6 +258,10 @@ const allocateShareSlug = async (admin: PocketBase) => {
 };
 
 const getBoardByShareSlug = async (admin: PocketBase, slug: string) => {
+	if (!isValidShareSlug(slug)) {
+		throw new ShareApiError(400, 'Invalid share link.');
+	}
+
 	try {
 		return await admin.collection('project_boards').getFirstListItem(
 			`share_slug = "${pbEscapeFilter(slug)}"`
@@ -266,7 +270,7 @@ const getBoardByShareSlug = async (admin: PocketBase, slug: string) => {
 		if (error instanceof ClientResponseError && error.status === 404) {
 			throw new ShareApiError(404, 'Shared board not found.');
 		}
-		throw error;
+		throw mapSharePocketBaseError(error, 'Unable to load shared board.');
 	}
 };
 
@@ -381,11 +385,15 @@ export const handleWorkspaceBoardShareRequest = async (
 		throw mapSharePocketBaseError(error, 'Unable to save board share settings.');
 	}
 
-	const resolvedSlug = String(updated.share_slug || shareSlug);
+	const persistedSlug = String(updated.share_slug || '').trim();
+	if (!persistedSlug) {
+		throw new ShareApiError(503, shareFieldMigrationHint);
+	}
+
 	return {
-		shareSlug: resolvedSlug,
+		shareSlug: persistedSlug,
 		sharePublic: updated.share_public === true,
-		shareUrl: buildShareUrl(resolvedSlug, origin)
+		shareUrl: buildShareUrl(persistedSlug, origin)
 	};
 };
 
@@ -396,6 +404,9 @@ export const handlePublicBoardShareRequest = async (
 	const normalizedSlug = slug.trim();
 	if (!normalizedSlug) {
 		throw new ShareApiError(400, 'Share slug is required.');
+	}
+	if (!isValidShareSlug(normalizedSlug)) {
+		throw new ShareApiError(400, 'Invalid share link.');
 	}
 
 	const admin = await createAdminPb();
@@ -415,7 +426,12 @@ export const handlePublicBoardShareRequest = async (
 		throw new ShareApiError(403, 'This board is private. Sign in if you have access.');
 	}
 
-	const snapshot = await loadBoardSnapshot(admin, projectClientId, boardClientId);
+	let snapshot;
+	try {
+		snapshot = await loadBoardSnapshot(admin, projectClientId, boardClientId);
+	} catch (error) {
+		throw mapSharePocketBaseError(error, 'Unable to load shared board data.');
+	}
 
 	return {
 		sharePublic,
