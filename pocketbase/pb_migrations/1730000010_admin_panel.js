@@ -30,11 +30,11 @@ migrate(
 			const appSettings = new Collection({
 				name: 'app_settings',
 				type: 'base',
-				listRule: null,
-				viewRule: null,
-				createRule: null,
-				updateRule: null,
-				deleteRule: null,
+				listRule: '@request.auth.id != ""',
+				viewRule: '@request.auth.id != ""',
+				createRule: '@request.auth.id != ""',
+				updateRule: '@request.auth.id != ""',
+				deleteRule: '@request.auth.id != ""',
 				fields: [
 					{ name: 'singleton', type: 'text', required: true, max: 32 },
 					{ name: 'openrouter_api_key', type: 'text', required: false, max: 512 }
