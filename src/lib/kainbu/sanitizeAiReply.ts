@@ -16,12 +16,21 @@ export const stripInternalAiMarkup = (text: string) => {
 		.trim();
 };
 
+/** Tighten gaps between consecutive list items only — keep paragraph breaks around lists. */
+const collapseLooseListSpacing = (text: string) =>
+	text.replace(
+		/([ \t]*(?:[-*+]|\d+\.)\s[^\n]*)\n{2,}(?=[ \t]*(?:[-*+]|\d+\.)\s)/g,
+		'$1\n'
+	);
+
 export const sanitizeUserFacingAiReply = (text: string) =>
-	stripInternalAiMarkup(text)
-		.replace(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi, '')
-		.replace(/\((?:taskId|columnId|taskRef|columnRef):[^)]+\)/gi, '')
-		.replace(/\b(?:taskId|columnId|taskRef|columnRef):\s*[^\s,)]+/gi, '')
-		.replace(/\(\s*\)/g, '')
-		.replace(/[ \t]+\n/g, '\n')
-		.replace(/\n{3,}/g, '\n\n')
-		.trim();
+	collapseLooseListSpacing(
+		stripInternalAiMarkup(text)
+			.replace(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi, '')
+			.replace(/\((?:taskId|columnId|taskRef|columnRef):[^)]+\)/gi, '')
+			.replace(/\b(?:taskId|columnId|taskRef|columnRef):\s*[^\s,)]+/gi, '')
+			.replace(/\(\s*\)/g, '')
+			.replace(/[ \t]+\n/g, '\n')
+			.replace(/\n{3,}/g, '\n\n')
+			.trim()
+	);

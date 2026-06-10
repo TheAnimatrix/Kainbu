@@ -27,4 +27,11 @@ describe('sanitizeAiReply', () => {
 	it('still strips internal task refs from sanitized replies', () => {
 		expect(sanitizeUserFacingAiReply('Updated task (taskRef:T20).')).toBe('Updated task .');
 	});
+
+	it('collapses blank lines between consecutive markdown list items', () => {
+		const raw = ['Intro', '', '- first item', '', '', '- second item', '', 'Outro'].join('\n');
+		expect(sanitizeUserFacingAiReply(raw)).toBe(
+			['Intro', '', '- first item', '- second item', '', 'Outro'].join('\n')
+		);
+	});
 });

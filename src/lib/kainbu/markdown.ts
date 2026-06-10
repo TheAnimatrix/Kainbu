@@ -61,6 +61,26 @@ const escapeHtml = (value: string) =>
 		.replaceAll('"', '&quot;')
 		.replaceAll("'", '&#39;');
 
+/** Plain-text preview for status traces (thinking snippets, tool output). */
+export const stripMarkdownLite = (value: string) => {
+	const text = (value || '').replace(/\r\n/g, '\n');
+	return text
+		.replace(/```[\s\S]*?```/g, ' ')
+		.replace(/`([^`\n]+)`/g, '$1')
+		.replace(/\*\*([^*\n]+)\*\*/g, '$1')
+		.replace(/\*([^*\n]+)\*/g, '$1')
+		.replace(/__([^_\n]+)__/g, '$1')
+		.replace(/_([^_\n]+)_/g, '$1')
+		.replace(/^#{1,6}\s+/gm, '')
+		.replace(/^\s*>\s?/gm, '')
+		.replace(/\[([^\]]+)\]\([^)]*\)/g, '$1')
+		.replace(/^\s*[-*+]\s+/gm, '')
+		.replace(/^\s*\d+\.\s+/gm, '')
+		.replace(/\n+/g, ' ')
+		.replace(/[ \t]{2,}/g, ' ')
+		.trim();
+};
+
 const STANDALONE_CHECKBOX_LINE_PATTERN = /^\s*\[[ xX]\]\s+/;
 
 export const normalizeStandaloneCheckboxBoundaries = (value: string) => {

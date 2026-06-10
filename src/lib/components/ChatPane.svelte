@@ -8,6 +8,7 @@
 		ChevronRight,
 		Circle,
 		Copy,
+		Ellipsis,
 		ExternalLink,
 		Info,
 		LoaderCircle,
@@ -20,9 +21,10 @@
 		Send,
 		SlidersHorizontal,
 		Trash2,
+		Upload,
 		X,
 		XCircle
-	} from 'lucide-svelte';
+	} from '$lib/icons';
 	import BrandMark from '$lib/components/BrandMark.svelte';
 	import { createId } from '$lib/kainbu/id';
 	import { getTagToneClasses } from '$lib/kainbu/tags';
@@ -82,12 +84,17 @@
 		if (answer) onAnswerQuestion(answer.questionId, answer.optionId, answer.text);
 	};
 	export let onCollapseSidebar: (() => void) | null = null;
+	export let hideHeader = false;
+	export let sessionSwitcherAnchor: HTMLElement | null = null;
 
 	$: activeModel = modelOptions.find((entry) => entry.id === modelId) ?? modelOptions[0] ?? null;
 	$: thinkingChoices = activeModel?.allowedThinkingLevels?.length
 		? activeModel.allowedThinkingLevels
 		: (['none'] as const);
 	$: showThinkingSelect = thinkingChoices.some((level) => level !== 'none');
+	$: mobileAiSettingsLabel = `${activeModel?.id || modelId || 'Model'}${
+		showThinkingSelect ? `, ${thinkingLevelLabel(thinkingLevel)}` : ''
+	}`;
 
 	// The orb pulses while we're waiting (preparing, tools, idle) and holds steady
 	// once text is actively streaming, so the motion reads as "thinking" not "stalled".
@@ -116,7 +123,10 @@
 
 	$: isSidebar = chrome === 'sidebar';
 	$: isMobileChrome = chrome === 'mobile';
+	$: isDesktopSidebar = isSidebar && !isMobileChrome;
 	$: isFramelessChrome = isSidebar || isMobileChrome;
+	$: sidebarSectionLabelClass =
+		'text-[10px] font-semibold uppercase tracking-[0.18em] text-app-subtext/70';
 	$: activeSession =
 		sessions.find((session) => session.id === activeSessionId) || sessions[0] || null;
 
@@ -148,6 +158,13 @@
 	let sessionSwitcherTrigger: HTMLButtonElement | null = null;
 	let switcherSearchInput: HTMLInputElement | null = null;
 	let switcherPosition: { top: number; left: number; width: number } | null = null;
+
+	type ComposerMenuKind = 'model' | 'thinking' | 'settings';
+	let composerMenu: ComposerMenuKind | null = null;
+	let modelMenuTrigger: HTMLButtonElement | null = null;
+	let thinkingMenuTrigger: HTMLButtonElement | null = null;
+	let settingsMenuTrigger: HTMLButtonElement | null = null;
+	let composerMenuPosition: { top: number; left: number; width: number } | null = null;
 
 	$: switcherFilteredSessions = switcherSearchQuery.trim()
 		? sortedSessions.filter((session) =>
@@ -209,8 +226,9 @@
 	};
 
 	const updateSwitcherPosition = () => {
-		if (!sessionSwitcherTrigger) return;
-		const rect = sessionSwitcherTrigger.getBoundingClientRect();
+		const anchor = sessionSwitcherAnchor || sessionSwitcherTrigger;
+		if (!anchor) return;
+		const rect = anchor.getBoundingClientRect();
 		const width = Math.max(rect.width, isMobileChrome ? 260 : 288);
 		const maxLeft = Math.max(8, window.innerWidth - width - 8);
 		const panelHeight = 384;
@@ -239,9 +257,68 @@
 		hoveredSwitcherSessionId = '';
 	};
 
-	const toggleSessionSwitcher = () => {
+	const closeComposerMenu = () => {
+		composerMenu = null;
+		composerMenuPosition = null;
+	};
+
+	const getComposerMenuTrigger = (kind: ComposerMenuKind) => {
+		if (kind === 'model') return modelMenuTrigger;
+		if (kind === 'thinking') return thinkingMenuTrigger;
+		return settingsMenuTrigger;
+	};
+
+	const updateComposerMenuPosition = (kind: ComposerMenuKind) => {
+		const trigger = getComposerMenuTrigger(kind);
+		if (!trigger) return;
+		const rect = trigger.getBoundingClientRect();
+		const width =
+			kind === 'settings'
+				? Math.min(Math.max(rect.width, 280), window.innerWidth - 16)
+				: kind === 'model'
+					? Math.max(rect.width, isMobileChrome ? 240 : 288)
+					: Math.max(rect.width, 168);
+		const maxLeft = Math.max(8, window.innerWidth - width - 8);
+		const panelHeight = kind === 'settings' ? 320 : 256;
+		const aboveTop = rect.top - panelHeight - 6;
+		const fitsAbove = aboveTop >= 8;
+		composerMenuPosition = {
+			top: fitsAbove ? aboveTop : Math.max(8, rect.bottom + 6),
+			left: Math.min(rect.left, maxLeft),
+			width
+		};
+	};
+
+	const openComposerMenu = async (kind: ComposerMenuKind) => {
 		if (sessionSwitcherOpen) closeSessionSwitcher();
-		else void openSessionSwitcher();
+		composerMenu = kind;
+		await tick();
+		updateComposerMenuPosition(kind);
+	};
+
+	const toggleComposerMenu = (kind: ComposerMenuKind) => {
+		if (composerMenu === kind) closeComposerMenu();
+		else void openComposerMenu(kind);
+	};
+
+	const selectComposerModel = (nextModelId: AiModelId) => {
+		onModelChange(nextModelId);
+		closeComposerMenu();
+	};
+
+	const selectComposerThinkingLevel = (
+		level: import('$lib/kainbu/types').AiThinkingLevel
+	) => {
+		onThinkingLevelChange(level);
+		closeComposerMenu();
+	};
+
+	export const toggleSessionSwitcher = () => {
+		if (sessionSwitcherOpen) closeSessionSwitcher();
+		else {
+			closeComposerMenu();
+			void openSessionSwitcher();
+		}
 	};
 
 	const selectSwitcherSession = (sessionId: string) => {
@@ -267,6 +344,10 @@
 
 	$: if (!active && sessionSwitcherOpen) {
 		closeSessionSwitcher();
+	}
+
+	$: if (!active && composerMenu) {
+		closeComposerMenu();
 	}
 
 	const relativeTime = (timestamp: number) => {
@@ -300,6 +381,11 @@
 
 	let previousHistorySignature = '';
 	let previousActive = false;
+	let previousIsProcessing = false;
+	let pinnedTurnUserMessageId: string | null = null;
+	let pinnedSpacerHeight = 0;
+	let historyViewportHeight = 0;
+	const USER_MESSAGE_PEEK_PX = 40;
 	let previewAttachment: ChatAttachment | null = null;
 	let previewScale = PREVIEW_MIN_SCALE;
 	let previewOffsetX = 0;
@@ -701,6 +787,42 @@
 		}, 1200);
 	};
 
+	const shareMessageText = async (message: ChatMessage) => {
+		if (!message.text.trim()) return;
+		if (typeof navigator.share === 'function') {
+			try {
+				await navigator.share({ text: message.text });
+				return;
+			} catch (error) {
+				if (error instanceof DOMException && error.name === 'AbortError') return;
+			}
+		}
+		await copyMessageText(message);
+	};
+
+	const regenerateFromAssistant = async (message: ChatMessage) => {
+		if (isProcessing) return;
+		const messageIndex = history.findIndex((entry) => entry.id === message.id);
+		if (messageIndex < 0) return;
+		for (let index = messageIndex - 1; index >= 0; index -= 1) {
+			const previous = history[index];
+			if (previous.role === 'user' && previous.text?.trim()) {
+				onDraftChange(previous.text.trim());
+				await tick();
+				onSend();
+				return;
+			}
+		}
+	};
+
+	const messageActionDetails = (message: ChatMessage) => {
+		const parts = [absoluteTime(message.timestamp)];
+		if (message.metadata?.latencyMs) {
+			parts.push(`${(message.metadata.latencyMs / 1000).toFixed(2)}s`);
+		}
+		return parts.filter(Boolean).join(' · ');
+	};
+
 	const isCompactStatusMessage = (message: ChatMessage) =>
 		message.role === 'assistant' &&
 		(message.progressEvents?.length || 0) > 0 &&
@@ -727,16 +849,19 @@
 	const latestProgressText = (events: AiProgressEvent[] = []) =>
 		events.length ? summarizeProgressEvent(events.at(-1)!) : 'Thinking…';
 
+	const composerMinHeight = () => (isMobileChrome ? 32 : COMPOSER_MIN_HEIGHT);
+
 	const resizeComposer = (node: HTMLTextAreaElement) => {
+		const minHeight = composerMinHeight();
 		node.style.height = 'auto';
 		if (!node.value.trim()) {
-			node.style.height = `${COMPOSER_MIN_HEIGHT}px`;
+			node.style.height = `${minHeight}px`;
 			node.style.overflowY = 'hidden';
 			return;
 		}
 		const nextHeight = Math.min(
 			COMPOSER_MAX_HEIGHT,
-			Math.max(COMPOSER_MIN_HEIGHT, node.scrollHeight)
+			Math.max(minHeight, node.scrollHeight)
 		);
 		node.style.height = `${nextHeight}px`;
 		node.style.overflowY = node.scrollHeight > COMPOSER_MAX_HEIGHT ? 'auto' : 'hidden';
@@ -756,6 +881,22 @@
 		};
 	};
 
+	const observeHistoryViewport = (node: HTMLDivElement) => {
+		const syncHeight = () => {
+			historyViewportHeight = node.clientHeight;
+		};
+
+		syncHeight();
+		const resizeObserver = new ResizeObserver(syncHeight);
+		resizeObserver.observe(node);
+
+		return {
+			destroy() {
+				resizeObserver.disconnect();
+			}
+		};
+	};
+
 	const scrollHistoryToEnd = async (behavior: ScrollBehavior = 'smooth') => {
 		await tick();
 		if (!historyViewport) return;
@@ -764,20 +905,152 @@
 			top: historyViewport.scrollHeight,
 			behavior
 		});
+
+		// Late-loading content (rendered markdown, images) can grow the list after
+		// an instant jump; re-anchor to the bottom on the next frames so a refresh
+		// reliably lands at the end instead of mid-list.
+		if (behavior === 'auto') {
+			requestAnimationFrame(() => {
+				if (!historyViewport) return;
+				historyViewport.scrollTop = historyViewport.scrollHeight;
+				requestAnimationFrame(() => {
+					if (!historyViewport) return;
+					historyViewport.scrollTop = historyViewport.scrollHeight;
+				});
+			});
+		}
+	};
+
+	const findPinnedUserMessageEl = () => {
+		if (!historyViewport || !pinnedTurnUserMessageId) return null;
+		return historyViewport.querySelector<HTMLElement>(
+			`[data-chat-message-id="${pinnedTurnUserMessageId}"]`
+		);
+	};
+
+	// Spacer height that guarantees the pinned user message can sit near the top
+	// (with a small peek) regardless of how short the assistant reply is.
+	const measurePinnedSpacer = () => {
+		if (!historyViewport) return 0;
+		const messageEl = findPinnedUserMessageEl();
+		if (!messageEl) return pinnedSpacerHeight;
+
+		const viewportRect = historyViewport.getBoundingClientRect();
+		const messageRect = messageEl.getBoundingClientRect();
+		const messageTopInContent =
+			historyViewport.scrollTop + (messageRect.top - viewportRect.top);
+		const baseContentHeight = historyViewport.scrollHeight - pinnedSpacerHeight;
+		const needed =
+			historyViewport.clientHeight +
+			messageTopInContent -
+			USER_MESSAGE_PEEK_PX -
+			baseContentHeight;
+
+		return Math.max(0, Math.ceil(needed));
+	};
+
+	const pinUserMessageToTop = (behavior: ScrollBehavior = 'auto') => {
+		if (!historyViewport) return;
+		const messageEl = findPinnedUserMessageEl();
+		if (!messageEl) return;
+
+		const viewportRect = historyViewport.getBoundingClientRect();
+		const messageTopInContent =
+			historyViewport.scrollTop + (messageEl.getBoundingClientRect().top - viewportRect.top);
+		const maxScrollTop = Math.max(
+			0,
+			historyViewport.scrollHeight - historyViewport.clientHeight
+		);
+		const nextScrollTop = Math.min(
+			Math.max(0, messageTopInContent - USER_MESSAGE_PEEK_PX),
+			maxScrollTop
+		);
+
+		if (Math.abs(historyViewport.scrollTop - nextScrollTop) < 2) return;
+		historyViewport.scrollTo({ top: nextScrollTop, behavior });
+	};
+
+	const startPinnedTurn = (userMessageId: string) => {
+		pinnedTurnUserMessageId = userMessageId;
+		// Reserve a full viewport's worth of room up front so the reply can stream
+		// below the pinned message. This is a one-time set — we do NOT remeasure on
+		// every render (that caused a feedback loop) — so the layout height stays
+		// stable from send through completion and there is no jump.
+		pinnedSpacerHeight = Math.max(
+			0,
+			(historyViewport?.clientHeight ?? historyViewportHeight) - USER_MESSAGE_PEEK_PX
+		);
+		void tick().then(() => pinUserMessageToTop('smooth'));
+	};
+
+	// Trim the reserved space down to just what's needed once the reply is final,
+	// without moving the pinned message. Runs a single time per turn.
+	const trimPinnedSpacer = () => {
+		void tick().then(() => {
+			const next = measurePinnedSpacer();
+			if (next !== pinnedSpacerHeight) pinnedSpacerHeight = next;
+		});
+	};
+
+	const clearPinnedTurn = () => {
+		if (pinnedTurnUserMessageId === null && pinnedSpacerHeight === 0) return;
+		pinnedTurnUserMessageId = null;
+		pinnedSpacerHeight = 0;
+	};
+
+	// Once the user scrolls to the bottom (past the reply), release the reserved
+	// space so it doesn't linger. Only collapses when already at the bottom, so
+	// there is no visible jump. Never runs while a reply is still streaming.
+	const handleHistoryScroll = () => {
+		if (!pinnedTurnUserMessageId || isProcessing || !historyViewport) return;
+		const distanceFromBottom =
+			historyViewport.scrollHeight -
+			historyViewport.scrollTop -
+			historyViewport.clientHeight;
+		if (distanceFromBottom - pinnedSpacerHeight <= 4) {
+			clearPinnedTurn();
+		}
 	};
 
 	afterUpdate(() => {
 		const historySignature = history.map((message) => message.id).join(':');
 		const historyChanged = historySignature !== previousHistorySignature;
 		const becameActive = active && !previousActive;
+		const lastMessage = history.at(-1);
+		const userMessageJustAdded =
+			active && historyChanged && lastMessage?.role === 'user';
+		const finishedProcessing = !isProcessing && previousIsProcessing;
+		const sessionSwitched = becameActive || (historyChanged && !previousHistorySignature);
 
-		if (active && (historyChanged || becameActive)) {
-			const behavior = historyChanged && previousHistorySignature ? 'smooth' : 'auto';
-			void scrollHistoryToEnd(behavior);
+		if (sessionSwitched && !userMessageJustAdded) {
+			clearPinnedTurn();
 		}
+
+		if (userMessageJustAdded && lastMessage) {
+			// New turn: pin this user message near the top and stream below it.
+			// Spacer is reserved once here — NOT recomputed every render.
+			startPinnedTurn(lastMessage.id);
+		} else if (finishedProcessing && pinnedTurnUserMessageId) {
+			// Reply is final: trim the reserved space once (no position change).
+			trimPinnedSpacer();
+		} else if (!pinnedTurnUserMessageId && active && historyChanged) {
+			const previousCount = previousHistorySignature
+				? previousHistorySignature.split(':').length
+				: 0;
+			// Smooth only for a genuine single append to an existing list; initial
+			// loads and bulk syncs jump instantly so refresh lands at the bottom.
+			const isSingleAppend =
+				previousHistorySignature !== '' && history.length === previousCount + 1;
+			void scrollHistoryToEnd(isSingleAppend ? 'smooth' : 'auto');
+		} else if (!pinnedTurnUserMessageId && active && becameActive) {
+			void scrollHistoryToEnd('auto');
+		}
+		// While a turn is pinned and still streaming we intentionally do nothing,
+		// so re-renders from streaming/realtime never schedule layout work.
 
 		previousHistorySignature = historySignature;
 		previousActive = active;
+		previousIsProcessing = isProcessing;
 	});
 </script>
 
@@ -789,6 +1062,11 @@
 			closeSessionSwitcher();
 			return;
 		}
+		if (composerMenu) {
+			event.preventDefault();
+			closeComposerMenu();
+			return;
+		}
 		if (previewAttachment) {
 			event.preventDefault();
 			closeAttachmentPreview();
@@ -796,6 +1074,7 @@
 	}}
 	on:resize={() => {
 		if (sessionSwitcherOpen) updateSwitcherPosition();
+		if (composerMenu) updateComposerMenuPosition(composerMenu);
 	}}
 />
 
@@ -803,15 +1082,17 @@
 	class:hidden={!active}
 	class={`absolute inset-0 flex flex-col overflow-hidden ${
 		isFramelessChrome
-			? isMobileChrome
-				? 'bg-app-bg'
-				: 'bg-app-surface'
-			: 'rounded-xl border border-app-border bg-app-surface'
+			? 'bg-app-bg'
+			: 'rounded-lg border border-app-border bg-app-surface'
 	} ${isSidebar ? 'pb-1' : ''}`}
 >
 	{#if showingSessionsList && isSidebar}
-		<header class="flex items-center justify-between border-b border-app-border px-4 py-2.5">
-			<span class="text-[11px] font-bold uppercase tracking-[0.28em] text-app-subtext"
+		<header
+			class={`flex items-center justify-between px-4 py-2.5 ${
+				isDesktopSidebar ? 'border-b border-app-border/40' : 'border-b border-app-border'
+			}`}
+		>
+			<span class={isDesktopSidebar ? sidebarSectionLabelClass : 'text-[11px] font-bold uppercase tracking-[0.28em] text-app-subtext'}
 				>Sessions</span
 			>
 			<div class="flex items-center gap-1">
@@ -858,7 +1139,11 @@
 		</header>
 
 		{#if sessionSearchActive}
-			<div class="border-b border-app-border px-4 py-2">
+			<div
+				class={`px-4 py-2 ${
+					isDesktopSidebar ? 'border-b border-app-border/40' : 'border-b border-app-border'
+				}`}
+			>
 				<input
 					type="text"
 					class="w-full rounded-md border border-app-border bg-app-bg px-2.5 py-1.5 text-sm text-app-text outline-none placeholder:text-app-subtext/50 focus:border-app-primary/50"
@@ -870,7 +1155,11 @@
 
 		<div class="min-h-0 flex-1 overflow-y-auto">
 			{#each displayedSessions as session (session.id)}
-				<div class="group relative px-4 text-left transition hover:bg-app-element/30">
+				<div
+					class={`group relative px-4 text-left transition ${
+						isDesktopSidebar ? 'hover:bg-app-element/40' : 'hover:bg-app-element/30'
+					}`}
+				>
 					<button
 						type="button"
 						class={`flex w-full items-start gap-3 py-3`}
@@ -884,7 +1173,11 @@
 							<div class="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-amber-500"></div>
 						{/if}
 						<div class="min-w-0 flex-1">
-							<p class="truncate text-[13px] text-app-text transition group-hover:text-amber-300">
+							<p
+								class={`truncate text-[13px] text-app-text transition ${
+									isDesktopSidebar ? 'group-hover:text-app-text' : 'group-hover:text-amber-300'
+								}`}
+							>
 								{session.title}
 							</p>
 							<p class="mt-0.5 text-xs text-app-subtext">
@@ -906,7 +1199,10 @@
 					class="flex w-full items-center justify-between px-4 py-2.5 text-left transition hover:bg-app-element/50"
 					on:click={() => (showAllSessions = true)}
 				>
-					<span class="text-[11px] font-bold uppercase tracking-[0.24em] text-app-subtext"
+					<span
+						class={isDesktopSidebar
+							? sidebarSectionLabelClass
+							: 'text-[11px] font-bold uppercase tracking-[0.24em] text-app-subtext'}
 						>More</span
 					>
 					<span class="text-xs text-app-subtext">{sessions.length}</span>
@@ -915,18 +1211,31 @@
 
 			{#if !sessions.length}
 				<div class="flex h-full flex-col items-center justify-center text-center text-app-subtext">
-					<BrandMark size={60} className="mb-3" alt="" />
-					<p class="font-display text-2xl tracking-[0.18em] text-app-text">KAINBU AI</p>
-					<p class="mt-2 text-[11px] uppercase tracking-[0.32em]">No sessions yet</p>
+					<BrandMark size={isDesktopSidebar ? 24 : 60} className="mb-3" alt="" />
+					<p
+						class={isDesktopSidebar
+							? 'text-sm font-bold tracking-tight text-app-text'
+							: 'font-display text-2xl tracking-[0.18em] text-app-text'}
+					>
+						KAINBU AI
+					</p>
+					<p
+						class={isDesktopSidebar
+							? `mt-2 ${sidebarSectionLabelClass}`
+							: 'mt-2 text-[11px] uppercase tracking-[0.32em]'}
+					>
+						No sessions yet
+					</p>
 				</div>
 			{/if}
 		</div>
 	{:else}
-		<header
-			class={`flex items-center gap-2 border-b border-app-border ${
-				isMobileChrome ? 'px-3 py-2' : 'px-4 py-2.5'
-			}`}
-		>
+		{#if !hideHeader}
+			<header
+				class={`flex items-center gap-2 ${
+					isDesktopSidebar ? 'border-b border-app-border/40' : 'border-b border-app-border'
+				} ${isMobileChrome ? 'px-3 py-2' : 'px-4 py-2.5'}`}
+			>
 			{#if isSidebar}
 				<button
 					type="button"
@@ -988,31 +1297,45 @@
 					</button>
 				{/if}
 			</div>
-		</header>
+			</header>
+		{/if}
 
 		<div
 			bind:this={historyViewport}
-			class={`min-h-0 flex-1 overflow-y-auto ${isMobileChrome ? 'px-3 py-3' : 'px-4 py-4'}`}
+			use:observeHistoryViewport
+			on:scroll={handleHistoryScroll}
+			class={`min-h-0 flex-1 overflow-y-auto [overflow-anchor:none] ${isMobileChrome ? 'px-4 py-4' : 'px-5 py-5'}`}
 		>
 			{#if !history.length}
 				<div class="flex h-full flex-col items-center justify-center text-center text-app-subtext">
-					<BrandMark size={isMobileChrome ? 52 : 60} className="mb-3" alt="" />
+					<BrandMark
+						size={isDesktopSidebar ? 24 : isMobileChrome ? 52 : 60}
+						className="mb-3"
+						alt=""
+					/>
 					<p
-						class={`font-display tracking-[0.18em] text-app-text ${isMobileChrome ? 'text-xl' : 'text-2xl'}`}
+						class={isDesktopSidebar
+							? 'text-sm font-bold tracking-tight text-app-text'
+							: `font-display tracking-[0.18em] text-app-text ${isMobileChrome ? 'text-xl' : 'text-2xl'}`}
 					>
 						KAINBU AI
 					</p>
 					<p
-						class={`mt-2 uppercase ${isMobileChrome ? 'text-[10px] tracking-[0.24em]' : 'text-[11px] tracking-[0.32em]'}`}
+						class={isDesktopSidebar
+							? `mt-2 ${sidebarSectionLabelClass}`
+							: `mt-2 uppercase ${isMobileChrome ? 'text-[10px] tracking-[0.24em]' : 'text-[11px] tracking-[0.32em]'}`}
 					>
 						Awaiting instructions
 					</p>
 				</div>
 			{/if}
 
-			<div class={`${isMobileChrome ? 'space-y-2.5' : 'space-y-3'}`}>
+			<div class={`${isMobileChrome ? 'space-y-8' : 'space-y-10'}`}>
 				{#each history as message (message.id)}
-					<div class={`flex flex-col ${message.role === 'user' ? 'items-end' : 'items-start'}`}>
+					<div
+						data-chat-message-id={message.id}
+						class={`flex flex-col ${message.role === 'user' ? 'items-end' : 'items-start'}`}
+					>
 						{#if isCompactStatusMessage(message)}
 							{@const compactProgress = latestProgressText(message.progressEvents || [])}
 							{#if compactProgress}
@@ -1020,7 +1343,7 @@
 									{compactProgress}
 								</div>
 							{/if}
-						{:else if (message.progressEvents?.length || 0) > 0}
+						{:else if (message.progressEvents?.length || 0) > 0 && !message.text?.trim()}
 							<div class="mb-2">
 								<AiActivityTrace events={message.progressEvents || []} />
 							</div>
@@ -1040,16 +1363,10 @@
 								!(message.taskCards?.length || 0)}
 							<div
 								class={message.role === 'user'
-									? `max-w-[96%] border ${
-											imageOnlyBubble
-												? 'rounded-lg p-1.5'
-												: isMobileChrome
-													? 'rounded-lg px-3 py-2.5'
-													: 'rounded-lg px-3.5 py-3'
-										} border-app-border bg-app-element text-app-text`
-									: `max-w-[min(100%,46rem)] text-app-text ${
-											isMobileChrome ? 'px-0 py-0' : 'px-0 py-0'
-										}`}
+									? `kainbu-chat-user-bubble${
+											imageOnlyBubble ? ' kainbu-chat-user-bubble--image-only' : ''
+										}`
+									: 'max-w-[min(100%,46rem)] text-app-text'}
 							>
 								{#if message.taskCards?.length}
 									<div class="mb-3 flex gap-2 overflow-x-auto pb-1">
@@ -1138,14 +1455,10 @@
 								{#if message.role === 'assistant'}
 									<RichText
 										value={sanitizeUserFacingAiReply(message.text)}
-										className={`kainbu-prose kainbu-chat-prose${isMobileChrome ? ' kainbu-chat-prose--mobile' : ''}`}
+										className={`kainbu-chat-prose${isMobileChrome ? ' kainbu-chat-prose--mobile' : ''}`}
 									/>
 								{:else if hasMessageText}
-									<p
-										class={`whitespace-pre-wrap leading-relaxed ${isMobileChrome ? 'text-[13px]' : 'text-sm'}`}
-									>
-										{message.text}
-									</p>
+									<p class="whitespace-pre-wrap">{message.text}</p>
 								{/if}
 
 								{#if message.question?.status === 'answered'}
@@ -1169,23 +1482,43 @@
 									</div>
 								{/if}
 
-								{#if message.metadata}
-									<div
-										class={`mt-2 flex flex-wrap items-center gap-2 text-app-subtext/50 ${
-											isMobileChrome ? 'text-[10px]' : 'text-[10px]'
-										}`}
-									>
-										<span>{absoluteTime(message.timestamp)}</span>
-										<span>{(message.metadata.latencyMs / 1000).toFixed(2)}s</span>
+								{#if message.role === 'assistant' && hasMessageText}
+									<div class="kainbu-chat-actions">
 										<button
 											type="button"
-											class="inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 transition hover:bg-app-element hover:text-app-text"
+											class="kainbu-chat-actions__button"
 											on:click={() => void copyMessageText(message)}
 											aria-label="Copy response"
-											title="Copy response"
+											title={copiedMessageId === message.id ? 'Copied' : 'Copy response'}
 										>
-											<Copy size={11} />
-											{copiedMessageId === message.id ? 'Copied' : 'Copy'}
+											<Copy size={15} strokeWidth={1.75} />
+										</button>
+										<button
+											type="button"
+											class="kainbu-chat-actions__button"
+											on:click={() => void shareMessageText(message)}
+											aria-label="Share response"
+											title="Share response"
+										>
+											<Upload size={15} strokeWidth={1.75} />
+										</button>
+										<button
+											type="button"
+											class="kainbu-chat-actions__button"
+											disabled={isProcessing}
+											on:click={() => void regenerateFromAssistant(message)}
+											aria-label="Regenerate response"
+											title="Regenerate response"
+										>
+											<RefreshCw size={15} strokeWidth={1.75} />
+										</button>
+										<button
+											type="button"
+											class="kainbu-chat-actions__button"
+											aria-label="Response details"
+											title={messageActionDetails(message) || 'Response details'}
+										>
+											<Ellipsis size={15} strokeWidth={1.75} />
 										</button>
 									</div>
 								{/if}
@@ -1287,7 +1620,7 @@
 							<button
 								type="button"
 								disabled={isProcessing || !allQuestionsStaged}
-								class="rounded-lg bg-app-primary px-3 py-1.5 text-xs font-semibold text-white transition disabled:cursor-not-allowed disabled:opacity-45"
+								class="kainbu-btn kainbu-btn--primary kainbu-btn--compact disabled:cursor-not-allowed disabled:opacity-45"
 								on:click={submitStagedAnswers}
 							>
 								{openQuestions.length > 1 ? 'Submit answers' : 'Submit'}
@@ -1297,19 +1630,40 @@
 				{/if}
 
 				{#if isProcessing}
-					<div class="flex items-start gap-2 px-0.5">
-						<div
-							class="mt-1 grid h-5 w-5 shrink-0 place-items-center rounded-full bg-app-primary/15 shadow-[0_0_18px_color-mix(in_oklab,var(--color-app-primary)_55%,transparent)]"
-							aria-hidden="true"
-						>
-							<span
-							class="ai-stream-orb h-2.5 w-2.5 rounded-full bg-app-primary"
-							class:ai-stream-orb--steady={isStreamingText}
-						></span>
+					{@const streamingDraft = processingEvents
+						.filter((event) => event.kind === 'assistant_draft')
+						.at(-1)
+						?.message?.trim()}
+					{@const traceCompact = Boolean(streamingDraft)}
+					<div class="flex flex-col items-start gap-3" data-chat-processing>
+						<div class="flex items-start gap-2 px-0.5">
+							<div
+								class="mt-1 grid h-5 w-5 shrink-0 place-items-center rounded-full bg-app-primary/15 shadow-[0_0_18px_color-mix(in_oklab,var(--color-app-primary)_55%,transparent)]"
+								aria-hidden="true"
+							>
+								<span
+									class="ai-stream-orb h-2.5 w-2.5 rounded-full bg-app-primary"
+									class:ai-stream-orb--steady={isStreamingText}
+								></span>
+							</div>
+							<div class="min-w-0 flex-1 pt-0.5">
+								<AiActivityTrace
+									events={processingEvents}
+									isLive
+									compact={traceCompact}
+									defaultExpanded={!traceCompact}
+									showSpinner={false}
+								/>
+							</div>
 						</div>
-						<div class="min-w-0 flex-1 pt-0.5">
-							<AiActivityTrace events={processingEvents} isLive />
-						</div>
+						{#if streamingDraft}
+							<div class="max-w-[min(100%,46rem)] w-full">
+								<RichText
+									value={sanitizeUserFacingAiReply(streamingDraft)}
+									className={`kainbu-chat-prose${isMobileChrome ? ' kainbu-chat-prose--mobile' : ''}`}
+								/>
+							</div>
+						{/if}
 					</div>
 				{/if}
 
@@ -1364,7 +1718,7 @@
 							<button
 								type="button"
 								disabled={applyingProposalId === pendingProposal.id}
-								class="inline-flex flex-1 items-center justify-center gap-2 rounded-lg bg-app-primary px-4 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-60"
+								class="kainbu-btn kainbu-btn--primary inline-flex flex-1 disabled:cursor-not-allowed disabled:opacity-60"
 								on:click={() => onAcceptProposal(pendingProposal.id)}
 							>
 								<Check size={16} />
@@ -1381,14 +1735,22 @@
 						</div>
 					</div>
 				{/each}
+
+				{#if pinnedSpacerHeight > 0}
+					<div aria-hidden="true" style:height={`${pinnedSpacerHeight}px`}></div>
+				{/if}
 			</div>
 		</div>
 	{/if}
 
 	<div
-		class={`border-t border-app-border ${
-			isMobileChrome ? 'bg-app-surface/96 px-0 py-0' : 'px-0 py-0'
-		}`}
+		class={`${
+			isDesktopSidebar
+				? 'border-t border-app-border/40'
+				: isMobileChrome
+					? 'border-t border-app-border bg-app-surface/96'
+					: 'border-t border-app-border'
+		} px-0 py-0`}
 	>
 		<form
 			class={isMobileChrome ? 'space-y-2' : 'space-y-0'}
@@ -1439,7 +1801,9 @@
 			{/if}
 
 			{#if queuedAttachments.length}
-				<div class={`${isMobileChrome ? 'space-y-2 px-3 pb-1' : 'mb-3 space-y-2'}`}>
+				<div
+					class={`space-y-2 px-3${queuedTaskCards.length ? '' : ' pt-2'}${isMobileChrome ? '' : ' mb-3'}`}
+				>
 					{#each queuedAttachments as attachment (attachment.id)}
 						<div
 							class="relative flex items-center gap-2.5 rounded-lg border border-app-border bg-app-surface/90 py-2 pl-2.5 pr-10"
@@ -1484,34 +1848,15 @@
 				</div>
 			{/if}
 
-			<div class={`flex flex-col gap-2 ${isMobileChrome ? 'px-3 py-2' : ''}`}>
-				<textarea
-					use:autosizeComposer={draft}
-					rows={1}
-					class={`min-h-0 w-full resize-none bg-transparent text-app-text outline-none transition-[height] duration-200 ease-out placeholder:text-app-subtext/50 ${
-						isMobileChrome
-							? 'px-0 py-1.5 text-[13px] leading-[1.45]'
-							: 'px-4 py-3 text-[13px] leading-[1.55]'
-					}`}
-					placeholder={isProcessing
-						? 'Keep typing while the current reply finishes…'
-						: 'Describe a task or problem to research'}
-					enterkeyhint="send"
-					bind:value={draft}
-					on:input={() => onDraftChange(draft)}
-					on:change={() => onDraftChange(draft)}
-					on:keydown={(event) => {
-						if (event.key !== 'Enter' || event.shiftKey || event.isComposing) return;
-						event.preventDefault();
-						submitComposer();
-					}}
-					on:paste={handleComposerPaste}
-				></textarea>
-
-				<div class="flex items-center justify-between px-3">
-					<div class="flex items-center gap-1.5">
+			{#if isMobileChrome}
+				<div
+					class={`px-3 pb-2${queuedAttachments.length || queuedTaskCards.length ? '' : ' pt-2'}`}
+				>
+					<div
+						class="flex items-end gap-0.5 rounded-xl border border-app-border bg-app-element/35 px-1 py-0.5 transition focus-within:border-app-primary/35"
+					>
 						<label
-							class="relative rounded-md p-1.5 text-app-subtext transition hover:bg-app-element hover:text-app-text focus-within:bg-app-element focus-within:text-app-text"
+							class="relative flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-app-subtext transition hover:bg-app-element hover:text-app-text focus-within:bg-app-element focus-within:text-app-text"
 							title="Add attachment"
 							aria-label="Add attachment"
 						>
@@ -1527,41 +1872,42 @@
 							/>
 						</label>
 
-						<select
-							class="rounded-md bg-transparent px-2 py-1.5 text-xs text-app-subtext outline-none transition hover:bg-app-element hover:text-app-text cursor-pointer"
-							value={modelId}
-							on:change={(event) => onModelChange((event.currentTarget as HTMLSelectElement).value)}
+						<textarea
+							use:autosizeComposer={draft}
+							rows={1}
+							class="min-w-0 flex-1 resize-none bg-transparent px-1 py-1.5 text-[13px] leading-5 text-app-text outline-none transition-[height] duration-200 ease-out placeholder:text-app-subtext/50"
+							placeholder={isProcessing ? 'Keep typing…' : 'Message'}
+							enterkeyhint="enter"
+							bind:value={draft}
+							on:input={() => onDraftChange(draft)}
+							on:change={() => onDraftChange(draft)}
+							on:paste={handleComposerPaste}
+						></textarea>
+
+						<button
+							bind:this={settingsMenuTrigger}
+							type="button"
+							class={`inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-app-subtext transition hover:bg-app-element hover:text-app-text ${
+								composerMenu === 'settings'
+									? 'bg-app-element text-app-text'
+									: ''
+							}`}
+							aria-haspopup="listbox"
+							aria-expanded={composerMenu === 'settings'}
+							aria-label={`AI settings: ${mobileAiSettingsLabel}`}
+							title={mobileAiSettingsLabel}
+							on:click={() => toggleComposerMenu('settings')}
 						>
-							{#each modelOptions as option}
-								<option value={option.id}>{option.id}</option>
-							{/each}
-						</select>
+							<SlidersHorizontal size={16} />
+						</button>
 
-						{#if showThinkingSelect}
-							<select
-								class="rounded-md bg-transparent px-2 py-1.5 text-xs text-app-subtext outline-none transition hover:bg-app-element hover:text-app-text cursor-pointer"
-								value={thinkingLevel}
-								on:change={(event) =>
-									onThinkingLevelChange(
-										(event.currentTarget as HTMLSelectElement)
-											.value as import('$lib/kainbu/types').AiThinkingLevel
-									)}
-							>
-								{#each thinkingChoices as level}
-									<option value={level}>{thinkingLevelLabel(level)}</option>
-								{/each}
-							</select>
-						{/if}
-					</div>
-
-					<div class={`flex shrink-0 items-center gap-1.5 ${isMobileChrome ? 'pb-0.5' : 'pb-1'}`}>
 						<button
 							type="submit"
 							disabled={!canSend}
-							class={`inline-flex items-center justify-center rounded-md p-1.5 text-app-subtext transition ${
+							class={`inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg transition ${
 								canSend
-									? 'hover:text-app-text hover:bg-app-element'
-									: 'cursor-not-allowed opacity-50'
+									? 'text-app-primary hover:bg-app-element'
+									: 'cursor-not-allowed text-app-subtext opacity-50'
 							}`}
 							title="Send message"
 							aria-label="Send message"
@@ -1574,10 +1920,228 @@
 						</button>
 					</div>
 				</div>
-			</div>
+			{:else}
+				<div class="flex flex-col gap-2">
+					<textarea
+						use:autosizeComposer={draft}
+						rows={1}
+						class="min-h-0 w-full resize-none bg-transparent px-4 py-3 text-[13px] leading-[1.55] text-app-text outline-none transition-[height] duration-200 ease-out placeholder:text-app-subtext/50"
+						placeholder={isProcessing
+							? 'Keep typing while the current reply finishes…'
+							: 'Describe a task or problem to research'}
+						enterkeyhint="send"
+						bind:value={draft}
+						on:input={() => onDraftChange(draft)}
+						on:change={() => onDraftChange(draft)}
+						on:keydown={(event) => {
+							if (event.key !== 'Enter' || event.shiftKey || event.isComposing) return;
+							event.preventDefault();
+							submitComposer();
+						}}
+						on:paste={handleComposerPaste}
+					></textarea>
+
+					<div class="flex items-center justify-between px-3">
+						<div class="flex items-center gap-1.5">
+							<label
+								class="relative rounded-md p-1.5 text-app-subtext transition hover:bg-app-element hover:text-app-text focus-within:bg-app-element focus-within:text-app-text"
+								title="Add attachment"
+								aria-label="Add attachment"
+							>
+								<Paperclip size={16} />
+								<input
+									bind:this={fileInput}
+									type="file"
+									multiple
+									aria-label="Add attachment"
+									class="absolute inset-0 h-full w-full cursor-pointer opacity-0"
+									accept="image/*,text/*,.txt,.md,.json,.js,.jsx,.ts,.tsx,.css,.html"
+									on:change={(event) =>
+										handleFiles((event.currentTarget as HTMLInputElement).files)}
+								/>
+							</label>
+
+							<button
+								bind:this={modelMenuTrigger}
+								type="button"
+								class={`inline-flex max-w-[9.5rem] items-center gap-1 rounded-md border border-transparent px-2 py-1.5 text-xs text-app-subtext transition hover:border-app-border hover:bg-app-element hover:text-app-text ${
+									composerMenu === 'model' ? 'border-app-border bg-app-element text-app-text' : ''
+								}`}
+								aria-haspopup="listbox"
+								aria-expanded={composerMenu === 'model'}
+								aria-label="Choose model"
+								on:click={() => toggleComposerMenu('model')}
+							>
+								<span class="min-w-0 truncate">{activeModel?.id || modelId || 'Model'}</span>
+								<ChevronDown
+									size={12}
+									class={`shrink-0 transition ${composerMenu === 'model' ? 'rotate-180' : ''}`}
+								/>
+							</button>
+
+							{#if showThinkingSelect}
+								<button
+									bind:this={thinkingMenuTrigger}
+									type="button"
+									class={`inline-flex max-w-[8.5rem] items-center gap-1 rounded-md border border-transparent px-2 py-1.5 text-xs text-app-subtext transition hover:border-app-border hover:bg-app-element hover:text-app-text ${
+										composerMenu === 'thinking'
+											? 'border-app-border bg-app-element text-app-text'
+											: ''
+									}`}
+									aria-haspopup="listbox"
+									aria-expanded={composerMenu === 'thinking'}
+									aria-label="Choose thinking level"
+									on:click={() => toggleComposerMenu('thinking')}
+								>
+									<span class="min-w-0 truncate">{thinkingLevelLabel(thinkingLevel)}</span>
+									<ChevronDown
+										size={12}
+										class={`shrink-0 transition ${composerMenu === 'thinking' ? 'rotate-180' : ''}`}
+									/>
+								</button>
+							{/if}
+						</div>
+
+						<div class="flex shrink-0 items-center gap-1.5 pb-1">
+							<button
+								type="submit"
+								disabled={!canSend}
+								class={`inline-flex items-center justify-center rounded-md p-1.5 text-app-subtext transition ${
+									canSend
+										? 'hover:text-app-text hover:bg-app-element'
+										: 'cursor-not-allowed opacity-50'
+								}`}
+								title="Send message"
+								aria-label="Send message"
+							>
+								{#if isProcessing}
+									<LoaderCircle size={16} class="animate-spin" />
+								{:else}
+									<Send size={16} />
+								{/if}
+							</button>
+						</div>
+					</div>
+				</div>
+			{/if}
 		</form>
 	</div>
 </section>
+
+{#if composerMenu && composerMenuPosition}
+	<div use:portal class="pointer-events-none fixed inset-0 z-[160]">
+		<button
+			type="button"
+			class="pointer-events-auto absolute inset-0 cursor-default bg-transparent"
+			aria-label="Close composer menu"
+			on:click={closeComposerMenu}
+		></button>
+		<div
+			role="listbox"
+			aria-label={composerMenu === 'model'
+				? 'AI models'
+				: composerMenu === 'thinking'
+					? 'Thinking level'
+					: 'AI settings'}
+			class="pointer-events-auto fixed overflow-hidden rounded-lg border border-app-border bg-app-surface shadow-kainbu-xl"
+			style={`top:${composerMenuPosition.top}px; left:${composerMenuPosition.left}px; width:${composerMenuPosition.width}px;`}
+			on:mousedown|stopPropagation
+		>
+			<div
+				class={`overflow-y-auto p-1.5 ${
+					composerMenu === 'settings'
+						? 'max-h-[min(20rem,calc(100vh-6rem))]'
+						: 'max-h-[min(16rem,calc(100vh-8rem))]'
+				}`}
+			>
+				{#if composerMenu === 'settings'}
+					<p class="px-2.5 pb-1 pt-0.5 text-[10px] font-semibold uppercase tracking-[0.16em] text-app-subtext/80">
+						Model
+					</p>
+					{#each modelOptions as option (option.id)}
+						<button
+							type="button"
+							role="option"
+							aria-selected={option.id === modelId}
+							class={`flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-sm transition ${
+								option.id === modelId
+									? 'bg-app-element text-app-text'
+									: 'text-app-text hover:bg-app-element/70'
+							}`}
+							on:click={() => selectComposerModel(option.id)}
+						>
+							<span class="min-w-0 flex-1 truncate">{option.id}</span>
+							{#if option.id === modelId}
+								<Check size={14} class="shrink-0 text-app-primary" />
+							{/if}
+						</button>
+					{/each}
+					{#if showThinkingSelect}
+						<p class="mt-1 border-t border-app-border/60 px-2.5 pb-1 pt-2 text-[10px] font-semibold uppercase tracking-[0.16em] text-app-subtext/80">
+							Thinking
+						</p>
+						{#each thinkingChoices as level (level)}
+							<button
+								type="button"
+								role="option"
+								aria-selected={level === thinkingLevel}
+								class={`flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-sm transition ${
+									level === thinkingLevel
+										? 'bg-app-element text-app-text'
+										: 'text-app-text hover:bg-app-element/70'
+								}`}
+								on:click={() => selectComposerThinkingLevel(level)}
+							>
+								<span class="min-w-0 flex-1 truncate">{thinkingLevelLabel(level)}</span>
+								{#if level === thinkingLevel}
+									<Check size={14} class="shrink-0 text-app-primary" />
+								{/if}
+							</button>
+						{/each}
+					{/if}
+				{:else if composerMenu === 'model'}
+					{#each modelOptions as option (option.id)}
+						<button
+							type="button"
+							role="option"
+							aria-selected={option.id === modelId}
+							class={`flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-sm transition ${
+								option.id === modelId
+									? 'bg-app-element text-app-text'
+									: 'text-app-text hover:bg-app-element/70'
+							}`}
+							on:click={() => selectComposerModel(option.id)}
+						>
+							<span class="min-w-0 flex-1 truncate">{option.id}</span>
+							{#if option.id === modelId}
+								<Check size={14} class="shrink-0 text-app-primary" />
+							{/if}
+						</button>
+					{/each}
+				{:else}
+					{#each thinkingChoices as level (level)}
+						<button
+							type="button"
+							role="option"
+							aria-selected={level === thinkingLevel}
+							class={`flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-sm transition ${
+								level === thinkingLevel
+									? 'bg-app-element text-app-text'
+									: 'text-app-text hover:bg-app-element/70'
+							}`}
+							on:click={() => selectComposerThinkingLevel(level)}
+						>
+							<span class="min-w-0 flex-1 truncate">{thinkingLevelLabel(level)}</span>
+							{#if level === thinkingLevel}
+								<Check size={14} class="shrink-0 text-app-primary" />
+							{/if}
+						</button>
+					{/each}
+				{/if}
+			</div>
+		</div>
+	</div>
+{/if}
 
 {#if sessionSwitcherOpen && switcherPosition}
 	<div use:portal class="pointer-events-none fixed inset-0 z-[160]">
@@ -1590,7 +2154,7 @@
 		<div
 			role="listbox"
 			aria-label="Chat sessions"
-			class="pointer-events-auto fixed overflow-hidden rounded-xl border border-app-border bg-app-surface shadow-kainbu-xl"
+			class="pointer-events-auto fixed overflow-hidden rounded-lg border border-app-border bg-app-surface shadow-kainbu-xl"
 			style={`top:${switcherPosition.top}px; left:${switcherPosition.left}px; width:${switcherPosition.width}px;`}
 			on:mousedown|stopPropagation
 		>

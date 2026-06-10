@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import {
 	collapseNestedTaskListStandaloneCheckboxes,
-	normalizeStandaloneCheckboxBoundaries
+	normalizeStandaloneCheckboxBoundaries,
+	stripMarkdownLite
 } from '../src/lib/kainbu/markdown';
 
 describe('markdown render cleanup', () => {
@@ -12,6 +13,11 @@ describe('markdown render cleanup', () => {
 		expect(collapseNestedTaskListStandaloneCheckboxes(html)).toBe(
 			'<ul><li><input type="checkbox"><span class="kainbu-standalone-checkbox__content">hello</span></li></ul>'
 		);
+	});
+
+	it('strips markdown from trace previews', () => {
+		expect(stripMarkdownLite('**Bold** and *italic* with `code`')).toBe('Bold and italic with code');
+		expect(stripMarkdownLite('## Heading\n- list item')).toBe('Heading list item');
 	});
 
 	it('renders standalone checkbox lines even when they follow another block without a blank separator', () => {
