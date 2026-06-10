@@ -2,6 +2,9 @@
 	import '../app.css';
 	import favicon from '$lib/assets/favicon.svg';
 	import appIcon from '../../assets/icon.png';
+	import { registerFluentIcons } from '$lib/icons/register';
+
+	registerFluentIcons();
 
 	let { children } = $props();
 </script>
