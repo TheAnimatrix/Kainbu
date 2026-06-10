@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { Check, X, Plus, MessageSquare } from 'lucide-svelte';
+	import { Check, X, Plus, MessageSquare } from '$lib/icons';
 	import BrandMark from '$lib/components/BrandMark.svelte';
 	import { getTagToneClasses } from '$lib/kainbu/tags';
 	import { DEMO_CHAT, DEMO_PROPOSAL } from './demoData';

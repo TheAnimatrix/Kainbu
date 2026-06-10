@@ -195,7 +195,7 @@
 			on:resendVerification={handleResendVerificationRequest}
 		/>
 	{:else}
-		<section class="rounded-xl border border-app-border bg-app-surface p-5 shadow-kainbu-lg">
+		<section class="rounded-lg border border-app-border bg-app-surface p-5 shadow-kainbu-lg">
 			<h1 class="font-display text-xl font-bold">Authorize CLI</h1>
 			<p class="mt-2 text-sm text-app-subtext">
 				Signed in as <span class="text-app-text">{sessionEmail}</span>
@@ -218,7 +218,7 @@
 			{/if}
 
 			<button
-				class="mt-4 w-full rounded-lg bg-app-primary px-4 py-2 text-sm font-semibold text-white disabled:opacity-60"
+				class="kainbu-btn kainbu-btn--primary mt-4 w-full disabled:opacity-60"
 				disabled={approving || approved}
 				on:click={approveCli}
 			>

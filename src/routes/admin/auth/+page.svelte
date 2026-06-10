@@ -201,7 +201,7 @@
 				<button
 					type="submit"
 					disabled={saving}
-					class="rounded-md bg-app-primary px-4 py-2 text-sm font-semibold text-white hover:bg-app-primary-hover disabled:opacity-60"
+					class="kainbu-btn kainbu-btn--primary disabled:opacity-60"
 				>
 					{saving ? 'Saving...' : 'Save settings'}
 				</button>

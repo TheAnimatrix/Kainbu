@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { ArrowRight, Lock, Server, Users, Link2, KeyRound, Palette } from 'lucide-svelte';
+	import { ArrowRight, Lock, Server, Users, Link2, KeyRound, Palette } from '$lib/icons';
 	import BrandMark from '$lib/components/BrandMark.svelte';
 	import LandingSceneFrame from '$lib/components/landing/LandingSceneFrame.svelte';
 	import LandingBoardScene from '$lib/components/landing/LandingBoardScene.svelte';
@@ -71,7 +71,7 @@
 					<div class="mt-7 flex flex-wrap items-center gap-3">
 						<a
 							href="/"
-							class="inline-flex items-center gap-2 rounded-lg bg-app-primary px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-app-primary-hover active:scale-[0.98]"
+							class="kainbu-btn kainbu-btn--primary inline-flex items-center gap-2"
 						>
 							Get started
 							<ArrowRight size={16} strokeWidth={1.75} />
@@ -285,7 +285,7 @@
 					</p>
 					<a
 						href="/"
-						class="mt-7 inline-flex items-center gap-2 rounded-lg bg-app-primary px-5 py-3 text-sm font-semibold text-white transition hover:bg-app-primary-hover active:scale-[0.98]"
+						class="kainbu-btn kainbu-btn--primary mt-7 inline-flex items-center gap-2 px-5 py-3"
 					>
 						Get started
 						<ArrowRight size={16} strokeWidth={1.75} />

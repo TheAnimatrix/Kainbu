@@ -13,7 +13,7 @@
 	export let onSignOut: () => void | Promise<void>;
 </script>
 
-<div class="absolute inset-0 z-30 flex items-center justify-center bg-app-bg/70 p-4 backdrop-blur-sm">
+<div class="kainbu-overlay absolute inset-0 z-30 flex items-center justify-center p-4">
 	<div class="w-full max-w-lg rounded-xl border border-app-border/60 bg-app-surface/95">
 		<div class="border-b border-app-border/40 px-5 py-4">
 			<p class="text-[10px] font-semibold uppercase tracking-[0.25em] text-app-primary">

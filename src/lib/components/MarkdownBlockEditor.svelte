@@ -17,7 +17,7 @@
 	import TaskItem from '@tiptap/extension-task-item';
 	import TaskList from '@tiptap/extension-task-list';
 	import { Markdown } from '@tiptap/markdown';
-	import { NodeSelection, PluginKey } from '@tiptap/pm/state';
+	import { NodeSelection, Plugin, PluginKey } from '@tiptap/pm/state';
 	import StarterKit from '@tiptap/starter-kit';
 	import Suggestion, { exitSuggestion, type SuggestionProps } from '@tiptap/suggestion';
 	import { createLowlight } from 'lowlight';
@@ -28,6 +28,7 @@
 	import python from 'highlight.js/lib/languages/python';
 	import typescript from 'highlight.js/lib/languages/typescript';
 	import xml from 'highlight.js/lib/languages/xml';
+	import { fluentIconSvg } from '$lib/icons/fluent-svg';
 
 	const lowlight = createLowlight();
 	lowlight.register('bash', bash);
@@ -236,35 +237,10 @@
 	const REFERENCE_SUGGESTION_KEY = new PluginKey('kainbu-reference-suggestion');
 	const SLASH_SUGGESTION_KEY = new PluginKey('kainbu-slash-suggestion');
 
-	const copySvg = `
-		<svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
-			<rect x="9" y="9" width="10" height="10" rx="2"></rect>
-			<path d="M5 15V7a2 2 0 0 1 2-2h8"></path>
-		</svg>
-	`;
-	const openSvg = `
-		<svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
-			<path d="M14 5h5v5"></path>
-			<path d="M10 14L19 5"></path>
-			<path d="M19 14v3a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2h3"></path>
-		</svg>
-	`;
-	const chatSvg = `
-		<svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
-			<path d="M7 17l-3 3V7a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H7z"></path>
-			<path d="M12 9v6"></path>
-			<path d="M9 12h6"></path>
-		</svg>
-	`;
-	const trashSvg = `
-		<svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
-			<path d="M3 6h18"></path>
-			<path d="M8 6V4h8v2"></path>
-			<path d="M19 6l-1 14H6L5 6"></path>
-			<path d="M10 11v5"></path>
-			<path d="M14 11v5"></path>
-		</svg>
-	`;
+	const copySvg = fluentIconSvg('Copy', 18);
+	const openSvg = fluentIconSvg('ExternalLink', 18);
+	const chatSvg = fluentIconSvg('MessageSquarePlus', 18);
+	const trashSvg = fluentIconSvg('Trash2', 18);
 
 	const clampImageWidth = (width?: number) =>
 		Math.max(
@@ -1595,6 +1571,50 @@
 			}
 		});
 
+	const INLINE_CODE_STORED_MARK_KEY = new PluginKey('inlineCodeStoredMarkSync');
+
+	const createInlineCodeBoundaryExtension = () =>
+		Extension.create({
+			name: 'inlineCodeBoundary',
+			addProseMirrorPlugins() {
+				return [
+					new Plugin({
+						key: INLINE_CODE_STORED_MARK_KEY,
+						appendTransaction: (transactions, _oldState, newState) => {
+							if (!transactions.some((tr) => tr.selectionSet || tr.docChanged)) {
+								return null;
+							}
+							const { schema, selection, storedMarks } = newState;
+							const codeMarkType = schema.marks.code;
+							if (!codeMarkType || !storedMarks?.some((mark) => mark.type === codeMarkType)) {
+								return null;
+							}
+							if (codeMarkType.isInSet(selection.$from.marks())) {
+								return null;
+							}
+							return newState.tr.removeStoredMark(codeMarkType);
+						}
+					})
+				];
+			},
+			addKeyboardShortcuts() {
+				return {
+					Enter: () => {
+						const editor = this.editor;
+						if (!editor.isActive('code')) {
+							return false;
+						}
+						const { $from } = editor.state.selection;
+						if ($from.parentOffset !== $from.parent.content.size) {
+							return false;
+						}
+						queueChange('typing');
+						return editor.chain().unsetCode().splitBlock().run();
+					}
+				};
+			}
+		});
+
 	const createAssetImageKeyboardExtension = () =>
 		Extension.create({
 			name: 'assetImageKeyboard',
@@ -1728,6 +1748,7 @@
 				Image,
 				createReferenceNode(),
 				createAssetNode(),
+				createInlineCodeBoundaryExtension(),
 				createAssetImageKeyboardExtension(),
 				createSlashCommands(),
 				...(isPageBlockHandleMode ? [createBlockHandleExtension()] : [])

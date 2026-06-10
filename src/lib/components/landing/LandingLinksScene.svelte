@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { Link2 } from 'lucide-svelte';
+	import { Link2 } from '$lib/icons';
 	import ThemedBackdrop from '$lib/components/ThemedBackdrop.svelte';
 	import { getTagToneClasses } from '$lib/kainbu/tags';
 	import type { BackgroundTheme } from '$lib/kainbu/types';

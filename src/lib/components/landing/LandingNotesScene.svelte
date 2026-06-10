@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { FileText } from 'lucide-svelte';
+	import { FileText } from '$lib/icons';
 	import RichText from '$lib/components/RichText.svelte';
 	import { DEMO_NOTE } from './demoData';
 </script>

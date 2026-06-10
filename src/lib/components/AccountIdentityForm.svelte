@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { AtSign, LoaderCircle, LogOut, Pencil } from 'lucide-svelte';
+	import { AtSign, LoaderCircle, LogOut, Pencil } from '$lib/icons';
 	import type { UsernameAvailabilityState } from '$lib/kainbu/types';
 
 	export let heading = 'Account';
@@ -29,14 +29,14 @@
 		? 'kainbu-settings-input w-full px-9 py-2 text-sm'
 		: 'w-full rounded-lg border border-app-border/60 bg-app-bg px-9 py-2 text-sm text-app-text outline-none transition focus:border-app-primary/40';
 	const submitBtnClass = embedded
-		? 'kainbu-set-btn kainbu-set-btn--primary px-4 py-2 text-sm'
-		: 'rounded-lg bg-app-primary px-4 py-2 text-sm font-semibold text-white transition hover:bg-app-primary-hover disabled:cursor-not-allowed disabled:opacity-40';
+		? 'kainbu-btn kainbu-btn--primary px-4 py-2 text-sm'
+		: 'kainbu-btn kainbu-btn--primary px-4 py-2 text-sm disabled:cursor-not-allowed disabled:opacity-40';
 	const cancelBtnClass = embedded
-		? 'kainbu-set-btn kainbu-set-btn--ghost px-3 py-2 text-sm'
-		: 'rounded-lg border border-app-border/40 px-3 py-2 text-sm text-app-subtext transition hover:text-app-text';
+		? 'kainbu-btn kainbu-btn--ghost px-3 py-2 text-sm'
+		: 'kainbu-btn kainbu-btn--ghost px-3 py-2 text-sm';
 	const changeBtnClass = embedded
-		? 'kainbu-set-btn kainbu-set-btn--ghost kainbu-set-btn--compact'
-		: 'inline-flex items-center gap-1 rounded-md px-2 py-1 text-[11px] text-app-subtext/50 transition hover:text-app-text';
+		? 'kainbu-btn kainbu-btn--ghost kainbu-btn--compact'
+		: 'kainbu-btn kainbu-btn--ghost kainbu-btn--compact text-[11px] text-app-subtext/50';
 
 	const getFeedbackClasses = (state: UsernameAvailabilityState) => {
 		if (state === 'available') return 'text-emerald-400';

@@ -14,7 +14,7 @@
 		RotateCcw,
 		Settings2,
 		Trash2
-	} from 'lucide-svelte';
+	} from '$lib/icons';
 	import { BRAND_NAME } from '$lib/kainbu/constants';
 	import type { Project, SyncStatus } from '$lib/kainbu/types';
 	import SyncBadge from '$lib/components/SyncBadge.svelte';
@@ -364,28 +364,26 @@
 														<span class="truncate">{board.name}</span>
 													</button>
 												{/if}
-												{#if project.accessRole === 'owner'}
-													<div class="flex items-center gap-0 opacity-0 transition group-hover/item:opacity-100">
+												<div class="flex items-center gap-0 opacity-0 transition group-hover/item:opacity-100">
+													<button
+														type="button"
+														class="rounded p-0.5 text-app-subtext/40 transition hover:text-app-text"
+														on:click={() => beginItemRename('board', project.id, board.id, board.name)}
+														title="Rename board"
+													>
+														<Pencil size={10} />
+													</button>
+													{#if project.boards.length > 1}
 														<button
 															type="button"
-															class="rounded p-0.5 text-app-subtext/40 transition hover:text-app-text"
-															on:click={() => beginItemRename('board', project.id, board.id, board.name)}
-															title="Rename board"
+															class="rounded p-0.5 text-app-subtext/40 transition hover:text-rose-400"
+															on:click={() => onDeleteBoard(project.id, board.id)}
+															title="Delete board"
 														>
-															<Pencil size={10} />
+															<Trash2 size={10} />
 														</button>
-														{#if project.boards.length > 1}
-															<button
-																type="button"
-																class="rounded p-0.5 text-app-subtext/40 transition hover:text-rose-400"
-																on:click={() => onDeleteBoard(project.id, board.id)}
-																title="Delete board"
-															>
-																<Trash2 size={10} />
-															</button>
-														{/if}
-													</div>
-												{/if}
+													{/if}
+												</div>
 											</div>
 										{/each}
 
@@ -442,28 +440,26 @@
 														<span class="truncate">{page.name}</span>
 													</button>
 												{/if}
-												{#if project.accessRole === 'owner'}
-													<div class="flex items-center gap-0 opacity-0 transition group-hover/item:opacity-100">
+												<div class="flex items-center gap-0 opacity-0 transition group-hover/item:opacity-100">
+													<button
+														type="button"
+														class="rounded p-0.5 text-app-subtext/40 transition hover:text-app-text"
+														on:click={() => beginItemRename('page', project.id, page.id, page.name)}
+														title="Rename page"
+													>
+														<Pencil size={10} />
+													</button>
+													{#if project.pages.length > 1}
 														<button
 															type="button"
-															class="rounded p-0.5 text-app-subtext/40 transition hover:text-app-text"
-															on:click={() => beginItemRename('page', project.id, page.id, page.name)}
-															title="Rename page"
+															class="rounded p-0.5 text-app-subtext/40 transition hover:text-rose-400"
+															on:click={() => onDeletePage(project.id, page.id)}
+															title="Delete page"
 														>
-															<Pencil size={10} />
+															<Trash2 size={10} />
 														</button>
-														{#if project.pages.length > 1}
-															<button
-																type="button"
-																class="rounded p-0.5 text-app-subtext/40 transition hover:text-rose-400"
-																on:click={() => onDeletePage(project.id, page.id)}
-																title="Delete page"
-															>
-																<Trash2 size={10} />
-															</button>
-														{/if}
-													</div>
-												{/if}
+													{/if}
+												</div>
 											</div>
 										{/each}
 

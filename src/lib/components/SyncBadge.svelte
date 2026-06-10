@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { CheckCheck, CloudAlert, CloudCog, Dot } from 'lucide-svelte';
+	import { CheckCheck, CloudAlert, CloudCog, Dot } from '$lib/icons';
 	import type { SyncStatus } from '$lib/kainbu/types';
 
 	export let status: SyncStatus = 'idle';

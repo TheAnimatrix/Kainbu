@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { LogIn, Mail, Lock, UserPlus } from 'lucide-svelte';
+	import { LogIn, Mail, Lock, UserPlus } from '$lib/icons';
 	import { BRAND_KATAKANA, BRAND_NAME } from '$lib/kainbu/constants';
 	import BrandMark from '$lib/components/BrandMark.svelte';
 	import { createEventDispatcher } from 'svelte';
@@ -58,7 +58,7 @@
 	</div>
 
 	<div
-		class="relative z-10 w-full max-w-sm rounded-xl border border-app-border bg-app-surface/90 p-5 shadow-kainbu-xl backdrop-blur-xl sm:p-6"
+		class="relative z-10 w-full max-w-sm rounded-lg border border-app-border bg-app-surface/90 p-5 shadow-kainbu-xl backdrop-blur-xl sm:p-6"
 	>
 		<div class="mb-5 flex items-center gap-3">
 			<BrandMark size={40} alt={`${BRAND_NAME} icon`} />
@@ -138,7 +138,7 @@
 			<button
 				type="submit"
 				disabled={loading || !configured}
-				class="flex w-full items-center justify-center gap-2 rounded-lg bg-app-primary px-4 py-2.5 text-xs font-bold uppercase tracking-[0.2em] text-white transition hover:bg-app-primary-hover disabled:cursor-not-allowed disabled:opacity-50"
+				class="kainbu-btn kainbu-btn--primary flex w-full disabled:cursor-not-allowed disabled:opacity-50"
 			>
 				{#if loading}
 					<div

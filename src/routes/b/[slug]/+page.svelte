@@ -2,7 +2,7 @@
 	import { onMount } from 'svelte';
 	import { goto } from '$app/navigation';
 	import { page } from '$app/stores';
-	import { LoaderCircle } from 'lucide-svelte';
+	import { LoaderCircle } from '$lib/icons';
 	import KanbanBoard from '$lib/components/KanbanBoard.svelte';
 	import BrandMark from '$lib/components/BrandMark.svelte';
 	import ThemedBackdrop from '$lib/components/ThemedBackdrop.svelte';

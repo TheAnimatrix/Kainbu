@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { Check, Link2 } from 'lucide-svelte';
+	import { Check, Link2 } from '$lib/icons';
 
 	export let url = '';
 	export let label = 'Share';

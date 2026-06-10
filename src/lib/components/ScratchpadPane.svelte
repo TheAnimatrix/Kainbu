@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { Edit3, Eye, Plus, Trash2 } from 'lucide-svelte';
+	import { Edit3, Eye, Plus, Trash2 } from '$lib/icons';
 	import { diffWords } from '$lib/kainbu/diff';
 	import RichText from '$lib/components/RichText.svelte';
 	import type { ScratchpadPad } from '$lib/kainbu/types';

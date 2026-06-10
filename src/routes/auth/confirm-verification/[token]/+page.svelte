@@ -32,7 +32,7 @@
 		{:else}
 			<p class="mt-3 text-sm text-emerald-300">{message}</p>
 		{/if}
-		<a href="/" class="mt-4 inline-block rounded-md bg-app-primary px-3 py-2 text-sm font-semibold text-white">
+		<a href="/" class="kainbu-btn kainbu-btn--primary mt-4 inline-block">
 			Open Kainbu
 		</a>
 	</div>

@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { browser } from '$app/environment';
-	import { MessageSquare } from 'lucide-svelte';
+	import { MessageSquare } from '$lib/icons';
 	import { createEventDispatcher } from 'svelte';
 
 	export let style = '';

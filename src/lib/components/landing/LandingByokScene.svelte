@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { KeyRound, Check } from 'lucide-svelte';
+	import { KeyRound, Check } from '$lib/icons';
 
 	const providers = [
 		{

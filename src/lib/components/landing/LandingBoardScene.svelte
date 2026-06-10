@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { LayoutPanelTop, FileText, Search, Share2 } from 'lucide-svelte';
+	import { Check, LayoutPanelTop, FileText, Search, Share2 } from '$lib/icons';
 	import BrandMark from '$lib/components/BrandMark.svelte';
 	import ChatOrb from '$lib/components/ChatOrb.svelte';
 	import ThemedBackdrop from '$lib/components/ThemedBackdrop.svelte';
@@ -86,9 +86,7 @@
 												}`}
 											>
 												{#if task.checked}
-													<svg viewBox="0 0 12 12" class="h-2 w-2 text-white" fill="none" stroke="currentColor" stroke-width="2.5">
-														<path d="M2.5 6.5l2.5 2.5 4.5-5" stroke-linecap="round" stroke-linejoin="round" />
-													</svg>
+													<Check size={8} class="text-white" />
 												{/if}
 											</span>
 											<span class={`text-[11px] font-medium leading-snug ${task.checked ? 'text-app-subtext line-through' : ''}`}>

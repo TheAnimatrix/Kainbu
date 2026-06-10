@@ -151,7 +151,7 @@
 				</button>
 				<button
 					type="button"
-					class="rounded-md bg-app-primary px-3 py-1.5 text-sm font-medium text-white transition hover:opacity-90 disabled:opacity-50"
+					class="kainbu-btn kainbu-btn--primary kainbu-btn--compact disabled:opacity-50"
 					on:click={save}
 					disabled={loading || saving || !catalog}
 				>

@@ -140,7 +140,7 @@
 				<div class="flex flex-wrap items-center gap-3 px-1">
 					<button
 						type="button"
-						class="rounded-md bg-app-primary px-3 py-1.5 text-sm font-medium text-white hover:bg-app-primary-hover disabled:opacity-50"
+						class="kainbu-btn kainbu-btn--primary kainbu-btn--compact disabled:opacity-50"
 						disabled={saving}
 						on:click={save}
 					>

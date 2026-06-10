@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { Check, Copy, Globe, Link2, Lock, X } from 'lucide-svelte';
+	import { Check, Copy, Globe, Link2, Lock, X } from '$lib/icons';
 	import { buildBoardShareUrl } from '$lib/kainbu/shareSlug';
 
 	export let open = false;
@@ -67,14 +67,14 @@
 </script>
 
 {#if open}
-	<div class="fixed inset-0 z-[130] bg-black/45 backdrop-blur-sm">
+	<div class="kainbu-overlay fixed inset-0 z-[130]">
 		<button type="button" class="absolute inset-0" aria-label="Close share settings" onclick={close}
 		></button>
 		<div
 			role="dialog"
 			aria-modal="true"
 			aria-label="Share board"
-			class="absolute inset-x-0 bottom-0 z-10 flex max-h-[85vh] flex-col overflow-hidden rounded-t-2xl border border-app-border/60 bg-app-surface lg:inset-auto lg:left-1/2 lg:top-1/2 lg:max-h-[min(85vh,28rem)] lg:w-full lg:max-w-md lg:-translate-x-1/2 lg:-translate-y-1/2 lg:rounded-xl"
+			class="absolute inset-x-0 bottom-0 z-10 flex max-h-[85vh] flex-col overflow-hidden rounded-t-2xl border border-app-border/60 bg-app-surface lg:inset-auto lg:left-1/2 lg:top-1/2 lg:max-h-[min(85vh,28rem)] lg:w-full lg:max-w-md lg:-translate-x-1/2 lg:-translate-y-1/2 lg:rounded-lg"
 		>
 			<div class="flex shrink-0 items-center justify-between border-b border-app-border/40 px-4 py-3">
 				<div>

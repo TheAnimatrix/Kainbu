@@ -184,7 +184,7 @@
 				<button
 					type="submit"
 					disabled={savingId === 'new'}
-					class="rounded-md bg-app-primary px-3 py-2 text-xs font-semibold text-white disabled:opacity-60"
+					class="kainbu-btn kainbu-btn--primary kainbu-btn--compact disabled:opacity-60"
 				>
 					Create user
 				</button>

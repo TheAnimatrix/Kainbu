@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { ArrowLeft, Check, ChevronRight, X } from 'lucide-svelte';
+	import { ArrowLeft, Check, ChevronRight, X } from '$lib/icons';
 	import { getCheckedMoveTargetLabel } from '$lib/kainbu/boardPreferences';
 	import type { BoardPreferences, KanbanData } from '$lib/kainbu/types';
 
@@ -46,14 +46,14 @@
 </script>
 
 {#if open}
-	<div class="fixed inset-0 z-[130] bg-black/45 backdrop-blur-sm">
+	<div class="kainbu-overlay fixed inset-0 z-[130]">
 		<button type="button" class="absolute inset-0" aria-label="Close board options" onclick={close}
 		></button>
 		<div
 			role="dialog"
 			aria-modal="true"
 			aria-label="Board options"
-			class="absolute inset-x-0 bottom-0 z-10 flex max-h-[85vh] flex-col overflow-hidden rounded-t-2xl border border-app-border/60 bg-app-surface lg:inset-auto lg:left-1/2 lg:top-1/2 lg:max-h-[min(85vh,32rem)] lg:w-full lg:max-w-md lg:-translate-x-1/2 lg:-translate-y-1/2 lg:rounded-xl"
+			class="absolute inset-x-0 bottom-0 z-10 flex max-h-[85vh] flex-col overflow-hidden rounded-t-2xl border border-app-border/60 bg-app-surface lg:inset-auto lg:left-1/2 lg:top-1/2 lg:max-h-[min(85vh,32rem)] lg:w-full lg:max-w-md lg:-translate-x-1/2 lg:-translate-y-1/2 lg:rounded-lg"
 		>
 			<div class="flex shrink-0 items-center justify-between border-b border-app-border/40 px-4 py-3">
 				<p class="text-sm font-semibold text-app-text">Board options</p>

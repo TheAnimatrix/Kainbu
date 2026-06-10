@@ -12,7 +12,7 @@
 		Trash2,
 		Users,
 		X
-	} from 'lucide-svelte';
+	} from '$lib/icons';
 	import { getProjectMemberDisplayName } from '$lib/kainbu/members';
 	import { getTagToneClasses } from '$lib/kainbu/tags';
 	import { formatDueDateValue } from '$lib/kainbu/timing';
@@ -174,7 +174,7 @@
 				<div class="flex w-full flex-wrap gap-2 sm:w-auto">
 					<button
 						type="button"
-						class="kainbu-dash-btn kainbu-dash-btn--primary inline-flex flex-1 items-center justify-center gap-1.5 sm:flex-none"
+						class="kainbu-btn kainbu-btn--primary inline-flex flex-1 items-center justify-center gap-1.5 sm:flex-none"
 						on:click={onCreateProject}
 					>
 						<FolderPlus size={14} />
@@ -183,7 +183,7 @@
 					{#if currentProjectId}
 						<button
 							type="button"
-							class="kainbu-dash-btn kainbu-dash-btn--ghost inline-flex flex-1 items-center justify-center gap-1.5 sm:flex-none"
+							class="kainbu-btn kainbu-btn--ghost inline-flex flex-1 items-center justify-center gap-1.5 sm:flex-none"
 							on:click={() => onOpenProject(currentProjectId)}
 						>
 							Current board
@@ -211,7 +211,7 @@
 								</div>
 								<button
 									type="button"
-									class="kainbu-dash-btn kainbu-dash-btn--primary kainbu-dash-btn--compact rounded-md px-2 py-1"
+									class="kainbu-btn kainbu-btn--primary kainbu-btn--compact px-2 py-1"
 									on:click={() => onAcceptInvite(invite.id)}
 									aria-label="Accept invite"
 								>
@@ -219,7 +219,7 @@
 								</button>
 								<button
 									type="button"
-									class="kainbu-dash-btn kainbu-dash-btn--ghost kainbu-dash-btn--compact rounded-md border border-app-border px-2 py-1 text-app-subtext"
+									class="kainbu-btn kainbu-btn--ghost kainbu-btn--compact px-2 py-1 text-app-subtext"
 									on:click={() => onRejectInvite(invite.id)}
 									aria-label="Decline invite"
 								>
@@ -265,7 +265,7 @@
 											</div>
 											<button
 												type="button"
-												class="kainbu-dash-btn kainbu-dash-btn--ghost kainbu-dash-btn--compact"
+												class="kainbu-btn kainbu-btn--ghost kainbu-btn--compact"
 												on:click={() => onOpenProject(project.id)}
 											>
 												Open
@@ -361,7 +361,7 @@
 												/>
 												<button
 													type="button"
-													class="rounded-lg bg-app-primary px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-app-primary-hover"
+													class="kainbu-btn kainbu-btn--primary kainbu-btn--compact"
 													on:click={() => submitInvite(project.id)}
 												>
 													Send
@@ -387,7 +387,7 @@
 											</div>
 											<button
 												type="button"
-												class="kainbu-dash-btn kainbu-dash-btn--ghost kainbu-dash-btn--compact"
+												class="kainbu-btn kainbu-btn--ghost kainbu-btn--compact"
 												on:click={() => onOpenProject(project.id)}
 											>
 												Open
@@ -469,7 +469,7 @@
 										</div>
 										<button
 											type="button"
-											class="kainbu-dash-btn kainbu-dash-btn--ghost kainbu-dash-btn--compact"
+											class="kainbu-btn kainbu-btn--ghost kainbu-btn--compact"
 											on:click={() => onOpenProject(project.id)}
 										>
 											Open
@@ -573,7 +573,7 @@
 											/>
 											<button
 												type="button"
-												class="rounded-lg bg-app-primary px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-app-primary-hover"
+												class="kainbu-btn kainbu-btn--primary kainbu-btn--compact"
 												on:click={() => submitInvite(project.id)}
 											>
 												Send
@@ -598,7 +598,7 @@
 							</p>
 							<button
 								type="button"
-								class="kainbu-dash-btn kainbu-dash-btn--ghost mt-1"
+								class="kainbu-btn kainbu-btn--ghost mt-1"
 								on:click={onCreateProject}
 							>
 								<FolderPlus size={14} />
@@ -627,7 +627,7 @@
 										</div>
 										<button
 											type="button"
-											class="kainbu-dash-btn kainbu-dash-btn--ghost kainbu-dash-btn--compact"
+											class="kainbu-btn kainbu-btn--ghost kainbu-btn--compact"
 											on:click={() => onOpenProject(project.id)}
 										>
 											Open
@@ -942,119 +942,6 @@
 		padding-top: 0.75rem;
 	}
 
-	.kainbu-dash-btn {
-		display: inline-flex;
-		align-items: center;
-		justify-content: center;
-		gap: 0.375rem;
-		border: none;
-		border-radius: 0.625rem;
-		padding: 0.5rem 1rem;
-		font-size: 0.875rem;
-		font-weight: 600;
-		line-height: 1.2;
-		transition:
-			transform 0.16s ease,
-			box-shadow 0.16s ease,
-			background 0.16s ease,
-			color 0.16s ease,
-			border-color 0.16s ease;
-	}
-
-	.kainbu-dash-btn:focus-visible {
-		outline: 2px solid color-mix(in oklab, var(--color-app-primary) 70%, white);
-		outline-offset: 2px;
-	}
-
-	.kainbu-dash-btn:active:not(:disabled) {
-		transform: translateY(1px) scale(0.99);
-	}
-
-	.kainbu-dash-btn--primary {
-		background: linear-gradient(
-			180deg,
-			color-mix(in oklab, var(--color-app-primary) 72%, white) 0%,
-			var(--color-app-primary) 46%,
-			color-mix(in oklab, var(--color-app-primary-hover) 88%, black) 100%
-		);
-		color: #fff;
-		text-shadow: 0 1px 0 color-mix(in oklab, var(--color-app-primary-hover) 55%, black);
-		border: 1px solid color-mix(in oklab, var(--color-app-primary-hover) 68%, black);
-		box-shadow:
-			inset 0 1px 0 color-mix(in oklab, white 46%, transparent),
-			inset 0 -1px 0 color-mix(in oklab, black 24%, transparent),
-			0 1px 0 color-mix(in oklab, var(--color-app-primary-hover) 72%, black),
-			0 5px 14px -4px color-mix(in oklab, var(--color-app-primary) 58%, black),
-			0 2px 4px -1px color-mix(in oklab, var(--color-app-bg) 55%, transparent);
-	}
-
-	.kainbu-dash-btn--primary:hover:not(:disabled) {
-		background: linear-gradient(
-			180deg,
-			color-mix(in oklab, var(--color-app-primary) 66%, white) 0%,
-			color-mix(in oklab, var(--color-app-primary-hover) 94%, var(--color-app-primary)) 46%,
-			color-mix(in oklab, var(--color-app-primary-hover) 82%, black) 100%
-		);
-		transform: translateY(-1px);
-		box-shadow:
-			inset 0 1px 0 color-mix(in oklab, white 52%, transparent),
-			inset 0 -1px 0 color-mix(in oklab, black 20%, transparent),
-			0 2px 0 color-mix(in oklab, var(--color-app-primary-hover) 68%, black),
-			0 10px 22px -6px color-mix(in oklab, var(--color-app-primary) 62%, black),
-			0 3px 6px -2px color-mix(in oklab, var(--color-app-bg) 45%, transparent);
-	}
-
-	.kainbu-dash-btn--primary:active:not(:disabled) {
-		background: linear-gradient(
-			180deg,
-			color-mix(in oklab, var(--color-app-primary-hover) 92%, black) 0%,
-			color-mix(in oklab, var(--color-app-primary-hover) 96%, black) 100%
-		);
-		transform: translateY(1px) scale(0.99);
-		box-shadow:
-			inset 0 2px 5px color-mix(in oklab, black 32%, transparent),
-			inset 0 1px 0 color-mix(in oklab, white 16%, transparent),
-			0 1px 2px color-mix(in oklab, var(--color-app-primary) 40%, black);
-	}
-
-	.kainbu-dash-btn--ghost {
-		background: linear-gradient(
-			180deg,
-			color-mix(in oklab, var(--color-app-element) 72%, white) 0%,
-			color-mix(in oklab, var(--color-app-element) 55%, transparent) 100%
-		);
-		color: var(--color-app-text);
-		border: 1px solid color-mix(in oklab, var(--color-app-border) 82%, transparent);
-		box-shadow:
-			inset 0 1px 0 color-mix(in oklab, white 14%, transparent),
-			inset 0 -1px 0 color-mix(in oklab, black 10%, transparent),
-			0 2px 6px -3px color-mix(in oklab, var(--color-app-bg) 70%, transparent);
-	}
-
-	.kainbu-dash-btn--ghost:hover:not(:disabled) {
-		color: var(--color-app-primary);
-		border-color: color-mix(in oklab, var(--color-app-primary) 38%, var(--color-app-border));
-		transform: translateY(-1px);
-		box-shadow:
-			inset 0 1px 0 color-mix(in oklab, white 18%, transparent),
-			inset 0 -1px 0 color-mix(in oklab, black 8%, transparent),
-			0 4px 12px -4px color-mix(in oklab, var(--color-app-primary) 28%, transparent);
-	}
-
-	.kainbu-dash-btn--ghost:active:not(:disabled) {
-		transform: translateY(1px) scale(0.99);
-		box-shadow:
-			inset 0 2px 4px color-mix(in oklab, black 16%, transparent),
-			inset 0 1px 0 color-mix(in oklab, white 8%, transparent);
-	}
-
-	.kainbu-dash-btn--compact {
-		padding: 0.375rem 0.625rem;
-		font-size: 0.75rem;
-		font-weight: 500;
-		border-radius: 0.5rem;
-	}
-
 	:root[data-color-mode='light'] .kainbu-board-card {
 		box-shadow:
 			inset 0 1px 0 rgb(255 255 255 / 0.72),
@@ -1069,33 +956,5 @@
 
 	:root[data-color-mode='light'] .kainbu-dashboard__stat {
 		box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.65);
-	}
-
-	:root[data-color-mode='light'] .kainbu-dash-btn--primary {
-		box-shadow:
-			inset 0 1px 0 rgb(255 255 255 / 0.55),
-			inset 0 -1px 0 color-mix(in oklab, var(--color-app-primary-hover) 28%, black),
-			0 1px 0 color-mix(in oklab, var(--color-app-primary-hover) 55%, black),
-			0 6px 16px -5px color-mix(in oklab, var(--color-app-primary) 38%, transparent);
-	}
-
-	:root[data-color-mode='light'] .kainbu-dash-btn--primary:hover:not(:disabled) {
-		box-shadow:
-			inset 0 1px 0 rgb(255 255 255 / 0.62),
-			inset 0 -1px 0 color-mix(in oklab, var(--color-app-primary-hover) 24%, black),
-			0 2px 0 color-mix(in oklab, var(--color-app-primary-hover) 52%, black),
-			0 10px 24px -7px color-mix(in oklab, var(--color-app-primary) 42%, transparent);
-	}
-
-	:root[data-color-mode='light'] .kainbu-dash-btn--ghost {
-		background: linear-gradient(
-			180deg,
-			color-mix(in oklab, var(--color-app-surface) 92%, white) 0%,
-			color-mix(in oklab, var(--color-app-element) 80%, transparent) 100%
-		);
-		box-shadow:
-			inset 0 1px 0 rgb(255 255 255 / 0.88),
-			inset 0 -1px 0 color-mix(in oklab, var(--color-app-border) 55%, transparent),
-			0 2px 8px -4px color-mix(in oklab, var(--color-app-bg) 18%, transparent);
 	}
 </style>
