@@ -34,11 +34,6 @@ const COLUMN_SURFACE_BASE_RGB: Record<ColorMode, string> = {
 	light: '255 255 255'
 };
 
-const HEADER_BASE_RGB: Record<ColorMode, string> = {
-	dark: '9 9 11',
-	light: '250 250 250'
-};
-
 const MODAL_BASE_RGB: Record<ColorMode, string> = {
 	dark: '24 24 27',
 	light: '255 255 255'
@@ -65,16 +60,18 @@ const SURFACE_TONE_OPTIONS = {
 		dark: {
 			borderAlpha: 0.18,
 			topAlpha: 0.12,
-			midAlpha: 0.05,
+			midAlpha: 0.02,
 			baseAlpha: 1,
-			midStop: 32
+			midStopPx: 20,
+			fadeStopPx: 56
 		},
 		light: {
 			borderAlpha: 0.32,
-			topAlpha: 0.18,
-			midAlpha: 0.08,
+			topAlpha: 0.16,
+			midAlpha: 0.03,
 			baseAlpha: 0.96,
-			midStop: 32
+			midStopPx: 20,
+			fadeStopPx: 56
 		}
 	}
 } as const;
@@ -100,6 +97,33 @@ export const getTagToneClasses = (serializedColor = '') => {
 	return `kainbu-tag-tone kainbu-tag-tone--${matchedTone || 'neutral'}`;
 };
 
+const buildToneBackgroundStyle = (
+	serializedColor = '',
+	colorMode: ColorMode = 'dark',
+	options: {
+		topAlpha: number;
+		midAlpha: number;
+		baseAlpha: number;
+		midStop: number;
+		fadeStop?: number;
+	},
+	baseRgb: string = SURFACE_BASE_RGB[colorMode]
+) => {
+	const tone = resolveTone(serializedColor);
+	if (tone === 'neutral') return '';
+
+	const rgb = TONE_RGB[tone];
+	const fadeStop = options.fadeStop ?? 100;
+
+	return `background: linear-gradient(180deg, ${rgbValue(rgb, options.topAlpha)} 0%, ${rgbValue(
+		rgb,
+		options.midAlpha
+	)} ${options.midStop}%, ${rgbValue(baseRgb, options.baseAlpha)} ${fadeStop}%), ${rgbValue(
+		baseRgb,
+		options.baseAlpha
+	)}`;
+};
+
 const buildToneSurfaceStyle = (
 	serializedColor = '',
 	colorMode: ColorMode = 'dark',
@@ -109,6 +133,7 @@ const buildToneSurfaceStyle = (
 		midAlpha: number;
 		baseAlpha: number;
 		midStop: number;
+		fadeStop?: number;
 	},
 	baseRgb: string = SURFACE_BASE_RGB[colorMode]
 ) => {
@@ -119,28 +144,14 @@ const buildToneSurfaceStyle = (
 
 	return [
 		`border-color: ${rgbValue(rgb, options.borderAlpha)}`,
-		`background: linear-gradient(180deg, ${rgbValue(rgb, options.topAlpha)} 0%, ${rgbValue(
-			rgb,
-			options.midAlpha
-		)} ${options.midStop}%, ${rgbValue(baseRgb, options.baseAlpha)} 100%), ${rgbValue(
-			baseRgb,
-			options.baseAlpha
-		)}`
+		buildToneBackgroundStyle(serializedColor, colorMode, options, baseRgb)
 	].join('; ');
 };
 
 export const getCardToneStyle = (serializedColor = '', colorMode: ColorMode = 'dark') =>
 	buildToneSurfaceStyle(serializedColor, colorMode, SURFACE_TONE_OPTIONS.card[colorMode]);
 
-export const getColumnToneStyle = (serializedColor = '', colorMode: ColorMode = 'dark') =>
-	buildToneSurfaceStyle(
-		serializedColor,
-		colorMode,
-		SURFACE_TONE_OPTIONS.column[colorMode],
-		COLUMN_SURFACE_BASE_RGB[colorMode]
-	);
-
-export const getColumnHeaderToneStyle = (
+const buildColumnToneBackgroundStyle = (
 	serializedColor = '',
 	colorMode: ColorMode = 'dark'
 ) => {
@@ -148,15 +159,29 @@ export const getColumnHeaderToneStyle = (
 	if (tone === 'neutral') return '';
 
 	const rgb = TONE_RGB[tone];
-	const headerBase = HEADER_BASE_RGB[colorMode];
-	const topAlpha = colorMode === 'light' ? 0.22 : 0.16;
-	const bottomAlpha = colorMode === 'light' ? 0.08 : 0.06;
-	const baseAlpha = colorMode === 'light' ? 0.72 : 0.38;
-	const borderAlpha = colorMode === 'light' ? 0.28 : 0.16;
+	const options = SURFACE_TONE_OPTIONS.column[colorMode];
+	const baseRgb = COLUMN_SURFACE_BASE_RGB[colorMode];
+
+	return `background: linear-gradient(180deg, ${rgbValue(rgb, options.topAlpha)} 0px, ${rgbValue(
+		rgb,
+		options.midAlpha
+	)} ${options.midStopPx}px, ${rgbValue(baseRgb, options.baseAlpha)} ${options.fadeStopPx}px), ${rgbValue(
+		baseRgb,
+		options.baseAlpha
+	)}`;
+};
+
+/** Single column-shell gradient (header + body share one background). */
+export const getColumnToneStyle = (serializedColor = '', colorMode: ColorMode = 'dark') => {
+	const tone = resolveTone(serializedColor);
+	if (tone === 'neutral') return '';
+
+	const rgb = TONE_RGB[tone];
+	const { borderAlpha } = SURFACE_TONE_OPTIONS.column[colorMode];
 
 	return [
 		`border-color: ${rgbValue(rgb, borderAlpha)}`,
-		`background: linear-gradient(180deg, ${rgbValue(rgb, topAlpha)} 0%, ${rgbValue(rgb, bottomAlpha)} 100%), ${rgbValue(headerBase, baseAlpha)}`
+		buildColumnToneBackgroundStyle(serializedColor, colorMode)
 	].join('; ');
 };
 

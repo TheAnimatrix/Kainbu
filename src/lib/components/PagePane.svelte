@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { FileText } from 'lucide-svelte';
+	import { FileText } from '$lib/icons';
 	import MarkdownBlockEditor from '$lib/components/MarkdownBlockEditor.svelte';
 	import type { TaskReferenceOption } from '$lib/kainbu/taskMarkdown';
 
@@ -18,6 +18,7 @@
 	export let onReferenceNavigate: ((reference: TaskReferenceOption) => void) | undefined =
 		undefined;
 	export let onChange: (value: string) => void;
+	export let hideHeader = false;
 
 	const splitIntoBlocks = (value: string) => {
 		const normalized = (value || '').replace(/\r\n/g, '\n').trim();
@@ -72,12 +73,14 @@
 </script>
 
 <section class:hidden={!active} class="absolute inset-0 flex h-full flex-col overflow-hidden">
-	<div class="flex items-center justify-between gap-2 border-b border-app-border/60 px-3 py-2">
-		<p class="truncate text-sm font-medium text-app-text">{title}</p>
-		{#if isDiffMode}
-			<span class="text-xs text-app-accent">Reviewing changes</span>
-		{/if}
-	</div>
+	{#if !hideHeader}
+		<div class="flex items-center justify-between gap-2 border-b border-app-border/60 px-3 py-2">
+			<p class="truncate text-sm font-medium text-app-text">{title}</p>
+			{#if isDiffMode}
+				<span class="text-xs text-app-accent">Reviewing changes</span>
+			{/if}
+		</div>
+	{/if}
 
 	<div class="min-h-0 flex-1 overflow-hidden">
 		{#if isDiffMode}

@@ -12,13 +12,14 @@
 		Settings2,
 		Trash2,
 		X
-	} from 'lucide-svelte';
+	} from '$lib/icons';
 	import type { Project } from '$lib/kainbu/types';
 
 	export let projects: Project[] = [];
 	export let currentProjectId = '';
 	export let currentBoardId = '';
 	export let currentPageId = '';
+	export let activeSurface: 'board' | 'page' | 'none' = 'board';
 	export let onClose: () => void;
 	export let onOpenBoard: (projectId: string, boardId: string) => void;
 	export let onOpenPage: (projectId: string, pageId: string) => void;
@@ -63,7 +64,7 @@
 	$: expandedSet = new Set(expandedProjectIds);
 </script>
 
-<div class="fixed inset-0 z-50 bg-black/45 backdrop-blur-sm lg:hidden">
+<div class="kainbu-overlay fixed inset-0 z-[130] lg:hidden">
 	<button
 		type="button"
 		class="absolute inset-0"
@@ -175,7 +176,9 @@
 							{#each project.boards as board (board.id)}
 								<div
 									class={`group/item flex items-center gap-2 rounded-md px-2 py-1.5 text-sm transition ${
-										project.id === currentProjectId && board.id === currentBoardId
+										project.id === currentProjectId &&
+										board.id === currentBoardId &&
+										activeSurface === 'board'
 											? 'text-app-text bg-app-element/50'
 											: 'text-app-subtext/80 hover:text-app-text hover:bg-app-element/30'
 									}`}
@@ -188,33 +191,33 @@
 										<LayoutPanelTop size={14} class="shrink-0 opacity-60" />
 										<span class="truncate">{board.name}</span>
 									</button>
-									{#if project.accessRole === 'owner'}
-										<div class="flex items-center gap-0 opacity-0 transition group-hover/item:opacity-100">
+									<div class="flex items-center gap-0 opacity-0 transition group-hover/item:opacity-100">
+										<button
+											type="button"
+											class="rounded p-1 text-app-subtext/40 transition hover:text-app-text"
+											on:click={() => onRenameBoard(project.id, board.id)}
+										>
+											<Pencil size={11} />
+										</button>
+										{#if project.boards.length > 1}
 											<button
 												type="button"
-												class="rounded p-1 text-app-subtext/40 transition hover:text-app-text"
-												on:click={() => onRenameBoard(project.id, board.id)}
+												class="rounded p-1 text-app-subtext/40 transition hover:text-rose-400"
+												on:click={() => onDeleteBoard(project.id, board.id)}
 											>
-												<Pencil size={11} />
+												<Trash2 size={11} />
 											</button>
-											{#if project.boards.length > 1}
-												<button
-													type="button"
-													class="rounded p-1 text-app-subtext/40 transition hover:text-rose-400"
-													on:click={() => onDeleteBoard(project.id, board.id)}
-												>
-													<Trash2 size={11} />
-												</button>
-											{/if}
-										</div>
-									{/if}
+										{/if}
+									</div>
 								</div>
 							{/each}
 
 							{#each project.pages as page (page.id)}
 								<div
 									class={`group/item flex items-center gap-2 rounded-md px-2 py-1.5 text-sm transition ${
-										project.id === currentProjectId && page.id === currentPageId
+										project.id === currentProjectId &&
+										page.id === currentPageId &&
+										activeSurface === 'page'
 											? 'text-app-text bg-app-element/50'
 											: 'text-app-subtext/80 hover:text-app-text hover:bg-app-element/30'
 									}`}
@@ -227,26 +230,24 @@
 										<FileText size={14} class="shrink-0 opacity-60" />
 										<span class="truncate">{page.name}</span>
 									</button>
-									{#if project.accessRole === 'owner'}
-										<div class="flex items-center gap-0 opacity-0 transition group-hover/item:opacity-100">
+									<div class="flex items-center gap-0 opacity-0 transition group-hover/item:opacity-100">
+										<button
+											type="button"
+											class="rounded p-1 text-app-subtext/40 transition hover:text-app-text"
+											on:click={() => onRenamePage(project.id, page.id)}
+										>
+											<Pencil size={11} />
+										</button>
+										{#if project.pages.length > 1}
 											<button
 												type="button"
-												class="rounded p-1 text-app-subtext/40 transition hover:text-app-text"
-												on:click={() => onRenamePage(project.id, page.id)}
+												class="rounded p-1 text-app-subtext/40 transition hover:text-rose-400"
+												on:click={() => onDeletePage(project.id, page.id)}
 											>
-												<Pencil size={11} />
+												<Trash2 size={11} />
 											</button>
-											{#if project.pages.length > 1}
-												<button
-													type="button"
-													class="rounded p-1 text-app-subtext/40 transition hover:text-rose-400"
-													on:click={() => onDeletePage(project.id, page.id)}
-												>
-													<Trash2 size={11} />
-												</button>
-											{/if}
-										</div>
-									{/if}
+										{/if}
+									</div>
 								</div>
 							{/each}
 

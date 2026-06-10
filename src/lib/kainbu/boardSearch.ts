@@ -3,18 +3,37 @@ import type { Task } from '$lib/kainbu/types';
 
 export const normalizeBoardSearchQuery = (query: string) => query.trim().toLowerCase();
 
+const normalizeSearchableText = (text: string) =>
+	text.replace(/\s+/g, ' ').trim().toLowerCase();
+
 const getTaskSearchableTitle = (task: Task) => {
 	const raw =
 		task.hasCheckbox && hasLeadingCardCheckboxLine(task.title || '')
 			? stripLeadingCardCheckboxLine(task.title || '')
 			: task.title || '';
-	return raw.replace(/\s+/g, ' ').trim().toLowerCase();
+	return normalizeSearchableText(raw);
+};
+
+const getTaskSearchableFields = (task: Task) => {
+	const fields = [getTaskSearchableTitle(task)];
+
+	if (task.description?.trim()) {
+		fields.push(normalizeSearchableText(task.description));
+	}
+
+	for (const tag of task.tags ?? []) {
+		if (tag.label?.trim()) {
+			fields.push(normalizeSearchableText(tag.label));
+		}
+	}
+
+	return fields;
 };
 
 export const taskMatchesBoardSearch = (task: Task, query: string) => {
 	const normalized = normalizeBoardSearchQuery(query);
 	if (!normalized) return true;
-	return getTaskSearchableTitle(task).includes(normalized);
+	return getTaskSearchableFields(task).some((field) => field.includes(normalized));
 };
 
 export const filterColumnsForBoardSearch = <T extends { tasks: Task[] }>(

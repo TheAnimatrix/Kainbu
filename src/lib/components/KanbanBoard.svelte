@@ -1,10 +1,13 @@
 <script lang="ts">
 	import { browser } from '$app/environment';
 	import { flip } from 'svelte/animate';
+	import { fade } from 'svelte/transition';
 	import { tick } from 'svelte';
 	import {
 		Check,
 		ArrowDownToLine,
+		ArrowLeft,
+		ArrowRight,
 		ArrowUpToLine,
 		CheckSquare,
 		ChevronDown,
@@ -13,14 +16,17 @@
 		Copy,
 		Ellipsis,
 		FileText,
-		GripVertical,
 		Info,
 		Link2,
 		LoaderCircle,
 		MessageSquarePlus,
 		Network,
+		Palette,
+		Pencil,
 		Plus,
+		RectangleHorizontal,
 		Repeat2,
+		RotateCcw,
 		Search,
 		Settings2,
 		Sparkles,
@@ -30,7 +36,7 @@
 		Unlink,
 		UserPlus,
 		X
-	} from 'lucide-svelte';
+	} from '$lib/icons';
 	import {
 		dragHandle,
 		dragHandleZone,
@@ -44,7 +50,8 @@
 		DEFAULT_COLUMN_WIDTH,
 		MAX_COLUMN_WIDTH,
 		MIN_COLUMN_WIDTH,
-		SURFACE_TONE_OPTIONS
+		SURFACE_TONE_OPTIONS,
+		TAG_COLORS
 	} from '$lib/kainbu/constants';
 	import { filterColumnsForBoardSearch, normalizeBoardSearchQuery } from '$lib/kainbu/boardSearch';
 	import { rewriteTaskTitle } from '$lib/kainbu/ai';
@@ -57,7 +64,11 @@
 		type DiffTask
 	} from '$lib/kainbu/diff';
 	import { createId } from '$lib/kainbu/id';
-	import { getMemberAvatarInitials, getProjectMemberDisplayName } from '$lib/kainbu/members';
+	import {
+		getMemberAvatarInitials,
+		getMemberAvatarUrl as resolveMemberAvatarUrl,
+		getProjectMemberDisplayName
+	} from '$lib/kainbu/members';
 	import UserAvatar from '$lib/components/UserAvatar.svelte';
 	import {
 		hasLeadingCardCheckboxLine,
@@ -92,7 +103,6 @@
 	import type { TaskLinkPickerOption } from '$lib/kainbu/taskLinkPicker';
 	import {
 		getCardToneStyle,
-		getColumnHeaderToneStyle,
 		getColumnToneStyle,
 		getTagToneClasses,
 		getToneSurfaceClass
@@ -123,6 +133,7 @@
 		colId: string;
 		taskId: string;
 		position: MenuPosition;
+		opensAbove?: boolean;
 	};
 
 	type DesktopTaskEditorLayoutMode = 'modal' | 'dock' | 'fullscreen';
@@ -193,6 +204,8 @@
 	export let boardSearchQuery = '';
 
 	const flipDurationMs = 180;
+	const boardToolbarPillClass =
+		'inline-flex h-7 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full border px-2.5 text-[11px] font-semibold leading-none transition';
 	const dndDropTargetStyle = {};
 	const kanbanOrderFingerprint = (columns: KanbanData) =>
 		columns
@@ -226,7 +239,16 @@
 	let suppressTaskOpenUntil = 0;
 	let assignMenuOpen: TaskMenuState | null = null;
 	let taskTagMenuOpen: TaskMenuState | null = null;
+	let taskTagMenuMode: 'list' | 'create' = 'list';
+	let taskTagMenuSearchOpen = false;
+	let taskTagMenuSearchQuery = '';
+	let taskTagMenuNewLabel = '';
+	let taskTagMenuNewColor: string = TAG_COLORS[0]?.value ?? '';
+	let taskTagMenuSearchInput: HTMLInputElement | null = null;
+	let taskTagMenuCreateInput: HTMLInputElement | null = null;
 	let taskInfoMenuOpen: TaskMenuState | null = null;
+	let taskMenuPanel: HTMLDivElement | null = null;
+	let taskMenuTrigger: HTMLElement | null = null;
 	let boardScrollViewport: HTMLDivElement | null = null;
 	let taskDragInProgress = false;
 	let boardDataAtDragStart: KanbanData | null = null;
@@ -249,11 +271,14 @@
 	const COLUMN_MENU_WIDTH = 288;
 	const COLUMN_MENU_HEIGHT = 520;
 	const TASK_MENU_WIDTH = 224;
-	const TASK_MENU_HEIGHT = 420;
+	const TASK_MENU_HEIGHT = 500;
 	const LINK_PICKER_WIDTH = 288;
 	const LINK_PICKER_HEIGHT = 360;
 	const TAG_MENU_WIDTH = 208;
-	const TAG_MENU_HEIGHT = 280;
+	const TAG_MENU_HEIGHT = 248;
+	const TAG_MENU_ROW_HEIGHT = 26;
+	const TAG_MENU_VISIBLE_ROWS = 7;
+	const TAG_MENU_LIST_MAX_HEIGHT = TAG_MENU_ROW_HEIGHT * TAG_MENU_VISIBLE_ROWS;
 	const TASK_INFO_MENU_WIDTH = 232;
 	const TASK_INFO_MENU_HEIGHT = 148;
 	const TASK_INFO_MENU_HEIGHT_CHECKABLE = 188;
@@ -360,6 +385,13 @@
 			})
 			.map(([, entry]) => entry.tag);
 	})();
+	$: taskTagMenuFilteredTags = (() => {
+		const query = taskTagMenuSearchQuery.trim().toLowerCase();
+		if (!query) return existingTags;
+		return existingTags.filter((tag) => tag.label.trim().toLowerCase().includes(query));
+	})();
+	$: taskTagMenuNewColorSwatch =
+		TAG_COLORS.find((color) => color.value === taskTagMenuNewColor) ?? TAG_COLORS[0];
 	$: taskLinkGraph = buildTaskLinkGraph(boardData);
 	$: linkGroupLayout = buildLinkGroupLayout(boardData);
 	$: displayColumns = (() => {
@@ -541,6 +573,7 @@
 	const closeMenus = () => {
 		openColumnMenu = null;
 		openTaskMenu = null;
+		taskMenuTrigger = null;
 		columnTonePickerOpen = false;
 		assignMenuOpen = null;
 		taskTagMenuOpen = null;
@@ -730,15 +763,58 @@
 		let left = Math.min(rect.right - menuWidth, maxLeft);
 		left = Math.max(MENU_GUTTER, left);
 
-		let top = rect.bottom + MENU_GAP;
-		if (top + menuHeight > viewportHeight - MENU_GUTTER) {
-			top = Math.max(MENU_GUTTER, rect.top - menuHeight - MENU_GAP);
-		}
+		const belowTop = rect.bottom + MENU_GAP;
+		const opensAbove = belowTop + menuHeight > viewportHeight - MENU_GUTTER;
+		const top = opensAbove
+			? Math.max(MENU_GUTTER, rect.top - menuHeight - MENU_GAP)
+			: belowTop;
 
 		return {
 			top: Math.max(MENU_GUTTER, top),
 			left
 		};
+	};
+
+	const menuOpensAboveTrigger = (trigger: HTMLElement, menuTop: number) =>
+		menuTop < trigger.getBoundingClientRect().bottom + MENU_GAP;
+
+	const resolveMenuPositionToRenderedPanel = (
+		trigger: HTMLElement,
+		panel: HTMLElement,
+		menuWidth: number
+	): MenuPosition & { opensAbove: boolean } => {
+		const triggerRect = trigger.getBoundingClientRect();
+		const panelHeight = panel.getBoundingClientRect().height;
+		const viewportWidth = window.innerWidth || document.documentElement.clientWidth;
+		const viewportHeight = window.innerHeight || document.documentElement.clientHeight;
+		const maxLeft = Math.max(MENU_GUTTER, viewportWidth - menuWidth - MENU_GUTTER);
+		let left = Math.min(triggerRect.right - menuWidth, maxLeft);
+		left = Math.max(MENU_GUTTER, left);
+
+		const belowTop = triggerRect.bottom + MENU_GAP;
+		const fitsBelow = belowTop + panelHeight <= viewportHeight - MENU_GUTTER;
+		let top = fitsBelow ? belowTop : triggerRect.top - panelHeight - MENU_GAP;
+		top = Math.max(MENU_GUTTER, top);
+		top = Math.min(top, viewportHeight - panelHeight - MENU_GUTTER);
+
+		return { top, left, opensAbove: !fitsBelow };
+	};
+
+	const resolvePanelSwapPosition = (
+		panel: HTMLElement,
+		trigger: HTMLElement,
+		nextPanelHeight: number
+	): MenuPosition => {
+		const panelRect = panel.getBoundingClientRect();
+		const triggerRect = trigger.getBoundingClientRect();
+		const viewportHeight = window.innerHeight || document.documentElement.clientHeight;
+		const menuBelowTrigger = panelRect.top >= triggerRect.bottom - 4;
+		let top = menuBelowTrigger ? panelRect.top : panelRect.bottom - nextPanelHeight;
+
+		top = Math.max(MENU_GUTTER, top);
+		top = Math.min(top, viewportHeight - nextPanelHeight - MENU_GUTTER);
+
+		return { top, left: panelRect.left };
 	};
 
 	const toggleColumnMenu = async (columnId: string, trigger: HTMLElement) => {
@@ -761,22 +837,63 @@
 	const toggleTaskMenu = async (columnId: string, taskId: string, trigger: HTMLElement) => {
 		if (openTaskMenu?.colId === columnId && openTaskMenu.taskId === taskId) {
 			openTaskMenu = null;
+			taskMenuTrigger = null;
 			return;
 		}
 
 		markMenuOpened();
+		taskMenuTrigger = trigger;
+		const initialTaskMenuPosition = await resolveMenuPosition(
+			trigger,
+			TASK_MENU_WIDTH,
+			TASK_MENU_HEIGHT
+		);
 		openTaskMenu = {
 			colId: columnId,
 			taskId,
-			position: await resolveMenuPosition(trigger, TASK_MENU_WIDTH, TASK_MENU_HEIGHT)
+			position: initialTaskMenuPosition,
+			opensAbove: menuOpensAboveTrigger(trigger, initialTaskMenuPosition.top)
 		};
 		openColumnMenu = null;
 		assignMenuOpen = null;
 		taskTagMenuOpen = null;
 		taskInfoMenuOpen = null;
+
+		await tick();
+		if (browser && typeof requestAnimationFrame === 'function') {
+			await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+		}
+		if (taskMenuPanel && openTaskMenu?.colId === columnId && openTaskMenu.taskId === taskId) {
+			const refinedTaskMenuPosition = resolveMenuPositionToRenderedPanel(
+				trigger,
+				taskMenuPanel,
+				TASK_MENU_WIDTH
+			);
+			openTaskMenu = {
+				...openTaskMenu,
+				position: { top: refinedTaskMenuPosition.top, left: refinedTaskMenuPosition.left },
+				opensAbove: refinedTaskMenuPosition.opensAbove
+			};
+		}
 	};
 
-	const toggleTaskInfoMenu = async (colId: string, taskId: string, trigger: HTMLElement) => {
+	const openTaskInfoFromTaskMenu = async (colId: string, taskId: string) => {
+		if (!taskMenuPanel) return;
+
+		const task = boardData.flatMap((column) => column.tasks).find((entry) => entry.id === taskId);
+		const infoHeight = task?.hasCheckbox ? TASK_INFO_MENU_HEIGHT_CHECKABLE : TASK_INFO_MENU_HEIGHT;
+		const position = taskMenuTrigger
+			? resolvePanelSwapPosition(taskMenuPanel, taskMenuTrigger, infoHeight)
+			: { top: taskMenuPanel.getBoundingClientRect().top, left: taskMenuPanel.getBoundingClientRect().left };
+
+		await toggleTaskInfoMenu(colId, taskId, position);
+	};
+
+	const toggleTaskInfoMenu = async (
+		colId: string,
+		taskId: string,
+		anchor: HTMLElement | MenuPosition
+	) => {
 		if (taskInfoMenuOpen?.colId === colId && taskInfoMenuOpen.taskId === taskId) {
 			taskInfoMenuOpen = null;
 			return;
@@ -784,12 +901,16 @@
 
 		const task = boardData.flatMap((column) => column.tasks).find((entry) => entry.id === taskId);
 		const menuHeight = task?.hasCheckbox ? TASK_INFO_MENU_HEIGHT_CHECKABLE : TASK_INFO_MENU_HEIGHT;
+		const position =
+			anchor instanceof HTMLElement
+				? await resolveMenuPosition(anchor, TASK_INFO_MENU_WIDTH, menuHeight)
+				: anchor;
 
 		markMenuOpened();
 		taskInfoMenuOpen = {
 			colId,
 			taskId,
-			position: await resolveMenuPosition(trigger, TASK_INFO_MENU_WIDTH, menuHeight)
+			position
 		};
 		openColumnMenu = null;
 		openTaskMenu = null;
@@ -1326,11 +1447,48 @@
 		assignMenuOpen = null;
 	};
 
+	const resetTaskTagMenuUi = () => {
+		taskTagMenuMode = 'list';
+		taskTagMenuSearchOpen = false;
+		taskTagMenuSearchQuery = '';
+		taskTagMenuNewLabel = '';
+		taskTagMenuNewColor = TAG_COLORS[0]?.value ?? '';
+	};
+
+	const openTaskTagMenuSearch = async () => {
+		taskTagMenuMode = 'list';
+		taskTagMenuSearchOpen = true;
+		await tick();
+		taskTagMenuSearchInput?.focus();
+	};
+
+	const closeTaskTagMenuSearch = () => {
+		taskTagMenuSearchOpen = false;
+		taskTagMenuSearchQuery = '';
+	};
+
+	const openTaskTagMenuCreate = async () => {
+		taskTagMenuSearchOpen = false;
+		taskTagMenuSearchQuery = '';
+		taskTagMenuMode = 'create';
+		await tick();
+		taskTagMenuCreateInput?.focus();
+	};
+
+	const closeTaskTagMenuCreate = () => {
+		taskTagMenuMode = 'list';
+		taskTagMenuNewLabel = '';
+		taskTagMenuNewColor = TAG_COLORS[0]?.value ?? '';
+	};
+
+	$: if (!taskTagMenuOpen) resetTaskTagMenuUi();
+
 	const toggleTaskTagMenu = async (colId: string, taskId: string, trigger: HTMLElement) => {
 		if (taskTagMenuOpen?.colId === colId && taskTagMenuOpen.taskId === taskId) {
 			taskTagMenuOpen = null;
 			return;
 		}
+		resetTaskTagMenuUi();
 		markMenuOpened();
 		taskTagMenuOpen = {
 			colId,
@@ -1364,6 +1522,27 @@
 		taskTagMenuOpen = null;
 	};
 
+	const createTaskTagFromMenu = (columnId: string, taskId: string) => {
+		const clean = taskTagMenuNewLabel.trim();
+		if (!clean) return;
+
+		const existing =
+			existingTags.find((entry) => entry.label.trim().toLowerCase() === clean.toLowerCase()) ??
+			({ id: createId(), label: clean, color: taskTagMenuNewColor } satisfies Tag);
+
+		updateTask(columnId, taskId, (task) => {
+			const hasTag = (task.tags || []).some(
+				(entry) => entry.label.trim().toLowerCase() === existing.label.trim().toLowerCase()
+			);
+			if (hasTag) return task;
+			return {
+				...task,
+				tags: [...(task.tags || []), { id: createId(), label: existing.label, color: existing.color }]
+			};
+		});
+		taskTagMenuOpen = null;
+	};
+
 	const getMemberLabel = (member: ProjectMembership) =>
 		getProjectMemberDisplayName(member, { preferCurrentUserLabel: false });
 
@@ -1372,14 +1551,8 @@
 		return members.find((member) => member.userId === task.assignedTo) ?? null;
 	};
 
-	const getMemberAvatarUrl = (member: ProjectMembership | null | undefined) => {
-		if (!member) return null;
-		if (member.avatarUrl) return member.avatarUrl;
-		if (member.isCurrentUser || member.userId === currentUserId) {
-			return currentUserAvatarUrl;
-		}
-		return null;
-	};
+	const getMemberAvatarUrl = (member: ProjectMembership | null | undefined) =>
+		resolveMemberAvatarUrl(member, currentUserId, currentUserAvatarUrl);
 
 	const copyTaskTitle = async (columnId: string, taskId: string) => {
 		const task = boardData
@@ -1500,7 +1673,12 @@
 	};
 
 	const COLUMN_TASK_COUNT_CLASS =
-		'inline-flex h-5 min-w-5 shrink-0 items-center justify-center rounded-full border border-app-border bg-app-element/80 px-1 text-[10px] font-bold tabular-nums leading-none text-app-subtext';
+		'inline-flex h-4 min-w-4 shrink-0 items-center justify-center rounded px-1 text-[10px] font-medium tabular-nums leading-none text-app-subtext/70 bg-app-element/45';
+	const COLUMN_HEADER_BASE_CLASS =
+		'flex shrink-0 items-center justify-between gap-2 border-b border-app-border/80 px-2.5';
+	const COLUMN_HEADER_COMPACT_CLASS = `${COLUMN_HEADER_BASE_CLASS} min-h-8 py-1 lg:min-h-12 lg:py-1.5`;
+	const COLUMN_HEADER_ACTION_CLASS =
+		'inline-flex shrink-0 items-center justify-center rounded-md text-app-subtext transition hover:bg-app-element hover:text-app-text';
 	const getColumnWidth = (column: Column) => clampColumnWidth(column.width ?? DEFAULT_COLUMN_WIDTH);
 	const getColumnLayoutStyle = (column: Column) =>
 		`width: ${getColumnWidth(column)}px; min-width: ${getColumnWidth(column)}px;`;
@@ -1758,17 +1936,14 @@
 	<section class="absolute inset-0 flex overflow-hidden" data-kanban-board-root>
 		{#if !showFullscreenTaskEditor}
 			<div
-				bind:this={boardScrollViewport}
-				class="flex h-full min-h-0 min-w-0 flex-1 flex-col overflow-x-auto overflow-y-hidden py-1 lg:py-2"
-				onscroll={handleMenuViewportScroll}
+				class="flex h-full min-h-0 min-w-0 flex-1 flex-col overflow-hidden py-1 lg:py-2"
 			>
 				{#if !isDiffMode}
-					<div class="flex h-full min-h-0 min-w-min flex-col">
-						<div class="flex shrink-0 min-w-max items-center gap-2 px-3 pb-2">
+					<div class="flex shrink-0 min-w-0 items-center gap-2 px-3 pb-2">
 							{#if showCollaborationChrome}
 								<button
 									type="button"
-									class={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-[11px] font-semibold transition ${
+									class={`${boardToolbarPillClass} ${
 										boardLayoutMode === 'link-groups'
 											? 'border-app-primary/40 bg-app-primary/10 text-app-primary'
 											: 'border-app-border bg-app-surface text-app-subtext hover:text-app-text'
@@ -1782,7 +1957,7 @@
 									<BoardViewersPill viewers={boardPresenceViewers} />
 									<button
 										type="button"
-										class="inline-flex items-center gap-1.5 rounded-full border border-app-border bg-app-surface px-3 py-1.5 text-[11px] font-semibold text-app-subtext transition hover:border-app-primary/30 hover:text-app-text"
+										class={`${boardToolbarPillClass} border-app-border bg-app-surface text-app-subtext hover:border-app-primary/30 hover:text-app-text`}
 										title="Share board"
 										onclick={() => {
 											shareModalOpen = true;
@@ -1794,7 +1969,7 @@
 								{/if}
 								<button
 									type="button"
-									class={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-[11px] font-semibold transition ${
+									class={`${boardToolbarPillClass} ${
 										boardSearchActive
 											? 'border-app-primary/40 bg-app-primary/10 text-app-primary'
 											: 'border-app-border bg-app-surface text-app-subtext hover:text-app-text'
@@ -1816,7 +1991,7 @@
 							{#if showCollaborationChrome}
 								<button
 									type="button"
-									class={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-[11px] font-semibold transition ${
+									class={`${boardToolbarPillClass} ${
 										boardOptionsOpen
 											? 'border-app-primary/40 bg-app-primary/10 text-app-primary'
 											: 'border-app-border bg-app-surface text-app-subtext hover:text-app-text'
@@ -1839,8 +2014,8 @@
 										bind:value={boardSearchQuery}
 										type="search"
 										class="w-full min-w-0 rounded-full border border-app-border bg-app-bg px-3 py-1.5 text-[11px] text-app-text outline-none placeholder:text-app-subtext/60 focus:border-app-primary/50"
-										placeholder="Filter by card name…"
-										aria-label="Filter cards by name"
+										placeholder="Search title, description, tags…"
+										aria-label="Search cards by title, description, or tags"
 										onkeydown={(event) => {
 											if (event.key === 'Escape') {
 												event.preventDefault();
@@ -1869,11 +2044,18 @@
 									Clear link view
 								</button>
 							{/if}
-						</div>
-						<div class="flex min-h-0 flex-1 min-w-max items-start gap-3">
+					</div>
+				{/if}
+				<div
+					bind:this={boardScrollViewport}
+					class="min-h-0 flex-1 overflow-x-auto overflow-y-hidden"
+					onscroll={handleMenuViewportScroll}
+				>
+					{#if !isDiffMode}
+						<div class="flex h-full min-w-max items-start gap-3">
 							<div class="w-2 shrink-0"></div>
 							<div
-								class="flex h-full min-h-0 min-w-max items-start gap-3"
+								class="flex h-full min-w-max items-start gap-3"
 								use:dragHandleZone={{
 									items: boardLayoutMode === 'link-groups' ? [] : boardData,
 									type: 'column',
@@ -1890,7 +2072,7 @@
 									<div
 										animate:flip={{ duration: flipDurationMs }}
 										data-is-dnd-shadow-item-hint={isShadowItem(column)}
-										class={`flex h-full max-h-full min-h-0 shrink-0 flex-col overflow-hidden rounded-lg border bg-app-column ${getToneSurfaceClass(column.color)} ${
+										class={`flex max-h-full min-h-44 shrink-0 flex-col self-start overflow-hidden rounded-lg border bg-app-column ${getToneSurfaceClass(column.color)} ${
 											column.isLinkGroup
 												? 'border-app-primary/35 ring-1 ring-app-primary/15'
 												: 'border-app-border'
@@ -1898,15 +2080,16 @@
 										style={getBoardColumnStyle(column)}
 									>
 										<div
-											class={`flex items-center justify-between gap-3 border-b border-app-border px-3 py-2.5 ${getToneSurfaceClass(column.color)}`}
-											style={getColumnHeaderToneStyle(column.color, colorMode)}
+											class={column.isLinkGroup
+												? `${COLUMN_HEADER_BASE_CLASS} py-1.5 lg:min-h-12 lg:py-2`
+												: COLUMN_HEADER_COMPACT_CLASS}
 										>
 											<div class="min-w-0 flex-1">
 												{#if editingColumnId === column.id}
-													<div class="flex min-w-0 items-center gap-2">
+													<div class="flex min-w-0 items-center">
 														<input
 															bind:value={editingColumnTitle}
-															class="w-full rounded-lg border border-app-primary/40 bg-app-bg px-2 py-1 text-sm font-semibold text-app-text outline-none"
+															class="w-full rounded-md border border-app-primary/40 bg-app-bg px-1.5 py-0.5 text-[13px] font-medium leading-snug text-app-text outline-none"
 															onclick={(event) => event.stopPropagation()}
 															onblur={() => renameColumn(column.id, editingColumnTitle)}
 															onkeydown={(event) => {
@@ -1917,12 +2100,12 @@
 														/>
 													</div>
 												{:else if column.isLinkGroup}
-													<div
-														class="flex min-w-0 items-center gap-2 rounded-xl px-1 py-1 text-left"
-													>
+													<div class="flex min-w-0 items-center gap-1.5 text-left">
 														<div class="min-w-0 flex-1">
-															<div class="flex min-w-0 items-center gap-2">
-																<h3 class="min-w-0 flex-1 truncate font-semibold text-app-text">
+															<div class="flex min-w-0 items-center gap-1.5">
+																<h3
+																	class="min-w-0 flex-1 truncate text-[13px] font-medium leading-snug text-app-text"
+																>
 																	{column.title}
 																</h3>
 																<span
@@ -1933,7 +2116,7 @@
 																</span>
 															</div>
 															{#if column.linkGroupSubtitle}
-																<p class="truncate text-[11px] text-app-subtext">
+																<p class="truncate text-[11px] leading-tight text-app-subtext">
 																	{column.linkGroupSubtitle}
 																</p>
 															{/if}
@@ -1944,10 +2127,11 @@
 													<div
 														use:dragHandle
 														aria-label={`Drag column ${column.title}`}
-														class="flex min-w-0 cursor-grab items-center gap-2 rounded-xl px-1 py-1 text-left active:cursor-grabbing"
+														class="flex min-h-0 min-w-0 cursor-grab items-center gap-1.5 text-left active:cursor-grabbing"
 													>
-														<GripVertical size={15} class="shrink-0 text-app-subtext" />
-														<h3 class="min-w-0 flex-1 truncate font-semibold text-app-text">
+														<h3
+															class="min-w-0 flex-1 truncate text-[13px] font-medium leading-snug text-app-text"
+														>
 															{column.title}
 														</h3>
 														<span
@@ -1961,23 +2145,23 @@
 											</div>
 
 											{#if !column.isLinkGroup}
-												<div class="relative flex items-center gap-1">
+												<div class="relative flex shrink-0 items-center">
 													<button
 														type="button"
-														class={`text-app-subtext transition hover:bg-app-element hover:text-app-text ${
-															isMobile ? 'min-h-10 min-w-10 rounded-lg p-2.5' : 'rounded-xl p-2'
+														class={`${COLUMN_HEADER_ACTION_CLASS} ${
+															isMobile ? 'min-h-10 min-w-10 rounded-lg p-2.5' : 'h-6 w-6'
 														}`}
 														onclick={async (event) => {
 															event.stopPropagation();
 															await addTask(column.id, 'top');
 														}}
 													>
-														<Plus size={isMobile ? 18 : 16} />
+														<Plus size={isMobile ? 18 : 14} />
 													</button>
 													<button
 														type="button"
-														class={`text-app-subtext transition hover:bg-app-element hover:text-app-text ${
-															isMobile ? 'min-h-10 min-w-10 rounded-lg p-2.5' : 'rounded-xl p-2'
+														class={`${COLUMN_HEADER_ACTION_CLASS} ${
+															isMobile ? 'min-h-10 min-w-10 rounded-lg p-2.5' : 'h-6 w-6'
 														}`}
 														onclick={(event) => {
 															event.stopPropagation();
@@ -1987,16 +2171,15 @@
 															);
 														}}
 													>
-														<Ellipsis size={isMobile ? 18 : 16} />
+														<Ellipsis size={isMobile ? 18 : 14} />
 													</button>
 												</div>
 											{/if}
 										</div>
 
-										<div class="flex min-h-0 flex-1 flex-col overflow-hidden p-2">
-											<div
+										<div
 												data-column-viewport={column.id}
-												class="kainbu-scrollbar-hidden flex min-h-0 flex-1 flex-col gap-1.5 overflow-y-auto pb-8"
+												class="kainbu-scrollbar-hidden flex min-h-0 flex-auto flex-col gap-1.5 overflow-y-auto p-2"
 												use:dndzone={{
 													items: column.tasks,
 													type: 'task',
@@ -2097,48 +2280,50 @@
 																			}}
 																		></textarea>
 																	{:else}
-																		<div
-																			class="min-w-0 cursor-text rounded-md"
-																			role="presentation"
-																			onclick={(event) => event.stopPropagation()}
-																			ondblclick={(event) => {
-																				event.stopPropagation();
-																				void startTaskTitleEdit(taskColumnId, task);
-																			}}
-																			onpointerup={(event) =>
-																				handleTaskTitlePointerUp(
-																					event as PointerEvent,
-																					taskColumnId,
-																					task
-																				)}
-																		>
-																			<RichText
-																				value={getRenderedTaskTitle(task)}
-																				className={`kainbu-prose prose-tight text-sm font-medium ${task.checked ? 'opacity-70' : ''}`}
-																				onCheckboxToggle={isLocked
-																					? undefined
-																					: (index, checked) =>
-																							toggleTaskTitleCheckbox(
-																								taskColumnId,
-																								task.id,
-																								index,
-																								checked
-																							)}
-																			/>
+																		<div class="flex min-w-0 items-start gap-1">
+																			<div
+																				class="min-w-0 flex-1 cursor-text rounded-md"
+																				role="presentation"
+																				onclick={(event) => event.stopPropagation()}
+																				ondblclick={(event) => {
+																					event.stopPropagation();
+																					void startTaskTitleEdit(taskColumnId, task);
+																				}}
+																				onpointerup={(event) =>
+																					handleTaskTitlePointerUp(
+																						event as PointerEvent,
+																						taskColumnId,
+																						task
+																					)}
+																			>
+																				<RichText
+																					value={getRenderedTaskTitle(task)}
+																					className={`kainbu-prose prose-tight text-sm font-medium ${task.checked ? 'opacity-70' : ''}`}
+																					onCheckboxToggle={isLocked
+																						? undefined
+																						: (index, checked) =>
+																								toggleTaskTitleCheckbox(
+																									taskColumnId,
+																									task.id,
+																									index,
+																									checked
+																								)}
+																				/>
+																			</div>
+																			{#if task.description?.trim()}
+																				<FileText
+																					size={13}
+																					class="mt-0.5 shrink-0 text-app-subtext/45"
+																					title="Has description"
+																					aria-label="Has description"
+																				/>
+																			{/if}
 																		</div>
 																	{/if}
 																	{#if column.isLinkGroup && column.taskColumnTitles?.[task.id]}
 																		<p class="mt-1 text-[10px] text-app-subtext">
 																			{column.taskColumnTitles[task.id]}
 																		</p>
-																	{/if}
-																	{#if task.description?.trim()}
-																		<div
-																			class="mt-1 inline-flex items-center gap-1 text-[10px] text-app-subtext"
-																		>
-																			<FileText size={13} />
-																			<span>Markdown description attached</span>
-																		</div>
 																	{/if}
 																</div>
 															</div>
@@ -2242,45 +2427,6 @@
 																				: 'w-0 overflow-hidden opacity-0 transition-all duration-150 group-hover/task-actions:w-auto group-hover/task-actions:opacity-100'
 																		}`}
 																	>
-																		<button
-																			type="button"
-																			class={`transition ${
-																				linkViewAnchorId === task.id
-																					? 'text-app-primary'
-																					: 'text-app-subtext hover:bg-app-element hover:text-app-primary'
-																			} ${isMobile ? 'min-h-8 min-w-8 rounded-lg p-1.5' : 'rounded-md p-1.5'}`}
-																			title="View links"
-																			disabled={isLocked || isDiffMode}
-																			onclick={(event) => {
-																				event.stopPropagation();
-																				toggleLinkView(task.id);
-																			}}
-																		>
-																			<Link2 size={isMobile ? 18 : 16} />
-																		</button>
-																		<button
-																			type="button"
-																			class={`transition ${
-																				taskInfoMenuOpen?.colId === taskColumnId &&
-																				taskInfoMenuOpen?.taskId === task.id
-																					? 'text-app-primary'
-																					: 'text-app-subtext hover:bg-app-element hover:text-app-text'
-																			} ${isMobile ? 'min-h-8 min-w-8 rounded-lg p-1.5' : 'rounded-md p-1.5'}`}
-																			title="Card info"
-																			aria-label="Card info"
-																			aria-expanded={taskInfoMenuOpen?.colId === taskColumnId &&
-																				taskInfoMenuOpen?.taskId === task.id}
-																			onclick={(event) => {
-																				event.stopPropagation();
-																				void toggleTaskInfoMenu(
-																					taskColumnId,
-																					task.id,
-																					event.currentTarget as HTMLButtonElement
-																				);
-																			}}
-																		>
-																			<Info size={isMobile ? 18 : 16} />
-																		</button>
 																		<div class="relative">
 																			<button
 																				type="button"
@@ -2299,7 +2445,7 @@
 																					);
 																				}}
 																			>
-																				<TagIcon size={isMobile ? 18 : 16} />
+																				<TagIcon size={16} />
 																			</button>
 																		</div>
 																		<button
@@ -2316,23 +2462,7 @@
 																				void copyTaskTitle(taskColumnId, task.id);
 																			}}
 																		>
-																			<Copy size={isMobile ? 18 : 16} />
-																		</button>
-																		<button
-																			type="button"
-																			class={`text-app-subtext transition hover:bg-app-element hover:text-app-accent ${
-																				isMobile
-																					? 'min-h-8 min-w-8 rounded-lg p-1.5'
-																					: 'rounded-md p-1.5'
-																			}`}
-																			title="Queue for chat"
-																			onclick={(event) => {
-																				event.stopPropagation();
-																				onSendToChat({ task, column });
-																				closeMenus();
-																			}}
-																		>
-																			<MessageSquarePlus size={isMobile ? 18 : 16} />
+																			<Copy size={16} />
 																		</button>
 																	</div>
 
@@ -2355,27 +2485,13 @@
 																				);
 																			}}
 																		>
-																			<Ellipsis size={isMobile ? 18 : 16} />
+																			<Ellipsis size={16} />
 																		</button>
 																	</div>
 																</div>
 															</div>
 														</div>
 												{/each}
-											</div>
-											{#if !column.isLinkGroup}
-												<button
-													type="button"
-													class="mt-2 inline-flex w-full shrink-0 items-center justify-center gap-2 rounded-md border border-dashed border-app-border bg-app-bg/45 px-3 py-2.5 text-sm font-semibold text-app-subtext transition hover:border-app-primary/40 hover:text-app-primary"
-													onclick={async (event) => {
-														event.stopPropagation();
-														await addTask(column.id, 'bottom');
-													}}
-												>
-													<Plus size={isMobile ? 15 : 14} />
-													New task
-												</button>
-											{/if}
 										</div>
 									</div>
 								{/each}
@@ -2392,12 +2508,13 @@
 							</div>
 							<div class="w-2 shrink-0"></div>
 						</div>
-					</div>
-				{:else}
-					<div class="flex h-full min-h-0 min-w-max gap-3">
+					{:else}
+						<div class="flex h-full min-w-max gap-3 px-2">
 						{#each visibleDiffData as column (column.id)}
 							<div
-								class={`flex h-full shrink-0 flex-col overflow-hidden rounded-lg border bg-app-column ${column._status === 'unchanged' ? getToneSurfaceClass(column.color) : ''} ${
+								class={`flex max-h-full min-h-44 shrink-0 flex-col self-start overflow-hidden rounded-lg border bg-app-column ${
+									column._status === 'unchanged' ? getToneSurfaceClass(column.color) : ''
+								} ${
 									column._status === 'added'
 										? 'border-emerald-500/40'
 										: column._status === 'removed'
@@ -2411,13 +2528,12 @@
 									: getColumnLayoutStyle(column)}
 							>
 								<div
-									class={`border-b border-app-border px-3 py-2.5 ${column._status === 'unchanged' ? `${getToneSurfaceClass(column.color)} grayscale opacity-50` : ''}`}
-									style={column._status === 'unchanged'
-										? getColumnHeaderToneStyle(column.color, colorMode)
-										: undefined}
+									class={`${COLUMN_HEADER_COMPACT_CLASS} ${column._status === 'unchanged' ? 'grayscale opacity-50' : ''}`}
 								>
-									<div class="flex min-w-0 items-center gap-2">
-										<h3 class="min-w-0 flex-1 truncate font-semibold text-app-text">
+									<div class="flex min-w-0 items-center gap-1.5">
+										<h3
+											class="min-w-0 flex-1 truncate text-[13px] font-medium leading-snug text-app-text"
+										>
 											{column.title}
 										</h3>
 										<span class={COLUMN_TASK_COUNT_CLASS} aria-label="{column.tasks.length} cards">
@@ -2426,7 +2542,7 @@
 									</div>
 								</div>
 
-								<div class="kainbu-scrollbar-hidden min-h-0 flex-1 overflow-y-auto p-2.5">
+								<div class="kainbu-scrollbar-hidden min-h-0 flex-auto overflow-y-auto p-2.5">
 									<div class="flex flex-col gap-2.5">
 										{#each column.tasks as task (task.id)}
 											<button
@@ -2471,7 +2587,7 @@
 															<div
 																class="mt-1 inline-flex items-center gap-1 text-[10px] text-app-subtext"
 															>
-																<FileText size={11} />
+																<FileText size={13} />
 																<span>{taskDescriptionChangeLabel(task)}. Click to inspect.</span>
 															</div>
 														{/if}
@@ -2562,8 +2678,9 @@
 								</div>
 							</div>
 						{/each}
-					</div>
-				{/if}
+						</div>
+					{/if}
+				</div>
 			</div>
 		{/if}
 
@@ -2639,34 +2756,20 @@
 				<div
 					role="presentation"
 					data-column-menu
-					class="pointer-events-auto fixed w-72 max-h-[calc(100vh-1.5rem)] overflow-y-auto rounded-lg border border-app-border bg-app-surface p-2 shadow-kainbu-xl"
+					class="pointer-events-auto fixed w-60 max-h-[calc(100vh-1.5rem)] overflow-y-auto kainbu-context-menu rounded-lg"
 					style={`top:${openColumnMenu!.position.top}px; left:${openColumnMenu!.position.left}px;`}
 					onmousedown={(event) => event.stopPropagation()}
 					onclick={(event) => event.stopPropagation()}
 				>
-					<button
-						type="button"
-						class="w-full rounded-xl px-3 py-2 text-left text-sm text-app-text transition hover:bg-app-element"
-						onclick={(event) => {
-							event.stopPropagation();
-							editingColumnId = menuColumn.id;
-							editingColumnTitle = menuColumn.title;
-							openColumnMenu = null;
-						}}
-					>
-						Rename
-					</button>
-
 					<div
 						role="group"
 						aria-label={`Width controls for ${menuColumn.title}`}
-						class="mt-2 rounded-xl border border-app-border bg-app-bg/80 px-3 py-3"
+						class="px-2 py-1.5"
 					>
-						<div
-							class="mb-2 flex items-center justify-between gap-3 text-[10px] font-bold uppercase tracking-[0.22em] text-app-subtext"
-						>
-							<span>Column Width</span>
-							<span>{getColumnWidth(menuColumn)}px</span>
+						<div class="mb-1.5 flex items-center gap-2 text-[11px] text-app-subtext">
+							<RectangleHorizontal size={13} class="shrink-0" />
+							<span class="flex-1">Width</span>
+							<span class="tabular-nums text-app-text">{getColumnWidth(menuColumn)}px</span>
 						</div>
 						<input
 							type="range"
@@ -2674,7 +2777,7 @@
 							max={MAX_COLUMN_WIDTH}
 							step="4"
 							value={getColumnWidth(menuColumn)}
-							class="w-full accent-[var(--color-app-primary)]"
+							class="h-1 w-full accent-[var(--color-app-primary)]"
 							onclick={(event) => event.stopPropagation()}
 							oninput={(event) =>
 								setColumnWidth(
@@ -2682,106 +2785,132 @@
 									Number((event.currentTarget as HTMLInputElement).value)
 								)}
 						/>
-						<div class="mt-3 flex items-center justify-between gap-2">
+						<div class="mt-1.5 flex items-center gap-1">
 							<button
 								type="button"
-								class="rounded-lg border border-app-border bg-app-element px-2.5 py-1.5 text-[11px] font-semibold text-app-text transition hover:border-app-primary/35 hover:text-app-primary"
+								class="flex h-7 flex-1 items-center justify-center rounded-md border border-app-border/60 text-app-subtext transition hover:border-app-primary/35 hover:bg-app-element hover:text-app-text active:scale-[0.98]"
+								title="Narrower"
+								aria-label="Narrower column"
 								onclick={(event) => {
 									event.stopPropagation();
 									setColumnWidth(menuColumn.id, getColumnWidth(menuColumn) - 24);
 								}}
 							>
-								Narrower
+								<ArrowLeft size={14} />
 							</button>
 							<button
 								type="button"
-								class="rounded-lg border border-app-border bg-app-element px-2.5 py-1.5 text-[11px] font-semibold text-app-text transition hover:border-app-primary/35 hover:text-app-primary"
+								class="flex h-7 flex-1 items-center justify-center rounded-md border border-app-border/60 text-app-subtext transition hover:border-app-primary/35 hover:bg-app-element hover:text-app-text active:scale-[0.98]"
+								title="Reset width"
+								aria-label="Reset column width"
 								onclick={(event) => {
 									event.stopPropagation();
 									setColumnWidth(menuColumn.id, DEFAULT_COLUMN_WIDTH);
 								}}
 							>
-								Reset
+								<RotateCcw size={14} />
 							</button>
 							<button
 								type="button"
-								class="rounded-lg border border-app-border bg-app-element px-2.5 py-1.5 text-[11px] font-semibold text-app-text transition hover:border-app-primary/35 hover:text-app-primary"
+								class="flex h-7 flex-1 items-center justify-center rounded-md border border-app-border/60 text-app-subtext transition hover:border-app-primary/35 hover:bg-app-element hover:text-app-text active:scale-[0.98]"
+								title="Wider"
+								aria-label="Wider column"
 								onclick={(event) => {
 									event.stopPropagation();
 									setColumnWidth(menuColumn.id, getColumnWidth(menuColumn) + 24);
 								}}
 							>
-								Wider
+								<ArrowRight size={14} />
 							</button>
 						</div>
 					</div>
 
-					<div class="relative mt-2">
+					<div class="kainbu-menu-divider">
 						<button
 							type="button"
-							class="flex w-full items-center gap-2 rounded-xl px-3 py-2 text-left text-sm text-app-text transition hover:bg-app-element"
+							class="kainbu-menu-item"
 							onclick={(event) => {
 								event.stopPropagation();
 								columnTonePickerOpen = !columnTonePickerOpen;
 							}}
 						>
+							<Palette size={14} />
 							<span
-								class={`inline-block h-4 w-4 rounded-full border ${currentColumnTone.swatchClass}`}
+								class={`h-3.5 w-3.5 shrink-0 rounded-full border ${currentColumnTone.swatchClass}`}
 							></span>
-							<span class="flex-1">Column Tone</span>
-							<span class="text-[11px] text-app-subtext">{currentColumnTone.label}</span>
+							<span class="min-w-0 flex-1 truncate">Tone</span>
+							<span class="truncate text-[11px] text-app-subtext">{currentColumnTone.label}</span>
 							<ChevronDown
 								size={12}
-								class={`text-app-subtext transition ${columnTonePickerOpen ? 'rotate-180' : ''}`}
+								class={`shrink-0 text-app-subtext transition ${columnTonePickerOpen ? 'rotate-180' : ''}`}
 							/>
 						</button>
 						{#if columnTonePickerOpen}
-							<div role="group" class="mt-1 rounded-xl border border-app-border bg-app-bg/80 p-3">
-								<div class="grid grid-cols-5 place-items-center gap-2.5">
-									{#each SURFACE_TONE_OPTIONS as tone}
-										<button
-											type="button"
-											aria-label={`Set ${menuColumn.title} tone to ${tone.label}`}
-											title={tone.label}
-											class={`h-7 w-7 rounded-full border p-0 transition ${tone.swatchClass} ${
-												(menuColumn.color || '') === tone.value
-													? 'scale-110 border-white/80 ring-2 ring-app-primary/45'
-													: 'hover:scale-110 hover:border-app-primary/35'
-											}`}
-											onclick={(event) => {
-												event.stopPropagation();
-												setColumnColor(menuColumn.id, tone.value);
-												columnTonePickerOpen = false;
-											}}
-										></button>
-									{/each}
-								</div>
+							<div role="group" class="grid grid-cols-5 place-items-center gap-1.5 px-2 pb-1.5">
+								{#each SURFACE_TONE_OPTIONS as tone}
+									<button
+										type="button"
+										aria-label={`Set ${menuColumn.title} tone to ${tone.label}`}
+										title={tone.label}
+										class={`h-6 w-6 rounded-full border p-0 transition ${tone.swatchClass} ${
+											(menuColumn.color || '') === tone.value
+												? 'scale-105 border-white/80 ring-2 ring-app-primary/45'
+												: 'hover:scale-105 hover:border-app-primary/35'
+										}`}
+										onclick={(event) => {
+											event.stopPropagation();
+											setColumnColor(menuColumn.id, tone.value);
+											columnTonePickerOpen = false;
+										}}
+									></button>
+								{/each}
 							</div>
 						{/if}
 					</div>
 
-					<button
-						type="button"
-						class="flex w-full items-center gap-2 rounded-xl px-3 py-2 text-left text-sm text-app-text transition hover:bg-app-element"
-						onclick={(event) => {
-							event.stopPropagation();
-							copyColumnAsMarkdown(menuColumn.id);
-						}}
-					>
-						<ClipboardCopy size={14} />
-						Copy as Markdown
-					</button>
+					<div class="kainbu-menu-divider">
+						<button
+							type="button"
+							class="kainbu-menu-item"
+							onclick={(event) => {
+								event.stopPropagation();
+								editingColumnId = menuColumn.id;
+								editingColumnTitle = menuColumn.title;
+								openColumnMenu = null;
+							}}
+						>
+							<Pencil size={14} />
+							Rename
+						</button>
+					</div>
 
-					<button
-						type="button"
-						class="mt-1 w-full rounded-xl px-3 py-2 text-left text-sm text-rose-300 transition hover:bg-rose-500/10"
-						onclick={(event) => {
-							event.stopPropagation();
-							deleteColumn(menuColumn.id);
-						}}
-					>
-						Delete
-					</button>
+					<div class="kainbu-menu-divider">
+						<button
+							type="button"
+							class="kainbu-menu-item"
+							onclick={(event) => {
+								event.stopPropagation();
+								copyColumnAsMarkdown(menuColumn.id);
+							}}
+						>
+							<ClipboardCopy size={14} />
+							Copy as Markdown
+						</button>
+					</div>
+
+					<div class="kainbu-menu-divider">
+						<button
+							type="button"
+							class="kainbu-menu-item kainbu-menu-item--danger"
+							onclick={(event) => {
+								event.stopPropagation();
+								deleteColumn(menuColumn.id);
+							}}
+						>
+							<Trash2 size={14} />
+							Delete
+						</button>
+					</div>
 				</div>
 			</div>
 		{/if}
@@ -2800,73 +2929,120 @@
 					onclick={closeMenusFromBackdrop}
 				></button>
 				<div
+					bind:this={taskMenuPanel}
 					role="presentation"
 					data-task-menu
-					class="pointer-events-auto fixed w-56 max-h-[calc(100vh-1.5rem)] overflow-y-auto rounded-xl border border-app-border bg-app-surface p-2 shadow-kainbu-xl"
+					class="pointer-events-auto fixed w-56 max-h-[calc(100vh-1.5rem)] overflow-y-auto kainbu-context-menu rounded-lg {openTaskMenu!.opensAbove
+						? 'kainbu-context-menu--opens-above'
+						: ''}"
 					style={`top:${openTaskMenu!.position.top}px; left:${openTaskMenu!.position.left}px;`}
 					onmousedown={(event) => event.stopPropagation()}
 					onclick={(event) => event.stopPropagation()}
 				>
-					<button
-						type="button"
-						class="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm text-app-text transition hover:bg-app-element"
-						onclick={(event) => {
-							event.stopPropagation();
-							editingTask = { column: menuColumn, task: menuTask };
-							closeMenus();
-						}}
-					>
-						<TagIcon size={14} />
-						Edit Card
-					</button>
-					<button
-						type="button"
-						class="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm text-app-text transition hover:bg-app-element"
-						onclick={(event) => {
-							event.stopPropagation();
-							copyTaskTitle(menuColumn.id, menuTask.id);
-						}}
-					>
-						<Copy size={14} />
-						Copy Title
-					</button>
-					<button
-						type="button"
-						class="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm text-app-text transition hover:bg-app-element"
-						onclick={(event) => {
-							event.stopPropagation();
-							void openTaskLinkPicker(
-								menuColumn.id,
-								menuTask.id,
-								event.currentTarget as HTMLButtonElement
-							);
-						}}
-					>
-						<Link2 size={14} />
-						Link to task…
-					</button>
-					<button
-						type="button"
-						class="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm text-app-text transition hover:bg-app-element"
-						onclick={(event) => {
-							event.stopPropagation();
-							void createLinkedTaskFromMenu(menuColumn.id, menuTask.id);
-						}}
-					>
-						<Plus size={14} />
-						Create linked task
-					</button>
-					{#if normalizeLinkedTaskIds(menuTask.linkedTaskIds).length || getDescriptionReferencedPlacements(boardData, menuTask.id).length}
-						<div class="my-1 border-t border-app-border pt-1">
-							<p
-								class="px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-app-subtext"
-							>
-								Manage links
-							</p>
+					<div class="kainbu-menu-quick-grid" role="group" aria-label="Quick actions">
+						<button
+							type="button"
+							class="kainbu-menu-quick-btn"
+							title="Edit Card"
+							aria-label="Edit Card"
+							onclick={(event) => {
+								event.stopPropagation();
+								editingTask = { column: menuColumn, task: menuTask };
+								closeMenus();
+							}}
+						>
+							<Pencil size={15} />
+						</button>
+						<button
+							type="button"
+							class="kainbu-menu-quick-btn"
+							title="Card info"
+							aria-label="Card info"
+							onclick={(event) => {
+								event.stopPropagation();
+								void openTaskInfoFromTaskMenu(menuColumn.id, menuTask.id);
+							}}
+						>
+							<Info size={15} />
+						</button>
+						<button
+							type="button"
+							class="kainbu-menu-quick-btn"
+							title="Copy Title"
+							aria-label="Copy Title"
+							onclick={(event) => {
+								event.stopPropagation();
+								copyTaskTitle(menuColumn.id, menuTask.id);
+							}}
+						>
+							<Copy size={15} />
+						</button>
+						<button
+							type="button"
+							class="kainbu-menu-quick-btn"
+							title="Toggle Checkbox"
+							aria-label="Toggle Checkbox"
+							onclick={(event) => {
+								event.stopPropagation();
+								toggleCheckbox(menuColumn.id, menuTask.id);
+							}}
+						>
+							{#if menuTask.checked}
+								<CheckSquare size={15} />
+							{:else}
+								<Square size={15} />
+							{/if}
+						</button>
+					</div>
+
+					<div class="kainbu-menu-divider pt-1">
+						<p class="kainbu-menu-section-label">Links</p>
+						<button
+							type="button"
+							class="kainbu-menu-item {linkViewAnchorId === menuTask.id
+								? 'kainbu-menu-item--primary'
+								: ''}"
+							disabled={isLocked || isDiffMode}
+							onclick={(event) => {
+								event.stopPropagation();
+								toggleLinkView(menuTask.id);
+								closeMenus();
+							}}
+						>
+							<Link2 size={14} />
+							View links
+						</button>
+						<button
+							type="button"
+							class="kainbu-menu-item"
+							onclick={(event) => {
+								event.stopPropagation();
+								void openTaskLinkPicker(
+									menuColumn.id,
+									menuTask.id,
+									event.currentTarget as HTMLButtonElement
+								);
+							}}
+						>
+							<Link2 size={14} />
+							Link to task…
+						</button>
+						<button
+							type="button"
+							class="kainbu-menu-item"
+							onclick={(event) => {
+								event.stopPropagation();
+								void createLinkedTaskFromMenu(menuColumn.id, menuTask.id);
+							}}
+						>
+							<Plus size={14} />
+							Create linked task
+						</button>
+						{#if normalizeLinkedTaskIds(menuTask.linkedTaskIds).length || getDescriptionReferencedPlacements(boardData, menuTask.id).length}
 							{#each getExplicitLinkedTasks(boardData, menuTask.id) as linkedPlacement (linkedPlacement.task.id)}
 								<button
 									type="button"
-									class="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm text-app-text transition hover:bg-app-element"
+									class="kainbu-menu-item"
 									onclick={(event) => {
 										event.stopPropagation();
 										unlinkTaskFrom(menuTask.id, linkedPlacement.task.id);
@@ -2880,7 +3056,7 @@
 							{#each getDescriptionReferencedPlacements(boardData, menuTask.id) as linkedPlacement (linkedPlacement.task.id)}
 								<button
 									type="button"
-									class="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm text-app-text transition hover:bg-app-element"
+									class="kainbu-menu-item"
 									onclick={(event) => {
 										event.stopPropagation();
 										removeDescriptionReference(menuTask.id, linkedPlacement.task.id);
@@ -2890,106 +3066,99 @@
 									<span class="truncate">Remove ref to {linkedPlacement.task.title}</span>
 								</button>
 							{/each}
-						</div>
-					{/if}
-					<button
-						type="button"
-						class="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm text-app-accent transition hover:bg-app-accent/10 disabled:cursor-not-allowed disabled:opacity-50"
-						disabled={rewritingTaskId === menuTask.id || !getRenderedTaskTitle(menuTask).trim()}
-						onclick={(event) => {
-							event.stopPropagation();
-							void rewriteTaskTitleWithAi(menuColumn.id, menuTask.id);
-						}}
-					>
-						{#if rewritingTaskId === menuTask.id}
-							<LoaderCircle size={14} class="animate-spin" />
-						{:else}
-							<Sparkles size={14} />
 						{/if}
-						Rewrite with AI
-					</button>
-					{#if rewriteTaskError}
-						<p class="px-3 py-1 text-xs leading-snug text-rose-300">{rewriteTaskError}</p>
-					{/if}
-					{#if lastColumnMove && boardData.some((column) => column.id === lastColumnMove!.toColumnId)}
+					</div>
+
+					<div class="kainbu-menu-divider pt-1">
+						<p class="kainbu-menu-section-label">AI</p>
 						<button
 							type="button"
-							class="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm text-app-text transition hover:bg-app-element disabled:cursor-not-allowed disabled:opacity-50"
-							disabled={menuColumn.id === lastColumnMove.toColumnId}
-							title={`Move to ${getColumnTitle(lastColumnMove.toColumnId)}`}
+							class="kainbu-menu-item kainbu-menu-item--accent"
+							disabled={rewritingTaskId === menuTask.id || !getRenderedTaskTitle(menuTask).trim()}
 							onclick={(event) => {
 								event.stopPropagation();
-								repeatLastColumnMove(menuColumn.id, menuTask.id);
+								void rewriteTaskTitleWithAi(menuColumn.id, menuTask.id);
 							}}
 						>
-							<Repeat2 size={14} />
-							<span class="truncate">
-								Repeat last ({getColumnTitle(lastColumnMove.fromColumnId)} → {getColumnTitle(
-									lastColumnMove.toColumnId
-								)})
-							</span>
+							{#if rewritingTaskId === menuTask.id}
+								<LoaderCircle size={14} class="animate-spin" />
+							{:else}
+								<Sparkles size={14} />
+							{/if}
+							Rewrite with AI
 						</button>
-					{/if}
-					<button
-						type="button"
-						class="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm text-app-text transition hover:bg-app-element"
-						onclick={(event) => {
-							event.stopPropagation();
-							moveTaskToTop(menuColumn.id, menuTask.id);
-						}}
-					>
-						<ArrowUpToLine size={14} />
-						Send to Top
-					</button>
-					<button
-						type="button"
-						class="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm text-app-text transition hover:bg-app-element"
-						onclick={(event) => {
-							event.stopPropagation();
-							moveTaskToBottom(menuColumn.id, menuTask.id);
-						}}
-					>
-						<ArrowDownToLine size={14} />
-						Send to Bottom
-					</button>
-					<button
-						type="button"
-						class="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm text-app-text transition hover:bg-app-element"
-						onclick={(event) => {
-							event.stopPropagation();
-							toggleCheckbox(menuColumn.id, menuTask.id);
-						}}
-					>
-						{#if menuTask.checked}
-							<CheckSquare size={14} />
-						{:else}
-							<Square size={14} />
+						<button
+							type="button"
+							class="kainbu-menu-item kainbu-menu-item--accent"
+							onclick={(event) => {
+								event.stopPropagation();
+								onSendToChat({ task: menuTask, column: menuColumn });
+								closeMenus();
+							}}
+						>
+							<MessageSquarePlus size={14} />
+							Send to Chat
+						</button>
+						{#if rewriteTaskError}
+							<p class="px-2 py-1 text-[11px] leading-snug text-rose-300">{rewriteTaskError}</p>
 						{/if}
-						Toggle Checkbox
-					</button>
-					<button
-						type="button"
-						class="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm text-app-accent transition hover:bg-app-accent/10"
-						onclick={(event) => {
-							event.stopPropagation();
-							onSendToChat({ task: menuTask, column: menuColumn });
-							closeMenus();
-						}}
-					>
-						<MessageSquarePlus size={14} />
-						Send to Chat
-					</button>
-					<button
-						type="button"
-						class="mt-1 flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm text-rose-300 transition hover:bg-rose-500/10"
-						onclick={(event) => {
-							event.stopPropagation();
-							deleteTask(menuColumn.id, menuTask.id);
-						}}
-					>
-						<Trash2 size={14} />
-						Delete Task
-					</button>
+					</div>
+
+					<div class="kainbu-menu-divider pt-1">
+						<p class="kainbu-menu-section-label">Move</p>
+						{#if lastColumnMove && boardData.some((column) => column.id === lastColumnMove!.toColumnId)}
+							<button
+								type="button"
+								class="kainbu-menu-item"
+								disabled={menuColumn.id === lastColumnMove.toColumnId}
+								title={`Move to ${getColumnTitle(lastColumnMove.toColumnId)}`}
+								onclick={(event) => {
+									event.stopPropagation();
+									repeatLastColumnMove(menuColumn.id, menuTask.id);
+								}}
+							>
+								<Repeat2 size={14} />
+								<span class="truncate">
+									Repeat last ({getColumnTitle(lastColumnMove.fromColumnId)} → {getColumnTitle(
+										lastColumnMove.toColumnId
+									)})
+								</span>
+							</button>
+						{/if}
+						<button
+							type="button"
+							class="kainbu-menu-item"
+							onclick={(event) => {
+								event.stopPropagation();
+								moveTaskToTop(menuColumn.id, menuTask.id);
+							}}
+						>
+							<ArrowUpToLine size={14} />
+							Send to Top
+						</button>
+						<button
+							type="button"
+							class="kainbu-menu-item"
+							onclick={(event) => {
+								event.stopPropagation();
+								moveTaskToBottom(menuColumn.id, menuTask.id);
+							}}
+						>
+							<ArrowDownToLine size={14} />
+							Send to Bottom
+						</button>
+						<button
+							type="button"
+							class="kainbu-menu-item kainbu-menu-item--danger"
+							onclick={(event) => {
+								event.stopPropagation();
+								deleteTask(menuColumn.id, menuTask.id);
+							}}
+						>
+							<Trash2 size={14} />
+							Delete Task
+						</button>
+					</div>
 				</div>
 			</div>
 		{/if}
@@ -3011,7 +3180,7 @@
 					role="menu"
 					tabindex="-1"
 					data-assign-menu
-					class="pointer-events-auto fixed max-h-[min(17.5rem,calc(100vh-1.5rem))] overflow-y-auto rounded-xl border border-app-border bg-app-surface p-1 shadow-kainbu-xl"
+					class="pointer-events-auto fixed max-h-[min(17.5rem,calc(100vh-1.5rem))] overflow-y-auto kainbu-context-menu rounded-lg"
 					style={`top:${assignMenuOpen!.position.top}px; left:${assignMenuOpen!.position.left}px; width:${ASSIGN_MENU_WIDTH}px;`}
 					onmousedown={(event) => event.stopPropagation()}
 					onclick={(event) => event.stopPropagation()}
@@ -3079,15 +3248,13 @@
 					role="dialog"
 					aria-label="Card info"
 					data-task-info-menu
-					class="pointer-events-auto fixed rounded-xl border border-app-border bg-app-surface p-3 shadow-kainbu-xl"
+					class="pointer-events-auto fixed kainbu-context-menu rounded-lg p-2.5"
 					style={`top:${taskInfoMenuOpen!.position.top}px; left:${taskInfoMenuOpen!.position.left}px; width:${TASK_INFO_MENU_WIDTH}px;`}
 					onmousedown={(event) => event.stopPropagation()}
 					onclick={(event) => event.stopPropagation()}
 				>
-					<p class="mb-2 text-[10px] font-bold uppercase tracking-[0.18em] text-app-subtext">
-						Card info
-					</p>
-					<dl class="space-y-2 text-[11px]">
+					<p class="kainbu-menu-section-label mb-1.5">Card info</p>
+					<dl class="space-y-1.5 px-0.5 text-[11px]">
 						<div>
 							<dt class="font-semibold text-app-subtext">Created</dt>
 							<dd class="mt-0.5 text-app-text">{formatTaskTimestamp(infoTask.createdAt)}</dd>
@@ -3123,36 +3290,184 @@
 				<div
 					role="presentation"
 					data-task-tag-menu
-					class="pointer-events-auto fixed w-52 max-h-[calc(100vh-1.5rem)] overflow-y-auto rounded-xl border border-app-border bg-app-surface p-1 shadow-kainbu-xl"
+					class="pointer-events-auto fixed w-52 overflow-hidden kainbu-context-menu rounded-lg"
 					style={`top:${taskTagMenuOpen!.position.top}px; left:${taskTagMenuOpen!.position.left}px;`}
 					onmousedown={(event) => event.stopPropagation()}
 					onclick={(event) => event.stopPropagation()}
 				>
-					{#if existingTags.length}
-						{#each existingTags.slice(0, 10) as quickTag (quickTag.id)}
-							{@const hasTag = (menuTask.tags || []).some(
-								(entry) => entry.label.trim().toLowerCase() === quickTag.label.trim().toLowerCase()
-							)}
-							<button
-								type="button"
-								class={`flex w-full items-center justify-between gap-2 rounded-lg px-2.5 py-2 text-left text-[11px] transition ${
-									hasTag
-										? 'bg-app-primary/15 text-app-primary'
-										: 'text-app-text hover:bg-app-element'
-								}`}
-								onclick={(event) => {
-									event.stopPropagation();
-									toggleTaskTag(menuColumn.id, menuTask.id, quickTag);
-								}}
-							>
-								<span class="truncate">{quickTag.label}</span>
-								{#if hasTag}
-									<Check size={11} />
-								{/if}
-							</button>
-						{/each}
+					{#if taskTagMenuMode === 'create'}
+						<div transition:fade={{ duration: 120 }}>
+							<div class="flex items-center justify-between gap-2 px-1.5 pb-1 pt-0.5">
+								<span class="text-[10px] font-semibold uppercase tracking-[0.16em] text-app-subtext">
+									New tag
+								</span>
+								<button
+									type="button"
+									class="inline-flex h-6 w-6 items-center justify-center rounded-md text-app-subtext transition hover:bg-app-element hover:text-app-text"
+									aria-label="Back to tag list"
+									onclick={(event) => {
+										event.stopPropagation();
+										closeTaskTagMenuCreate();
+									}}
+								>
+									<X size={12} />
+								</button>
+							</div>
+							<div class="px-1.5 pb-1.5">
+								<div class="flex items-center gap-1.5 rounded-md border border-app-border bg-app-element/35 px-2 py-1.5 transition focus-within:border-app-primary/40">
+									<TagIcon size={12} class="shrink-0 text-app-subtext" />
+									<input
+										bind:this={taskTagMenuCreateInput}
+										bind:value={taskTagMenuNewLabel}
+										class="min-w-0 flex-1 bg-transparent text-[11px] text-app-text outline-none placeholder:text-app-subtext/60"
+										placeholder="Tag name"
+										onkeydown={(event) => {
+											if (event.key === 'Enter') {
+												event.preventDefault();
+												createTaskTagFromMenu(menuColumn.id, menuTask.id);
+											}
+											if (event.key === 'Escape') {
+												event.preventDefault();
+												closeTaskTagMenuCreate();
+											}
+										}}
+									/>
+									<span
+										class={`inline-block h-3 w-3 shrink-0 rounded-sm border ${taskTagMenuNewColorSwatch.swatchClass}`}
+										aria-hidden="true"
+									></span>
+								</div>
+								<div class="mt-2 grid grid-cols-7 gap-1">
+									{#each TAG_COLORS as color (color.value)}
+										<button
+											type="button"
+											aria-label={`Select ${color.value.replace('tone:', '')} color`}
+											title={color.value.replace('tone:', '')}
+											class={`h-5 w-5 border p-0 transition ${color.swatchClass} ${
+												taskTagMenuNewColor === color.value
+													? 'scale-110 border-white/80 ring-1 ring-app-primary/50'
+													: 'hover:scale-105 hover:border-app-primary/35'
+											}`}
+											onclick={(event) => {
+												event.stopPropagation();
+												taskTagMenuNewColor = color.value;
+											}}
+										></button>
+									{/each}
+								</div>
+								<button
+									type="button"
+									class="mt-2 flex w-full items-center justify-center gap-1.5 rounded-md bg-app-primary px-2 py-1.5 text-[11px] font-medium text-white transition hover:bg-app-primary-hover disabled:cursor-not-allowed disabled:opacity-45"
+									disabled={!taskTagMenuNewLabel.trim()}
+									onclick={(event) => {
+										event.stopPropagation();
+										createTaskTagFromMenu(menuColumn.id, menuTask.id);
+									}}
+								>
+									<Plus size={11} />
+									Add tag
+								</button>
+							</div>
+						</div>
 					{:else}
-						<p class="px-2.5 py-2 text-[11px] text-app-subtext">No tags yet</p>
+						<div transition:fade={{ duration: 120 }}>
+							<div class="mb-1 flex h-7 items-center gap-1 px-0.5">
+								<div
+									class={`flex h-6 min-w-0 items-center overflow-hidden rounded-md transition-all duration-200 ease-out ${
+										taskTagMenuSearchOpen
+											? 'w-full border border-app-border bg-app-element/40 px-1.5'
+											: 'w-6 border border-transparent bg-transparent'
+									}`}
+								>
+									{#if taskTagMenuSearchOpen}
+										<Search size={12} class="mr-1.5 shrink-0 text-app-subtext" />
+										<input
+											bind:this={taskTagMenuSearchInput}
+											bind:value={taskTagMenuSearchQuery}
+											class="min-w-0 flex-1 bg-transparent text-[11px] text-app-text outline-none placeholder:text-app-subtext/60"
+											placeholder="Search tags"
+											onkeydown={(event) => {
+												if (event.key === 'Escape') {
+													event.preventDefault();
+													closeTaskTagMenuSearch();
+												}
+											}}
+										/>
+										<button
+											type="button"
+											class="ml-1 inline-flex h-4 w-4 shrink-0 items-center justify-center rounded text-app-subtext transition hover:bg-app-surface hover:text-app-text"
+											aria-label="Close search"
+											onclick={(event) => {
+												event.stopPropagation();
+												closeTaskTagMenuSearch();
+											}}
+										>
+											<X size={10} />
+										</button>
+									{:else}
+										<button
+											type="button"
+											class="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-app-subtext transition hover:bg-app-element hover:text-app-text"
+											aria-label="Search tags"
+											onclick={(event) => {
+												event.stopPropagation();
+												void openTaskTagMenuSearch();
+											}}
+										>
+											<Search size={12} />
+										</button>
+									{/if}
+								</div>
+								{#if !taskTagMenuSearchOpen}
+									<button
+										type="button"
+										class="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-app-subtext transition hover:bg-app-element hover:text-app-text"
+										aria-label="Create tag"
+										onclick={(event) => {
+											event.stopPropagation();
+											void openTaskTagMenuCreate();
+										}}
+									>
+										<Plus size={12} />
+									</button>
+								{/if}
+							</div>
+
+							<div
+								class="overflow-y-auto overscroll-contain px-0.5"
+								style={`max-height:${TAG_MENU_LIST_MAX_HEIGHT}px;`}
+							>
+								{#if taskTagMenuFilteredTags.length}
+									{#each taskTagMenuFilteredTags as quickTag (quickTag.id)}
+										{@const hasTag = (menuTask.tags || []).some(
+											(entry) =>
+												entry.label.trim().toLowerCase() === quickTag.label.trim().toLowerCase()
+										)}
+										<button
+											type="button"
+											class={`mb-0.5 flex w-full items-center gap-2 rounded-md px-1.5 py-1 text-left transition last:mb-0 ${
+												hasTag ? 'bg-app-primary/12' : 'hover:bg-app-element'
+											}`}
+											onclick={(event) => {
+												event.stopPropagation();
+												toggleTaskTag(menuColumn.id, menuTask.id, quickTag);
+											}}
+										>
+											<span class={`min-w-0 truncate ${getTagToneClasses(quickTag.color)}`}>
+												{quickTag.label}
+											</span>
+											{#if hasTag}
+												<Check size={10} class="ml-auto shrink-0 text-app-primary" />
+											{/if}
+										</button>
+									{/each}
+								{:else}
+									<p class="px-2 py-3 text-center text-[11px] text-app-subtext">
+										{taskTagMenuSearchQuery.trim() ? 'No matching tags' : 'No tags yet'}
+									</p>
+								{/if}
+							</div>
+						</div>
 					{/if}
 				</div>
 			</div>

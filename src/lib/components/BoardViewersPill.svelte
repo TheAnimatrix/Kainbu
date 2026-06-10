@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { Users } from 'lucide-svelte';
+	import { Users } from '$lib/icons';
 	import { getProjectMemberDisplayName } from '$lib/kainbu/members';
 	import type { ProjectMembership } from '$lib/kainbu/types';
 
@@ -20,7 +20,7 @@
 	<div class="relative">
 		<button
 			type="button"
-			class="inline-flex items-center gap-1.5 rounded-full border border-app-border bg-app-surface px-3 py-1.5 text-[11px] font-semibold text-app-subtext transition hover:border-app-primary/30 hover:text-app-text"
+			class="inline-flex h-7 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full border border-app-border bg-app-surface px-2.5 text-[11px] font-semibold leading-none text-app-subtext transition hover:border-app-primary/30 hover:text-app-text"
 			title="Who is viewing this board"
 			aria-expanded={open}
 			onclick={toggle}

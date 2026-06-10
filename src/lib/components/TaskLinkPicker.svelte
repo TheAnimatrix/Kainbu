@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { browser } from '$app/environment';
 	import { tick } from 'svelte';
-	import { Search, X } from 'lucide-svelte';
+	import { Search, X } from '$lib/icons';
 	import type { TaskLinkPickerOption } from '$lib/kainbu/taskLinkPicker';
 
 	const portalToBody = (node: HTMLElement) => {
@@ -55,13 +55,13 @@
 			role="dialog"
 			aria-label="Link to task"
 			data-task-link-picker
-			class="pointer-events-auto fixed w-72 max-h-[min(24rem,calc(100vh-1.5rem))] overflow-hidden rounded-xl border border-app-border bg-app-surface shadow-kainbu-xl"
+			class="pointer-events-auto fixed w-64 max-h-[min(24rem,calc(100vh-1.5rem))] overflow-hidden kainbu-context-menu rounded-lg p-0"
 			style={`top:${position.top}px; left:${position.left}px;`}
 			onmousedown={(event) => event.stopPropagation()}
 			onclick={(event) => event.stopPropagation()}
 		>
-			<div class="flex items-center justify-between gap-2 border-b border-app-border px-3 py-2">
-				<p class="text-sm font-semibold text-app-text">Link to task</p>
+			<div class="flex items-center justify-between gap-2 border-b border-app-border/60 px-2 py-1.5">
+				<p class="text-[13px] font-medium text-app-text">Link to task</p>
 				<button
 					type="button"
 					class="rounded-md p-1 text-app-subtext transition hover:bg-app-element hover:text-app-text"
@@ -70,8 +70,8 @@
 					<X size={14} />
 				</button>
 			</div>
-			<div class="border-b border-app-border px-3 py-2">
-				<label class="flex items-center gap-2 rounded-lg border border-app-border bg-app-bg px-2 py-1.5">
+			<div class="border-b border-app-border/60 px-2 py-1.5">
+				<label class="flex items-center gap-2 rounded-md border border-app-border/60 bg-app-bg px-2 py-1">
 					<Search size={14} class="text-app-subtext" />
 					<input
 						bind:this={searchInput}
@@ -82,14 +82,14 @@
 					/>
 				</label>
 			</div>
-			<div class="max-h-64 overflow-y-auto p-2">
+			<div class="max-h-64 overflow-y-auto p-1">
 				{#if !filteredOptions.length}
-					<p class="px-2 py-3 text-sm text-app-subtext">No tasks match.</p>
+					<p class="px-2 py-2 text-[13px] text-app-subtext">No tasks match.</p>
 				{:else}
 					{#each filteredOptions as option (option.taskId)}
 						<button
 							type="button"
-							class="flex w-full flex-col gap-1 rounded-lg px-2 py-2 text-left transition hover:bg-app-element"
+							class="kainbu-menu-item flex-col items-start gap-0.5"
 							onclick={() => handleSelect(option.taskId)}
 						>
 							<span class="truncate text-sm font-medium text-app-text">{option.title}</span>

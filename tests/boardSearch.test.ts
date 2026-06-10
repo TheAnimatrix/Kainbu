@@ -50,6 +50,60 @@ describe('boardSearch', () => {
 		).toBe(true);
 	});
 
+	it('matches card descriptions case-insensitively', () => {
+		expect(
+			taskMatchesBoardSearch(
+				{
+					id: '1',
+					title: 'Launch',
+					description: 'Ship the **Beta** release notes',
+					tags: []
+				},
+				'beta'
+			)
+		).toBe(true);
+		expect(
+			taskMatchesBoardSearch(
+				{
+					id: '1',
+					title: 'Launch',
+					description: 'Ship the **Beta** release notes',
+					tags: []
+				},
+				'release notes'
+			)
+		).toBe(true);
+		expect(
+			taskMatchesBoardSearch(
+				{ id: '1', title: 'Launch', description: 'Ship the beta release', tags: [] },
+				'gamma'
+			)
+		).toBe(false);
+	});
+
+	it('matches tag labels case-insensitively', () => {
+		expect(
+			taskMatchesBoardSearch(
+				{
+					id: '1',
+					title: 'Untitled',
+					tags: [{ id: 'tag-1', label: 'High Priority', color: 'red' }]
+				},
+				'priority'
+			)
+		).toBe(true);
+		expect(
+			taskMatchesBoardSearch(
+				{
+					id: '1',
+					title: 'Untitled',
+					tags: [{ id: 'tag-1', label: 'High Priority', color: 'red' }]
+				},
+				'launch'
+			)
+		).toBe(false);
+	});
+
 	it('filters columns and hides empty ones', () => {
 		expect(filterColumnsForBoardSearch(sampleBoard(), 'beta')).toEqual([
 			{
@@ -61,5 +115,38 @@ describe('boardSearch', () => {
 				]
 			}
 		]);
+	});
+
+	it('filters by description and tags across columns', () => {
+		const board: KanbanData = [
+			{
+				id: 'col-a',
+				title: 'To Do',
+				width: 280,
+				tasks: [
+					{
+						id: 'task-a',
+						title: 'Card A',
+						description: 'Needs design review',
+						tags: []
+					}
+				]
+			},
+			{
+				id: 'col-b',
+				title: 'Done',
+				width: 280,
+				tasks: [
+					{
+						id: 'task-b',
+						title: 'Card B',
+						tags: [{ id: 'tag-1', label: 'Blocked', color: 'red' }]
+					}
+				]
+			}
+		];
+
+		expect(filterColumnsForBoardSearch(board, 'design')).toEqual([board[0]]);
+		expect(filterColumnsForBoardSearch(board, 'blocked')).toEqual([board[1]]);
 	});
 });

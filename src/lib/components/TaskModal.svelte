@@ -21,7 +21,7 @@
 		Unlink,
 		Upload,
 		X
-	} from 'lucide-svelte';
+	} from '$lib/icons';
 	import MarkdownBlockEditor from '$lib/components/MarkdownBlockEditor.svelte';
 	import { SURFACE_TONE_OPTIONS, TAG_COLORS } from '$lib/kainbu/constants';
 	import { createId } from '$lib/kainbu/id';
@@ -37,8 +37,10 @@
 		uploadTaskAsset
 	} from '$lib/kainbu/taskDetails';
 	import {
+		hasLeadingCardCheckboxLine,
 		replaceAssetEmbedsForClipboard,
 		stripAssetEmbeds,
+		syncLeadingCardCheckboxLine,
 		toggleMarkdownCheckbox,
 		type TaskReferenceOption
 	} from '$lib/kainbu/taskMarkdown';
@@ -365,6 +367,10 @@
 			const checked = !current.checked;
 			return {
 				...current,
+				title:
+					current.hasCheckbox && hasLeadingCardCheckboxLine(current.title || '')
+						? syncLeadingCardCheckboxLine(current.title || '', checked)
+						: current.title,
 				checked,
 				completedAt: checked ? Date.now() : undefined
 			};
@@ -944,21 +950,23 @@
 						</div>
 
 						<div class="flex items-start gap-2.5">
-							<button
-								type="button"
-								aria-label={draft.checked ? 'Mark incomplete' : 'Mark complete'}
-								title={draft.checked ? 'Mark incomplete' : 'Mark complete'}
-								class={`mt-[0.35rem] inline-flex h-[18px] w-[18px] shrink-0 items-center justify-center rounded-[0.25rem] border-[1.5px] transition ${
-									draft.checked
-										? 'border-app-primary bg-app-primary text-white'
-										: 'border-app-subtext hover:border-app-primary hover:bg-app-element/40'
-								}`}
-								on:click={toggleComplete}
-							>
-								{#if draft.checked}
-									<Check size={11} strokeWidth={3} />
-								{/if}
-							</button>
+							{#if draft.hasCheckbox}
+								<button
+									type="button"
+									aria-label={draft.checked ? 'Mark incomplete' : 'Mark complete'}
+									title={draft.checked ? 'Mark incomplete' : 'Mark complete'}
+									class={`mt-[0.35rem] inline-flex h-[18px] w-[18px] shrink-0 items-center justify-center rounded-[0.25rem] border-[1.5px] transition ${
+										draft.checked
+											? 'border-app-primary bg-app-primary text-white'
+											: 'border-app-subtext hover:border-app-primary hover:bg-app-element/40'
+									}`}
+									on:click={toggleComplete}
+								>
+									{#if draft.checked}
+										<Check size={11} strokeWidth={3} />
+									{/if}
+								</button>
+							{/if}
 							<div class="task-modal__title-editor min-w-0 flex-1">
 								<MarkdownBlockEditor
 									value={draft.title || ''}
@@ -1016,26 +1024,28 @@
 					<div class={`mx-auto w-full max-w-3xl ${isMobile ? 'px-4 py-4' : 'px-5 py-4'}`}>
 						{#if activeTab === 'properties'}
 							<div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
-								<div class="flex flex-col gap-1.5">
-									<span class="text-[10px] font-bold uppercase tracking-[0.2em] text-app-subtext">Status</span>
-									<button
-										type="button"
-										class={`inline-flex w-fit items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-semibold transition ${
-											draft.checked
-												? 'border-app-accent/40 bg-app-accent/10 text-app-accent'
-												: 'border-app-border bg-app-element/40 text-app-text hover:border-app-primary/40'
-										}`}
-										on:click={toggleComplete}
-									>
-										{#if draft.checked}
-											<CheckSquare size={13} />
-											Completed
-										{:else}
-											<Square size={13} />
-											Open
-										{/if}
-									</button>
-								</div>
+								{#if draft.hasCheckbox}
+									<div class="flex flex-col gap-1.5">
+										<span class="text-[10px] font-bold uppercase tracking-[0.2em] text-app-subtext">Status</span>
+										<button
+											type="button"
+											class={`inline-flex w-fit items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-semibold transition ${
+												draft.checked
+													? 'border-app-accent/40 bg-app-accent/10 text-app-accent'
+													: 'border-app-border bg-app-element/40 text-app-text hover:border-app-primary/40'
+											}`}
+											on:click={toggleComplete}
+										>
+											{#if draft.checked}
+												<CheckSquare size={13} />
+												Completed
+											{:else}
+												<Square size={13} />
+												Open
+											{/if}
+										</button>
+									</div>
+								{/if}
 
 								<div class="flex flex-col gap-1.5">
 									<span class="text-[10px] font-bold uppercase tracking-[0.2em] text-app-subtext">Due</span>
@@ -1337,7 +1347,7 @@
 										</div>
 										<button
 											type="button"
-											class="inline-flex items-center gap-1.5 rounded-md bg-app-primary px-2.5 py-1 text-xs font-semibold text-white transition hover:bg-app-primary-hover disabled:cursor-not-allowed disabled:opacity-50"
+											class="kainbu-btn kainbu-btn--primary kainbu-btn--compact inline-flex items-center gap-1.5 disabled:cursor-not-allowed disabled:opacity-50"
 											disabled={commentSubmitting || !commentDraft.trim().length}
 											on:click={() => void handleAddComment()}
 										>
