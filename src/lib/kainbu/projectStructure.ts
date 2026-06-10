@@ -204,6 +204,47 @@ export const mergeProjectBoardsByUpdatedAt = (
 	);
 };
 
+export const mergeProjectPagesByUpdatedAt = (
+	localPages: ProjectPage[],
+	remotePages: ProjectPage[],
+	preferLocalPageIds: ReadonlySet<string> = new Set()
+): ProjectPage[] => {
+	const localById = new Map(localPages.map((page) => [page.id, page]));
+	const remoteById = new Map(remotePages.map((page) => [page.id, page]));
+	const mergedIds = new Set([...localById.keys(), ...remoteById.keys()]);
+	const merged: ProjectPage[] = [];
+
+	for (const pageId of mergedIds) {
+		const localPage = localById.get(pageId);
+		const remotePage = remoteById.get(pageId);
+
+		if (localPage && remotePage) {
+			const preferLocalPage = preferLocalPageIds.has(pageId);
+			const remoteIsNewer = remotePage.updatedAt > localPage.updatedAt;
+			const winner = preferLocalPage ? localPage : remoteIsNewer ? remotePage : localPage;
+
+			merged.push({
+				...winner,
+				updatedAt: Math.max(localPage.updatedAt, remotePage.updatedAt)
+			});
+			continue;
+		}
+
+		if (localPage) {
+			merged.push(localPage);
+			continue;
+		}
+
+		if (remotePage) {
+			merged.push(remotePage);
+		}
+	}
+
+	return merged.sort(
+		(left, right) => left.position - right.position || left.createdAt - right.createdAt
+	);
+};
+
 export const updateProjectBoardPreferences = (
 	project: Project,
 	boardId: string,

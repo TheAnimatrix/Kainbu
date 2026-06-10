@@ -15,6 +15,21 @@ export const getProjectMemberDisplayName = (
 	return normalizeMemberValue(member.username) || normalizeMemberValue(member.email) || 'Teammate';
 };
 
+export const getMemberAvatarUrl = (
+	member: Pick<ProjectMembership, 'userId' | 'avatarUrl' | 'isCurrentUser'> | null | undefined,
+	currentUserId: string,
+	currentUserAvatarUrl: string | null | undefined
+) => {
+	if (!member) return null;
+
+	const isSelf = member.isCurrentUser || member.userId === currentUserId;
+	if (isSelf) {
+		return currentUserAvatarUrl ?? member.avatarUrl ?? null;
+	}
+
+	return member.avatarUrl ?? null;
+};
+
 export const getMemberAvatarInitials = (
 	member: Pick<ProjectMembership, 'userId' | 'email' | 'username'>
 ) => {

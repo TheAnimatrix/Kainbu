@@ -26,9 +26,14 @@
 		(initialsMode === 'double' ? getAvatarInitials(label, 2) : getAvatarInitial(label));
 	$: sizeClass = sizeClasses[size];
 	$: variantClass = variantClasses[variant];
+
+	let imageFailed = false;
+	$: if (src) {
+		imageFailed = false;
+	}
 </script>
 
-{#if src}
+{#if src && !imageFailed}
 	<img
 		src={src}
 		alt={label ? `${label} profile picture` : 'Profile picture'}
@@ -37,6 +42,9 @@
 			: 'border border-app-border'}"
 		loading="lazy"
 		decoding="async"
+		on:error={() => {
+			imageFailed = true;
+		}}
 	/>
 {:else}
 	<span

@@ -2,10 +2,11 @@ import { describe, expect, it } from 'vitest';
 import { DEFAULT_CHAT_HISTORY } from '$lib/kainbu/constants';
 import {
 	mergeProjectBoardsByUpdatedAt,
+	mergeProjectPagesByUpdatedAt,
 	resolveProjectBoardId,
 	updateProjectBoardPreferences
 } from '$lib/kainbu/projectStructure';
-import type { ProjectBoard } from '$lib/kainbu/types';
+import type { ProjectBoard, ProjectPage } from '$lib/kainbu/types';
 
 const board = (
 	id: string,
@@ -23,6 +24,17 @@ const board = (
 		checkedTaskTargetColumnId: ''
 	},
 	sharePublic: false,
+	createdAt: 0,
+	updatedAt,
+	...overrides
+});
+
+const page = (id: string, updatedAt: number, overrides: Partial<ProjectPage> = {}): ProjectPage => ({
+	id,
+	projectId: 'project-1',
+	name: id,
+	content: '',
+	position: 0,
 	createdAt: 0,
 	updatedAt,
 	...overrides
@@ -59,6 +71,21 @@ describe('mergeProjectBoardsByUpdatedAt', () => {
 		expect(mergeProjectBoardsByUpdatedAt(localBoards, remoteBoards).map((entry) => entry.id)).toEqual([
 			'local-only',
 			'remote-only'
+		]);
+	});
+
+	it('includes remote boards missing from a stale local snapshot', () => {
+		const localBoards = [board('default-board', 500)];
+		const remoteBoards = [
+			board('default-board', 100),
+			board('team-board', 200),
+			board('planning-board', 300)
+		];
+
+		expect(mergeProjectBoardsByUpdatedAt(localBoards, remoteBoards).map((entry) => entry.id)).toEqual([
+			'default-board',
+			'team-board',
+			'planning-board'
 		]);
 	});
 
@@ -123,5 +150,27 @@ describe('mergeProjectBoardsByUpdatedAt', () => {
 
 		expect(nextProject.boards[0]?.preferences.moveCheckedTasks).toBe(false);
 		expect(nextProject.activeBoardId).toBe('board-a');
+	});
+});
+
+describe('mergeProjectPagesByUpdatedAt', () => {
+	it('includes remote pages missing from a stale local snapshot', () => {
+		const localPages = [page('notes', 500)];
+		const remotePages = [page('notes', 100), page('spec', 200), page('retro', 300)];
+
+		expect(mergeProjectPagesByUpdatedAt(localPages, remotePages).map((entry) => entry.id)).toEqual([
+			'notes',
+			'spec',
+			'retro'
+		]);
+	});
+
+	it('keeps local page content while scratchpad sync is pending', () => {
+		const localPages = [page('notes', 100, { content: 'local draft' })];
+		const remotePages = [page('notes', 200, { content: 'remote copy' })];
+
+		expect(
+			mergeProjectPagesByUpdatedAt(localPages, remotePages, new Set(['notes']))[0]?.content
+		).toBe('local draft');
 	});
 });

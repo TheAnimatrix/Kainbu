@@ -16,16 +16,18 @@
 		email?: string;
 	};
 	import {
-		LayoutPanelTop,
+		Board,
+		ChevronDown,
+		Document,
+		Grid,
 		LoaderCircle,
 		Menu,
 		MessageSquare,
-		NotebookPen,
+		Plus,
 		Redo2,
 		Search,
 		Undo2
-	} from 'lucide-svelte';
-	import Icon from '@iconify/svelte';
+	} from '$lib/icons';
 	import AuthView from '$lib/components/AuthView.svelte';
 	import BrandMark from '$lib/components/BrandMark.svelte';
 	import ChatOrb from '$lib/components/ChatOrb.svelte';
@@ -55,7 +57,8 @@
 		deleteBackgroundImage,
 		uploadBackgroundImage
 	} from '$lib/kainbu/backgroundStorage';
-	import { applyColorMode, persistColorMode, readStoredColorMode } from '$lib/kainbu/colorMode';
+	import { applyColorMode, persistColorMode } from '$lib/kainbu/colorMode';
+	import { reconcileUserSettings } from '$lib/kainbu/settings';
 	import {
 		persistProjectRailCompact,
 		readStoredProjectRailCompact
@@ -157,6 +160,7 @@
 		setProjectActivePage,
 		updateProjectBoardData,
 		mergeProjectBoardsByUpdatedAt,
+		mergeProjectPagesByUpdatedAt,
 		updateProjectBoardPreferences,
 		updateProjectPageContent as updateProjectPageState
 	} from '$lib/kainbu/projectStructure';
@@ -223,25 +227,13 @@
 		future: Project['kanbanData'][];
 	};
 
-	const createInitialSettings = (): UserSettings => {
-		const nextSettings = structuredClone(DEFAULT_SETTINGS);
-		if (browser) {
-			const storedColorMode = readStoredColorMode();
-			if (storedColorMode) {
-				nextSettings.colorMode = storedColorMode;
-			}
-		}
-		return nextSettings;
-	};
+	const createInitialSettings = (): UserSettings =>
+		reconcileUserSettings(structuredClone(DEFAULT_SETTINGS), {
+			preferStoredColorMode: browser
+		});
 
-	const resolveColorModeForHydration = (
-		settingsValue: UserSettings,
-		preferStored: boolean
-	): UserSettings => {
-		if (!preferStored) return settingsValue;
-		const storedColorMode = readStoredColorMode();
-		return storedColorMode ? { ...settingsValue, colorMode: storedColorMode } : settingsValue;
-	};
+	const resolveColorModeForHydration = (settingsValue: UserSettings): UserSettings =>
+		reconcileUserSettings(settingsValue);
 
 	let user: AuthUser | null = null;
 	let projects: Project[] = [];
@@ -256,6 +248,8 @@
 	let profileLoaded = false;
 	let desktopWorkspaceTab: WorkspaceTab = 'dashboard';
 	let mobileTab: WorkspaceTab = 'dashboard';
+	let mobileChatPane: { toggleSessionSwitcher: () => void } | undefined;
+	let mobileChatSessionTrigger: HTMLButtonElement | null = null;
 	let settingsSection: SettingsSection = 'appearance';
 	let workspaceTabBeforeSettings: WorkspaceTab = 'dashboard';
 	let authHydrating = true;
@@ -372,6 +366,8 @@
 	const chatSyncTimeouts = new Map<string, ReturnType<typeof setTimeout>>();
 	const pendingChatSyncs = new Set<string>();
 	const pendingBoardPreferenceSyncs = new Set<string>();
+	const pendingBoardDeletions = new Set<string>();
+	const pendingPageDeletions = new Set<string>();
 	const boardPreferenceSyncTargets = new Map<string, BoardPreferences>();
 	const pendingBackgroundSignedUrlLoads = new Map<BackgroundImageScope, Promise<void>>();
 	const backgroundSignedUrlMeta = new Map<
@@ -426,7 +422,16 @@
 			? boardSessionHistory[getBoardHistoryKey(currentProject.id, currentBoardId)] || null
 			: null;
 	$: desktopTitle = getWorkspaceTitle(desktopWorkspaceTab, currentProject);
-	$: mobileTitle = getWorkspaceTitle(mobileTab, currentProject);
+	$: mobileHeaderTitle = (() => {
+		if (!isMobile) return desktopTitle;
+		if (mobileTab === 'dashboard') return 'Dashboard';
+		if (mobileTab === 'settings') return 'Settings';
+		if (!currentProject) return 'Kainbu';
+		if (mobileTab === 'kanban') return currentBoard?.name || 'Board';
+		if (mobileTab === 'scratchpad') return currentPage?.name || 'Page';
+		if (mobileTab === 'chat') return activeAiSession?.title || 'New chat';
+		return currentProject.name;
+	})();
 	$: currentScratchpadPad = currentProject
 		? getActiveScratchpadPad(currentProject.scratchpadData)
 		: null;
@@ -468,6 +473,10 @@
 			: currentProject?.kanbanData || [];
 	$: kanbanComparisonData =
 		previewProposal?.target === 'kanban' ? previewProposal.originalKanbanData : undefined;
+	$: mobileHeaderReviewing =
+		isMobile &&
+		((mobileTab === 'scratchpad' && scratchpadComparisonContent !== undefined) ||
+			(mobileTab === 'kanban' && kanbanComparisonData !== undefined));
 	$: timedTasks = buildTimedTasks(projects);
 	$: visibleWorkspaceTab = isMobile ? mobileTab : desktopWorkspaceTab;
 	$: workspaceUrlState = parseWorkspaceUrl($page.url.searchParams);
@@ -614,6 +623,16 @@
 	const getBoardPreferenceSyncKey = (projectId: string, boardId: string) =>
 		`${projectId}::board-pref::${boardId}`;
 
+	const getPendingKanbanBoardIds = (projectId: string) =>
+		new Set(
+			getBoardSyncKeysForProject(projectId).map((key) =>
+				key.slice(`${projectId}::board::`.length)
+			)
+		);
+	const getPendingSyncPageIds = (projectId: string) =>
+		new Set(
+			getPageSyncKeysForProject(projectId).map((key) => key.slice(`${projectId}::page::`.length))
+		);
 	const getPendingBoardPreferenceBoardIds = (projectId: string) =>
 		new Set(
 			[...new Set([...pendingBoardPreferenceSyncs, ...boardPreferenceSyncTargets.keys()])]
@@ -1235,7 +1254,8 @@
 		nextLastSettingsSyncAt = lastSettingsSyncAt,
 		nextLastSuccessfulSyncAt = lastSuccessfulSyncAt
 	}: WorkspaceStateInput) => {
-		const normalizedSettings = normalizeAiSettings(nextSettings);
+		const normalizedSettings = reconcileUserSettings(normalizeAiSettings(nextSettings));
+		persistColorMode(normalizedSettings.colorMode);
 		const sortedProjects = sortProjects(
 			nextProjects.map((project) =>
 				syncProjectAiModelIds(
@@ -1295,7 +1315,7 @@
 
 		refreshPendingProposalStaleness(sortedProjects);
 
-		if (profile?.userId && user?.id === profile.userId) {
+		if (profileLoaded && profile?.userId && user?.id === profile.userId) {
 			syncCurrentUserAvatarAcrossProjects(profile.avatarUrl ?? null);
 		}
 
@@ -1331,6 +1351,8 @@
 		chatSyncTimeouts.clear();
 		pendingChatSyncs.clear();
 		pendingBoardPreferenceSyncs.clear();
+		pendingBoardDeletions.clear();
+		pendingPageDeletions.clear();
 		boardPreferenceSyncTargets.clear();
 		stopWorkspaceSubscription?.();
 		stopWorkspaceSubscription = null;
@@ -1795,15 +1817,6 @@
 		return items[0]?.id || '';
 	};
 
-	const localChildListHasPendingDeletions = (
-		localItems: { id: string }[],
-		remoteItems: { id: string }[]
-	) => {
-		if (localItems.length >= remoteItems.length) return false;
-		const remoteIds = new Set(remoteItems.map((item) => item.id));
-		return localItems.every((item) => remoteIds.has(item.id));
-	};
-
 	const mergeRemoteProjects = (localProjects: Project[], remoteProjects: Project[]) => {
 		const localProjectsById = new Map(localProjects.map((project) => [project.id, project]));
 		const remoteProjectsById = new Map(remoteProjects.map((project) => [project.id, project]));
@@ -1817,25 +1830,32 @@
 			}
 
 			const preferLocalFallback = localProject.updatedAt > remoteProject.updatedAt;
-			const preferLocalBoardState =
-				preferLocalFallback ||
-				hasPendingBoardSyncForProject(remoteProject.id) ||
-				localProject.boards.length > remoteProject.boards.length ||
-				localChildListHasPendingDeletions(localProject.boards, remoteProject.boards);
-			const preferLocalPageState =
-				preferLocalFallback ||
-				hasPendingPageSyncForProject(remoteProject.id) ||
-				localProject.pages.length > remoteProject.pages.length ||
-				localChildListHasPendingDeletions(localProject.pages, remoteProject.pages);
+			const preferLocalBoardList = localProject.boards.length > remoteProject.boards.length;
+			const preferLocalPageList = localProject.pages.length > remoteProject.pages.length;
+			const mergedBoards = (
+				preferLocalBoardList
+					? localProject.boards
+					: mergeProjectBoardsByUpdatedAt(
+							localProject.boards,
+							remoteProject.boards,
+							new Set([
+								...getPendingBoardPreferenceBoardIds(remoteProject.id),
+								...getPendingKanbanBoardIds(remoteProject.id)
+							])
+						)
+			).filter(
+				(board) => !pendingBoardDeletions.has(getBoardHistoryKey(remoteProject.id, board.id))
+			);
+			const mergedPages = (
+				preferLocalPageList
+					? localProject.pages
+					: mergeProjectPagesByUpdatedAt(
+							localProject.pages,
+							remoteProject.pages,
+							getPendingSyncPageIds(remoteProject.id)
+						)
+			).filter((page) => !pendingPageDeletions.has(getPageSyncKey(remoteProject.id, page.id)));
 			const preferLocalAiState = pendingChatSyncs.has(remoteProject.id) || preferLocalFallback;
-			const mergedBoards = preferLocalBoardState
-				? localProject.boards
-				: mergeProjectBoardsByUpdatedAt(
-						localProject.boards,
-						remoteProject.boards,
-						getPendingBoardPreferenceBoardIds(remoteProject.id)
-					);
-			const mergedPages = preferLocalPageState ? localProject.pages : remoteProject.pages;
 			const activeBoardId = resolveMergedActiveId(
 				mergedBoards,
 				localProject.activeBoardId,
@@ -1856,15 +1876,25 @@
 
 				const localPresence = localMember.presenceAt ?? 0;
 				const remotePresence = remoteMember.presenceAt ?? 0;
-				if (localPresence > remotePresence) {
-					return {
-						...remoteMember,
-						viewingBoardId: localMember.viewingBoardId ?? remoteMember.viewingBoardId,
-						presenceAt: localMember.presenceAt
-					};
+				const mergedMember =
+					localPresence > remotePresence
+						? {
+								...remoteMember,
+								viewingBoardId: localMember.viewingBoardId ?? remoteMember.viewingBoardId,
+								presenceAt: localMember.presenceAt
+							}
+						: remoteMember;
+
+				if (
+					user?.id &&
+					remoteMember.userId === user.id &&
+					localMember.avatarUrl &&
+					!remoteMember.avatarUrl
+				) {
+					return { ...mergedMember, avatarUrl: localMember.avatarUrl };
 				}
 
-				return remoteMember;
+				return mergedMember;
 			});
 
 			merged.push({
@@ -1916,10 +1946,7 @@
 			applyWorkspaceState({
 				nextProjects: localSnapshot.projects,
 				preferredProjectId: localSnapshot.currentProjectId,
-				nextSettings: resolveColorModeForHydration(
-					localSnapshot.settings,
-					!localSnapshot.dirtySettings
-				),
+				nextSettings: resolveColorModeForHydration(localSnapshot.settings),
 				nextDirtySettings: localSnapshot.dirtySettings,
 				nextProjectRevisions: localSnapshot.projectRevisions,
 				nextLastProjectSyncAt: localSnapshot.lastProjectSyncAt,
@@ -1934,7 +1961,7 @@
 		try {
 			const [workspaceResult, settingsResult, profileResult] = await Promise.allSettled([
 				withTimeout(
-					fetchWorkspace(currentUser.id),
+					fetchWorkspace(currentUser.id, { fresh: true }),
 					STARTUP_TIMEOUT_MS,
 					'Loading your boards timed out. Please retry.'
 				),
@@ -1983,8 +2010,7 @@
 									backgroundTheme: localSnapshot.settings.backgroundTheme
 								}
 							: settingsResult.value
-						: localSnapshot?.settings || structuredClone(DEFAULT_SETTINGS),
-				!localSnapshot?.dirtySettings
+						: localSnapshot?.settings || structuredClone(DEFAULT_SETTINGS)
 			);
 
 			applyWorkspaceState({
@@ -2797,6 +2823,9 @@
 		const nextActiveBoardId =
 			project.activeBoardId === boardId ? remainingBoards[0]?.id || '' : project.activeBoardId;
 
+		const deletionKey = getBoardHistoryKey(projectId, boardId);
+		pendingBoardDeletions.add(deletionKey);
+
 		clearBoardSyncState(projectId, boardId);
 		applyWorkspaceState({
 			nextProjects: projects.map((entry) =>
@@ -2824,6 +2853,8 @@
 				nextProjects: previousProjects,
 				preferredProjectId: currentProjectId
 			});
+		} finally {
+			pendingBoardDeletions.delete(deletionKey);
 		}
 	};
 
@@ -2841,6 +2872,9 @@
 		const remainingPages = project.pages.filter((p) => p.id !== pageId);
 		const nextActivePageId =
 			project.activePageId === pageId ? remainingPages[0]?.id || '' : project.activePageId;
+
+		const deletionKey = getPageSyncKey(projectId, pageId);
+		pendingPageDeletions.add(deletionKey);
 
 		clearPageSyncState(projectId, pageId);
 		applyWorkspaceState({
@@ -2869,6 +2903,8 @@
 				nextProjects: previousProjects,
 				preferredProjectId: currentProjectId
 			});
+		} finally {
+			pendingPageDeletions.delete(deletionKey);
 		}
 	};
 
@@ -3063,15 +3099,20 @@
 
 	const handleSelectPersonalBackground = async (theme: BackgroundTheme) => {
 		const previousTheme = settings.backgroundTheme;
-		if (getBackgroundThemeKey(previousTheme) === getBackgroundThemeKey(theme)) return;
+		const themeChanged =
+			getBackgroundThemeKey(previousTheme) !== getBackgroundThemeKey(theme);
 
 		try {
-			await commitSettingsChange({
-				...settings,
-				backgroundTheme: theme
-			});
-			if (isImageBackgroundTheme(previousTheme)) {
-				await safelyDeleteBackgroundImage(previousTheme.path);
+			if (themeChanged) {
+				await commitSettingsChange({
+					...settings,
+					backgroundTheme: theme
+				});
+				if (isImageBackgroundTheme(previousTheme)) {
+					await safelyDeleteBackgroundImage(previousTheme.path);
+				}
+			} else {
+				applyThemeAccent(theme, personalBackgroundImageUrl ?? '', settings.colorMode);
 			}
 		} catch (error) {
 			console.error(error);
@@ -3153,12 +3194,21 @@
 
 		const projectId = currentProject.id;
 		const previousTheme = currentProject.backgroundTheme;
-		if (getBackgroundThemeKey(previousTheme) === getBackgroundThemeKey(theme)) return;
+		const themeChanged =
+			getBackgroundThemeKey(previousTheme) !== getBackgroundThemeKey(theme);
 
 		try {
-			await commitProjectBackgroundChange(projectId, theme);
-			if (isImageBackgroundTheme(previousTheme)) {
-				await safelyDeleteBackgroundImage(previousTheme.path);
+			if (themeChanged) {
+				await commitProjectBackgroundChange(projectId, theme);
+				if (isImageBackgroundTheme(previousTheme)) {
+					await safelyDeleteBackgroundImage(previousTheme.path);
+				}
+			} else {
+				applyThemeAccent(
+					theme,
+					projectBackgroundImageUrl ?? '',
+					settings.colorMode
+				);
 			}
 		} catch (error) {
 			console.error(error);
@@ -4578,10 +4628,8 @@
 	};
 
 	onMount(() => {
-		const storedColorMode = readStoredColorMode();
-		if (storedColorMode && storedColorMode !== settings.colorMode) {
-			settings = { ...settings, colorMode: storedColorMode };
-		}
+		settings = reconcileUserSettings(settings, { preferStoredColorMode: true });
+		persistColorMode(settings.colorMode);
 
 		void loadAiModels();
 		void fetchAuthSettings()
@@ -4740,12 +4788,16 @@
 
 			<div class="relative flex min-h-0 min-w-0 flex-1">
 				<div class="relative flex min-h-0 min-w-0 flex-1 flex-col">
-					<header class="bg-app-bg/82 px-3 py-2 backdrop-blur-xl lg:px-4">
-						<div class="flex flex-wrap items-center gap-2.5">
+					<header
+						class={`kainbu-workspace-header relative z-10 shrink-0 border-b border-app-border/80 bg-app-bg/82 backdrop-blur-xl lg:border-b-0 lg:px-4 ${
+							isMobile ? 'px-2 py-1' : 'px-3 py-2'
+						}`}
+					>
+						<div class="flex min-h-10 items-center gap-1.5 lg:gap-2.5">
 							{#if isMobile}
 								<button
 									type="button"
-									class="inline-flex items-center justify-center p-1.5 text-app-text transition hover:text-app-primary"
+									class="inline-flex shrink-0 items-center justify-center rounded-md p-1.5 text-app-text transition hover:bg-app-element hover:text-app-primary"
 									on:click={() => (showProjectSheet = true)}
 									aria-label="Open workspace menu"
 									title="Open workspace menu"
@@ -4754,23 +4806,57 @@
 								</button>
 							{/if}
 
-							<button
-								type="button"
-								class="inline-flex h-10 items-center justify-center text-app-text transition hover:opacity-85"
-								on:click={() => setWorkspaceTab('dashboard')}
-								aria-label="Go to dashboard"
-								title="Go to dashboard"
-							>
-								<BrandMark size={36} alt="" />
-							</button>
-
-							<div class="min-w-0 flex-1">
-								<h1
-									class="truncate text-base font-semibold tracking-tight text-app-text lg:text-lg"
+							{#if !isMobile}
+								<button
+									type="button"
+									class="inline-flex h-10 items-center justify-center text-app-text transition hover:opacity-85"
+									on:click={() => setWorkspaceTab('dashboard')}
+									aria-label="Go to dashboard"
+									title="Go to dashboard"
 								>
-									{isMobile ? mobileTitle : desktopTitle}
-								</h1>
+									<BrandMark size={36} alt="" />
+								</button>
+							{/if}
+
+							<div class="flex min-w-0 flex-1 items-center gap-2">
+								{#if isMobile && mobileTab === 'chat' && currentProject}
+									<button
+										bind:this={mobileChatSessionTrigger}
+										type="button"
+										class="inline-flex min-w-0 max-w-full items-center gap-1 rounded-lg border border-transparent px-1.5 py-1 text-left text-app-text transition hover:border-app-border hover:bg-app-element/60"
+										aria-haspopup="listbox"
+										aria-label="Switch chat"
+										title="Switch chat"
+										on:click={() => mobileChatPane?.toggleSessionSwitcher()}
+									>
+										<span class="min-w-0 truncate text-sm font-semibold tracking-tight">
+											{mobileHeaderTitle}
+										</span>
+										<ChevronDown size={14} class="shrink-0 text-app-subtext" />
+									</button>
+								{:else}
+									<h1
+										class="min-w-0 truncate text-sm font-semibold tracking-tight text-app-text lg:text-lg"
+									>
+										{isMobile ? mobileHeaderTitle : desktopTitle}
+									</h1>
+								{/if}
+								{#if mobileHeaderReviewing}
+									<span class="shrink-0 text-[11px] font-medium text-app-accent">Reviewing</span>
+								{/if}
 							</div>
+
+							{#if isMobile && mobileTab === 'chat' && currentProject}
+								<button
+									type="button"
+									class="inline-flex shrink-0 items-center justify-center rounded-md p-1.5 text-app-subtext transition hover:bg-app-element hover:text-app-text"
+									on:click={handleCreateAiSession}
+									title="New chat"
+									aria-label="New chat"
+								>
+									<Plus size={16} />
+								</button>
+							{/if}
 
 							{#if !isMobile && desktopWorkspaceTab !== 'settings'}
 								<div
@@ -4786,22 +4872,7 @@
 										on:click={() => setWorkspaceTab('dashboard')}
 										title="Dashboard"
 									>
-										<svg
-											xmlns="http://www.w3.org/2000/svg"
-											width="16"
-											height="16"
-											viewBox="0 0 24 24"
-											fill="none"
-											stroke="currentColor"
-											stroke-width="1.75"
-											stroke-linecap="round"
-											stroke-linejoin="round"
-										>
-											<rect x="3" y="3" width="7" height="7" rx="1" />
-											<rect x="14" y="3" width="7" height="7" rx="1" />
-											<rect x="3" y="14" width="7" height="7" rx="1" />
-											<rect x="14" y="14" width="7" height="7" rx="1" />
-										</svg>
+										<Grid size={16} />
 									</button>
 									<button
 										type="button"
@@ -4813,21 +4884,7 @@
 										on:click={() => setWorkspaceTab('kanban')}
 										title="Board"
 									>
-										<svg
-											xmlns="http://www.w3.org/2000/svg"
-											width="16"
-											height="16"
-											viewBox="0 0 24 24"
-											fill="none"
-											stroke="currentColor"
-											stroke-width="1.75"
-											stroke-linecap="round"
-											stroke-linejoin="round"
-										>
-											<rect x="3" y="3" width="18" height="18" rx="2" />
-											<path d="M9 3v18" />
-											<path d="M15 3v18" />
-										</svg>
+										<Board size={16} />
 									</button>
 									<button
 										type="button"
@@ -4839,24 +4896,7 @@
 										on:click={() => setWorkspaceTab('scratchpad')}
 										title="Pages"
 									>
-										<svg
-											xmlns="http://www.w3.org/2000/svg"
-											width="16"
-											height="16"
-											viewBox="0 0 24 24"
-											fill="none"
-											stroke="currentColor"
-											stroke-width="1.75"
-											stroke-linecap="round"
-											stroke-linejoin="round"
-										>
-											<path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z" />
-											<path d="M14 2v4a2 2 0 0 0 2 2h4" />
-											<path d="M10 13H8" />
-											<path d="M16 13h-2" />
-											<path d="M10 17H8" />
-											<path d="M16 17h-2" />
-										</svg>
+										<Document size={16} />
 									</button>
 								</div>
 							{/if}
@@ -5045,6 +5085,7 @@
 													isLocked={proposalPreviewTarget === 'scratchpad'}
 													comparisonContent={scratchpadComparisonContent}
 													active={mobileTab === 'scratchpad'}
+													hideHeader={true}
 													referenceOptions={scratchpadReferenceOptions}
 													onReferenceNavigate={handleScratchpadReferenceNavigate}
 													onChange={handleScratchpadChange}
@@ -5059,6 +5100,7 @@
 												out:fade={projectSwitchFadeOut}
 											>
 												<ChatPane
+													bind:this={mobileChatPane}
 													history={currentProject.chatHistory}
 													bind:draft={composerDraft}
 													{queuedAttachments}
@@ -5075,6 +5117,8 @@
 													modelOptions={aiModels}
 													active={mobileTab === 'chat'}
 													chrome="mobile"
+													hideHeader={true}
+													sessionSwitcherAnchor={mobileChatSessionTrigger}
 													onDraftChange={handleDraftChange}
 													onSend={handleSendMessage}
 													onAddAttachments={handleAddAttachments}
@@ -5146,7 +5190,7 @@
 												<div class="mt-4 flex justify-center gap-2">
 													<button
 														type="button"
-														class="rounded-md bg-app-primary px-4 py-2 text-sm font-semibold text-white"
+														class="kainbu-btn kainbu-btn--primary"
 														on:click={() => setWorkspaceTab('dashboard')}
 													>
 														Go to dashboard
@@ -5290,7 +5334,7 @@
 												<div class="mt-4 flex justify-center gap-2">
 													<button
 														type="button"
-														class="rounded-md bg-app-primary px-4 py-2 text-sm font-semibold text-white"
+														class="kainbu-btn kainbu-btn--primary"
 														on:click={() => setWorkspaceTab('dashboard')}
 													>
 														Go to dashboard
@@ -5313,27 +5357,26 @@
 
 					{#if isMobile}
 						{@const mobileTabs = [
-							{ id: 'kanban', label: 'Board', Icon: LayoutPanelTop },
-							{ id: 'scratchpad', label: 'Pages', Icon: NotebookPen },
+							{ id: 'kanban', label: 'Board', Icon: Board },
+							{ id: 'scratchpad', label: 'Pages', Icon: Document },
 							{ id: 'chat', label: 'Chat', Icon: MessageSquare }
 						]}
-						<nav
-							class="shrink-0 border-t border-app-border/80 bg-app-surface/92 backdrop-blur-xl pb-[var(--safe-bottom)]"
-						>
-							<div class="grid grid-cols-3">
+						<nav class="kainbu-mobile-tab-bar" aria-label="Workspace">
+							<div class="kainbu-mobile-tab-bar__track" role="tablist">
 								{#each mobileTabs as tab (tab.id)}
 									{@const isActive = tab.id === mobileTab}
 									<button
 										type="button"
-										class={`inline-flex items-center justify-center p-2 transition-colors ${
-											isActive ? 'text-app-primary' : 'text-app-subtext hover:text-app-text'
+										class={`kainbu-mobile-tab-bar__item${
+											isActive ? ' kainbu-mobile-tab-bar__item--active' : ''
 										}`}
+										role="tab"
 										on:click={() => setWorkspaceTab(tab.id as WorkspaceTab)}
 										aria-label={tab.label}
+										aria-selected={isActive}
 										title={tab.label}
-										aria-current={isActive ? 'page' : undefined}
 									>
-										<svelte:component this={tab.Icon} size={18} />
+										<svelte:component this={tab.Icon} size={20} />
 									</button>
 								{/each}
 							</div>
@@ -5350,7 +5393,7 @@
 						/>
 					{/if}
 					<div
-						class="desktop-chat-sidebar relative h-full shrink-0 overflow-hidden border-l border-app-border bg-app-surface/92 backdrop-blur-xl"
+						class="desktop-chat-sidebar relative h-full shrink-0 overflow-hidden border-l border-app-border/40 bg-app-bg shadow-2xl shadow-black/40"
 						class:desktop-chat-sidebar--collapsed={desktopChatCollapsed}
 						aria-hidden={desktopChatCollapsed}
 						style={`width:${desktopChatCollapsed ? '0' : `${desktopChatWidth}rem`};`}
@@ -5435,7 +5478,7 @@
 
 		{#if nameModalState}
 			<div
-				class="absolute inset-0 z-40 flex items-center justify-center bg-app-bg/60 p-4 backdrop-blur-sm"
+				class="kainbu-overlay absolute inset-0 z-40 flex items-center justify-center p-4"
 			>
 				<div
 					role="dialog"
@@ -5502,7 +5545,7 @@
 							<button
 								type="submit"
 								disabled={!nameModalState.value.trim()}
-								class="rounded-lg bg-app-primary px-3 py-2 text-sm font-semibold text-white transition hover:bg-app-primary-hover disabled:opacity-40"
+								class="kainbu-btn kainbu-btn--primary disabled:opacity-40"
 							>
 								{nameModalState.kind.startsWith('create') ? 'Create' : 'Save'}
 							</button>
@@ -5518,6 +5561,7 @@
 				{currentProjectId}
 				{currentBoardId}
 				{currentPageId}
+				activeSurface={projectRailActiveSurface}
 				onClose={() => (showProjectSheet = false)}
 				onOpenBoard={openProjectBoard}
 				onOpenPage={openProjectPage}

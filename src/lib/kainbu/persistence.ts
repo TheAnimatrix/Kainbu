@@ -1023,6 +1023,24 @@ const loadWorkspaceFromRemote = async (userId: string) => {
 				// Member names are a display enhancement; keep workspace fetch usable if API is offline.
 			}
 		}
+
+		try {
+			const selfRecord = await pb.collection('users').getOne(userId);
+			const selfAvatarUrl = getUserAvatarUrl(selfRecord);
+			const selfProfile = profileRows.find((row) => row.user_id === userId);
+			if (selfProfile) {
+				selfProfile.avatar_url = selfAvatarUrl ?? selfProfile.avatar_url;
+			} else {
+				profileRows.push({
+					user_id: userId,
+					email: typeof selfRecord.email === 'string' ? selfRecord.email : null,
+					username: normalizeUsernameValue(selfRecord.username as string | null | undefined),
+					avatar_url: selfAvatarUrl
+				});
+			}
+		} catch {
+			// Keep workspace usable if the self profile read fails.
+		}
 	}
 
 	const profileIdentityById = new Map(
