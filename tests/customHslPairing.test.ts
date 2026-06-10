@@ -5,8 +5,10 @@ import {
 	DEFAULT_LIGHT_CUSTOM_HSL,
 	adaptBackgroundThemeForColorMode,
 	customHslSolidTheme,
+	getThemeAccentColors,
 	pairCustomHslForColorMode
 } from '$lib/kainbu/backgrounds';
+import { normalizeUserSettings } from '$lib/kainbu/settings';
 
 describe('pairCustomHslForColorMode', () => {
 	it('exports app background hex values for theme-color meta', () => {
@@ -28,17 +30,63 @@ describe('pairCustomHslForColorMode', () => {
 		const pairedLight = pairCustomHslForColorMode(customDark, 'light');
 
 		expect(pairedLight.h).toBe(142);
-		expect(pairedLight.l).toBe(97);
+		expect(pairedLight.l).toBe(DEFAULT_LIGHT_CUSTOM_HSL.l);
 		expect(pairCustomHslForColorMode(pairedLight, 'dark').h).toBe(142);
+	});
+
+	it('infers light color mode from a light custom background when color_mode is missing', () => {
+		const settings = normalizeUserSettings({
+			background_theme: customHslSolidTheme(
+				DEFAULT_LIGHT_CUSTOM_HSL.h,
+				DEFAULT_LIGHT_CUSTOM_HSL.s,
+				DEFAULT_LIGHT_CUSTOM_HSL.l
+			)
+		});
+
+		expect(settings.colorMode).toBe('light');
+		expect(settings.backgroundTheme).toEqual(
+			customHslSolidTheme(
+				DEFAULT_LIGHT_CUSTOM_HSL.h,
+				DEFAULT_LIGHT_CUSTOM_HSL.s,
+				DEFAULT_LIGHT_CUSTOM_HSL.l
+			)
+		);
+	});
+
+	it('derives accent hue from custom hsl even when the background stays near-neutral', () => {
+		const coolAccent = getThemeAccentColors(customHslSolidTheme(220, 8, 6), '', 'dark');
+		const warmAccent = getThemeAccentColors(customHslSolidTheme(32, 8, 6), '', 'dark');
+
+		expect(coolAccent.primary).not.toEqual(warmAccent.primary);
+		expect(coolAccent.primary.b).toBeGreaterThan(warmAccent.primary.b);
 	});
 
 	it('adapts custom hsl and legacy obsidian themes', () => {
 		expect(
-			adaptBackgroundThemeForColorMode(customHslSolidTheme(206, 78, 2), 'light')
-		).toEqual(customHslSolidTheme(206, 18, 97));
+			adaptBackgroundThemeForColorMode(
+				customHslSolidTheme(
+					DEFAULT_DARK_CUSTOM_HSL.h,
+					DEFAULT_DARK_CUSTOM_HSL.s,
+					DEFAULT_DARK_CUSTOM_HSL.l
+				),
+				'light'
+			)
+		).toEqual(
+			customHslSolidTheme(
+				DEFAULT_LIGHT_CUSTOM_HSL.h,
+				DEFAULT_LIGHT_CUSTOM_HSL.s,
+				DEFAULT_LIGHT_CUSTOM_HSL.l
+			)
+		);
 
 		expect(
 			adaptBackgroundThemeForColorMode({ kind: 'solid', id: 'obsidian' }, 'light')
-		).toEqual(customHslSolidTheme(206, 18, 97));
+		).toEqual(
+			customHslSolidTheme(
+				DEFAULT_LIGHT_CUSTOM_HSL.h,
+				DEFAULT_LIGHT_CUSTOM_HSL.s,
+				DEFAULT_LIGHT_CUSTOM_HSL.l
+			)
+		);
 	});
 });

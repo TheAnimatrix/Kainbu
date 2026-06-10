@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { createEventDispatcher } from 'svelte';
 	import {
+		applyThemeAccent,
 		customHslSolidTheme,
 		getBackgroundThemeKey,
 		isCustomHslSolidId,
@@ -10,6 +11,7 @@
 
 	export let colorMode: ColorMode = 'dark';
 	export let currentTheme: BackgroundTheme | null | undefined = null;
+	export let compact = false;
 
 	const dispatch = createEventDispatcher<{ change: BackgroundTheme }>();
 
@@ -42,18 +44,23 @@
 		}, 160);
 	};
 
+	const previewAccent = () => {
+		applyThemeAccent(customHslSolidTheme(hsl.h, hsl.s, hsl.l), '', colorMode);
+	};
+
 	const updateHsl = (patch: Partial<Hsl>) => {
 		hsl = {
 			h: patch.h ?? hsl.h,
 			s: patch.s ?? hsl.s,
 			l: patch.l ?? hsl.l
 		};
+		previewAccent();
 		scheduleChange();
 	};
 </script>
 
 <div
-	class={`kainbu-hsl-picker ${selected ? 'kainbu-hsl-picker--selected' : ''}`}
+	class={`kainbu-hsl-picker ${compact ? 'kainbu-hsl-picker--compact' : ''} ${selected ? 'kainbu-hsl-picker--selected' : ''}`}
 	role="group"
 	aria-label="Custom HSL background"
 >
@@ -148,7 +155,7 @@
 		flex: 1;
 		flex-direction: column;
 		justify-content: center;
-		gap: 0.45rem;
+		gap: 0.55rem;
 	}
 
 	.kainbu-hsl-picker__field {
@@ -195,5 +202,52 @@
 	.kainbu-hsl-picker__range:focus-visible {
 		outline: 2px solid color-mix(in oklab, var(--color-app-primary) 70%, white);
 		outline-offset: 2px;
+	}
+
+	.kainbu-hsl-picker--compact {
+		gap: 0.5rem;
+		padding: 0.45rem 0.55rem;
+	}
+
+	.kainbu-hsl-picker--compact .kainbu-hsl-picker__preview {
+		height: 2rem;
+		width: 2rem;
+		border-radius: 0.5rem;
+	}
+
+	.kainbu-hsl-picker--compact .kainbu-hsl-picker__sliders {
+		gap: 0.55rem;
+	}
+
+	.kainbu-hsl-picker--compact .kainbu-hsl-picker__field {
+		grid-template-columns: minmax(0, 1fr);
+		gap: 0;
+		padding-block: 0.1rem;
+	}
+
+	.kainbu-hsl-picker--compact .kainbu-hsl-picker__label {
+		position: absolute;
+		width: 1px;
+		height: 1px;
+		padding: 0;
+		margin: -1px;
+		overflow: hidden;
+		clip: rect(0, 0, 0, 0);
+		white-space: nowrap;
+		border: 0;
+	}
+
+	.kainbu-hsl-picker--compact .kainbu-hsl-picker__range {
+		height: 0.35rem;
+	}
+
+	.kainbu-hsl-picker--compact .kainbu-hsl-picker__range::-webkit-slider-thumb {
+		height: 0.75rem;
+		width: 0.75rem;
+	}
+
+	.kainbu-hsl-picker--compact .kainbu-hsl-picker__range::-moz-range-thumb {
+		height: 0.75rem;
+		width: 0.75rem;
 	}
 </style>

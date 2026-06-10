@@ -1,19 +1,12 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { ArrowLeft, ImageUp, Moon, RefreshCcw, Sun, Trash2 } from 'lucide-svelte';
+	import { ArrowLeft, ImageUp, Moon, Sun, Trash2 } from '$lib/icons';
 	import AccountIdentityForm from '$lib/components/AccountIdentityForm.svelte';
+	import BackgroundThemePicker from '$lib/components/BackgroundThemePicker.svelte';
 	import UserAvatar from '$lib/components/UserAvatar.svelte';
-	import BackgroundHslPicker from '$lib/components/BackgroundHslPicker.svelte';
-	import BackgroundSwatch from '$lib/components/BackgroundSwatch.svelte';
 	import { fetchAdminMe } from '$lib/kainbu/adminApi';
 	import { pocketbase } from '$lib/pocketbaseClient';
 	import { formatPocketBaseError } from '$lib/pocketbaseErrors';
-	import {
-		BACKGROUND_GRADIENT_OPTIONS,
-		getBackgroundImagePreviewStyle,
-		getBackgroundSwatch,
-		getBackgroundThemeKey
-	} from '$lib/kainbu/backgrounds';
 	import type {
 		BackgroundTheme,
 		ColorMode,
@@ -69,16 +62,6 @@
 			showAdminLink = false;
 		}
 	});
-
-	const gradientTheme = (id: string): BackgroundTheme => ({
-		kind: 'gradient',
-		id
-	});
-
-	const isSelected = (
-		currentTheme: BackgroundTheme | null | undefined,
-		nextTheme: BackgroundTheme
-	) => getBackgroundThemeKey(currentTheme) === getBackgroundThemeKey(nextTheme);
 
 	const setColorMode = (colorMode: ColorMode) => {
 		if (settings.colorMode === colorMode) return;
@@ -137,7 +120,7 @@
 			<div class="flex min-w-0 items-start gap-3">
 				<button
 					type="button"
-					class="kainbu-set-btn kainbu-set-btn--ghost kainbu-set-btn--icon shrink-0"
+					class="kainbu-btn kainbu-btn--ghost kainbu-btn--icon shrink-0"
 					on:click={onBack}
 					aria-label="Go back"
 					title="Go back"
@@ -181,7 +164,7 @@
 								<h3 class="kainbu-settings-panel__title">Admin panel</h3>
 								<p class="kainbu-settings-panel__desc">Manage users, AI key, and usage.</p>
 							</div>
-							<a href="/admin" class="kainbu-set-btn kainbu-set-btn--primary kainbu-set-btn--compact">
+							<a href="/admin" class="kainbu-btn kainbu-btn--primary kainbu-btn--compact">
 								Open admin
 							</a>
 						</div>
@@ -199,7 +182,7 @@
 							<div class="flex flex-wrap items-center gap-2">
 								<button
 									type="button"
-									class="kainbu-set-btn kainbu-set-btn--ghost kainbu-set-btn--compact"
+									class="kainbu-btn kainbu-btn--ghost kainbu-btn--compact"
 									disabled={avatarUploading}
 									on:click={() => avatarUploadInput?.click()}
 								>
@@ -213,7 +196,7 @@
 								{#if avatarUrl}
 									<button
 										type="button"
-										class="kainbu-set-btn kainbu-set-btn--ghost kainbu-set-btn--compact kainbu-set-btn--danger"
+										class="kainbu-btn kainbu-btn--ghost kainbu-btn--compact kainbu-btn--danger"
 										disabled={avatarUploading}
 										on:click={() => void onRemoveAvatar()}
 									>
@@ -283,7 +266,7 @@
 							<button
 								type="submit"
 								disabled={passwordSaving}
-								class="kainbu-set-btn kainbu-set-btn--primary kainbu-set-btn--compact disabled:cursor-not-allowed disabled:opacity-60"
+								class="kainbu-btn kainbu-btn--primary kainbu-btn--compact disabled:cursor-not-allowed disabled:opacity-60"
 							>
 								{passwordSaving ? 'Changing…' : 'Change password'}
 							</button>
@@ -298,168 +281,19 @@
 				</form>
 			</div>
 		{:else}
-			<div class="kainbu-settings__layout">
-				<div class="kainbu-settings__stack">
-					<div class="kainbu-settings-panel">
-						<div class="kainbu-settings-panel__body">
-							<div class="flex items-start justify-between gap-3">
-								<div>
-									<h3 class="kainbu-settings-panel__title">Personal background</h3>
-									<p class="kainbu-settings-panel__desc">
-										Used on dashboard, settings, and anywhere a board doesn't override it.
-									</p>
-								</div>
-								<button
-									type="button"
-									class="kainbu-set-btn kainbu-set-btn--ghost kainbu-set-btn--icon"
-									on:click={() => personalUploadInput?.click()}
-									aria-label={personalImageUploading
-										? 'Uploading personal background image'
-										: settings.backgroundTheme.kind === 'image'
-											? 'Replace personal background image'
-											: 'Upload personal background image'}
-									title={settings.backgroundTheme.kind === 'image' ? 'Replace image' : 'Upload image'}
-								>
-									{#if personalImageUploading}
-										<span class="kainbu-settings-spinner"></span>
-									{:else}
-										<ImageUp size={16} />
-									{/if}
-								</button>
-							</div>
+			<div class="kainbu-settings__stack">
+				<div class="kainbu-settings-panel">
+					<div class="kainbu-settings-panel__body">
+						<h3 class="kainbu-settings-panel__title">Backgrounds</h3>
+						<p class="kainbu-settings-panel__desc">
+							Personal is your default. Boards can override it for everyone on that workspace.
+						</p>
 
-							<div class="kainbu-settings-swatch-grid mt-4">
-								{#each BACKGROUND_GRADIENT_OPTIONS as option (option.id)}
-									{@const theme = gradientTheme(option.id)}
-									<BackgroundSwatch
-										size="lg"
-										swatch={getBackgroundSwatch(option, settings.colorMode)}
-										selected={isSelected(settings.backgroundTheme, theme)}
-										ariaLabel={`Use ${option.label} gradient`}
-										title={option.label}
-										on:click={() => onSelectPersonalBackground(theme)}
-									/>
-								{/each}
-							</div>
-
-							<div class="kainbu-settings-custom-row mt-2.5">
-								<BackgroundHslPicker
-									colorMode={settings.colorMode}
-									currentTheme={settings.backgroundTheme}
-									on:change={(event) => onSelectPersonalBackground(event.detail)}
-								/>
-								<BackgroundSwatch
-									size="sm"
-									variant="image"
-									previewStyle={getBackgroundImagePreviewStyle(personalImageUrl, settings.colorMode)}
-									selected={settings.backgroundTheme.kind === 'image'}
-									ariaLabel={settings.backgroundTheme.kind === 'image'
-										? 'Personal uploaded image selected'
-										: 'Upload personal background image'}
-									title={settings.backgroundTheme.kind === 'image' ? 'Uploaded image' : 'Upload image'}
-									on:click={() => personalUploadInput?.click()}
-								/>
-							</div>
-						</div>
-					</div>
-
-					{#if currentProject}
-						<div class="kainbu-settings-panel">
-							<div class="kainbu-settings-panel__body">
-								<div class="flex items-start justify-between gap-3">
-									<div>
-										<h3 class="kainbu-settings-panel__title">Board background</h3>
-										<p class="kainbu-settings-panel__desc">
-											Shared with everyone on
-											<span class="font-medium text-app-text">{currentProject.name}</span>.
-										</p>
-									</div>
-									<div class="flex gap-1.5">
-										<button
-											type="button"
-											class="kainbu-set-btn kainbu-set-btn--ghost kainbu-set-btn--icon"
-											on:click={() => boardUploadInput?.click()}
-											aria-label={boardImageUploading
-												? 'Uploading board background image'
-												: currentProject.backgroundTheme?.kind === 'image'
-													? 'Replace board background image'
-													: 'Upload board background image'}
-											title={currentProject.backgroundTheme?.kind === 'image'
-												? 'Replace image'
-												: 'Upload image'}
-										>
-											{#if boardImageUploading}
-												<span class="kainbu-settings-spinner"></span>
-											{:else}
-												<ImageUp size={16} />
-											{/if}
-										</button>
-										<button
-											type="button"
-											class="kainbu-set-btn kainbu-set-btn--ghost kainbu-set-btn--icon kainbu-set-btn--danger"
-											on:click={onClearBoardBackground}
-											aria-label="Clear board background override"
-											title="Clear override"
-										>
-											<Trash2 size={16} />
-										</button>
-									</div>
-								</div>
-
-								<div class="kainbu-settings-swatch-grid mt-4">
-									{#each BACKGROUND_GRADIENT_OPTIONS as option (option.id)}
-										{@const theme = gradientTheme(option.id)}
-										<BackgroundSwatch
-											size="lg"
-											swatch={getBackgroundSwatch(option, settings.colorMode)}
-											selected={isSelected(currentProject.backgroundTheme, theme)}
-											ariaLabel={`Set board background to ${option.label}`}
-											title={option.label}
-											on:click={() => onSelectBoardBackground(theme)}
-										/>
-									{/each}
-								</div>
-
-								<div class="kainbu-settings-custom-row mt-2.5">
-									<BackgroundHslPicker
-										colorMode={settings.colorMode}
-										currentTheme={currentProject.backgroundTheme}
-										on:change={(event) => onSelectBoardBackground(event.detail)}
-									/>
-									<BackgroundSwatch
-										size="sm"
-										variant="image"
-										previewStyle={getBackgroundImagePreviewStyle(boardImageUrl, settings.colorMode)}
-										selected={currentProject.backgroundTheme?.kind === 'image'}
-										ariaLabel={currentProject.backgroundTheme?.kind === 'image'
-											? 'Board uploaded image selected'
-											: 'Upload board background image'}
-										title={currentProject.backgroundTheme?.kind === 'image'
-											? 'Uploaded image'
-											: 'Upload image'}
-										on:click={() => boardUploadInput?.click()}
-									/>
-								</div>
-
-								{#if !currentProject.backgroundTheme}
-									<p class="kainbu-settings-note mt-3">
-										<RefreshCcw size={11} />
-										Falling back to your personal background
-									</p>
-								{/if}
-							</div>
-						</div>
-					{/if}
-				</div>
-
-				<aside class="kainbu-settings__aside">
-					<div class="kainbu-settings-panel">
-						<div class="kainbu-settings-panel__body">
-							<h3 class="kainbu-settings-panel__title">Interface theme</h3>
-							<p class="kainbu-settings-panel__desc">
-								Light or dark for panels, text, and controls.
+						<div class="kainbu-settings-subsection kainbu-settings-subsection--inline">
+							<p class="kainbu-settings-field-label kainbu-settings-field-label--heading">
+								Interface
 							</p>
-							<div class="kainbu-settings-seg kainbu-settings-seg--wide mt-3" role="group" aria-label="Color mode">
+							<div class="kainbu-settings-seg" role="group" aria-label="Color mode">
 								<button
 									type="button"
 									class={`kainbu-settings-seg__btn kainbu-settings-seg__btn--with-icon ${settings.colorMode === 'dark' ? 'kainbu-settings-seg__btn--active' : ''}`}
@@ -478,19 +312,46 @@
 								</button>
 							</div>
 						</div>
-					</div>
 
-					<div class="kainbu-settings-panel kainbu-settings-panel--muted">
-						<div class="kainbu-settings-panel__body">
-							<h3 class="kainbu-settings-panel__title">How backgrounds apply</h3>
-							<ul class="kainbu-settings-list mt-3">
-								<li>Personal: dashboard, settings, and fallback workspace mood.</li>
-								<li>Board: the selected board's Kanban, notes, and chat.</li>
-								<li>Uploaded images are stored in PocketBase.</li>
-							</ul>
+						<div class="kainbu-settings-subsection">
+							<p class="kainbu-settings-field-label kainbu-settings-field-label--heading">
+								Personal
+							</p>
+							<BackgroundThemePicker
+								colorMode={settings.colorMode}
+								currentTheme={settings.backgroundTheme}
+								imageUrl={personalImageUrl}
+								imageUploading={personalImageUploading}
+								mode="personal"
+								onSelect={onSelectPersonalBackground}
+								onUpload={() => personalUploadInput?.click()}
+							/>
 						</div>
+
+						{#if currentProject}
+							<div class="kainbu-settings-subsection">
+								<p class="kainbu-settings-field-label kainbu-settings-field-label--heading">
+									Board
+									<span class="kainbu-settings-subsection__meta font-normal text-app-subtext">
+										· {currentProject.name}
+									</span>
+								</p>
+								<BackgroundThemePicker
+									colorMode={settings.colorMode}
+									currentTheme={currentProject.backgroundTheme}
+									imageUrl={boardImageUrl}
+									imageUploading={boardImageUploading}
+									mode="board"
+									inheritPreviewTheme={settings.backgroundTheme}
+									inheritPreviewImageUrl={personalImageUrl}
+									onSelect={onSelectBoardBackground}
+									onUpload={() => boardUploadInput?.click()}
+									onInherit={onClearBoardBackground}
+								/>
+							</div>
+						{/if}
 					</div>
-				</aside>
+				</div>
 			</div>
 		{/if}
 	</div>
@@ -555,23 +416,29 @@
 		gap: 1rem;
 	}
 
-	.kainbu-settings__layout {
-		display: grid;
-		gap: 1rem;
-		align-items: start;
+	.kainbu-settings-subsection {
+		margin-top: 1.25rem;
+		padding-top: 1.25rem;
+		border-top: 1px solid color-mix(in oklab, var(--color-app-border) 72%, transparent);
 	}
 
-	@media (min-width: 1024px) {
-		.kainbu-settings__layout {
-			grid-template-columns: minmax(0, 1.2fr) minmax(16rem, 0.8fr);
-			gap: 1.25rem;
-		}
+	.kainbu-settings-subsection:first-of-type {
+		margin-top: 1.125rem;
+		padding-top: 0;
+		border-top: none;
 	}
 
-	.kainbu-settings__aside {
+	.kainbu-settings-subsection--inline {
 		display: flex;
-		flex-direction: column;
-		gap: 1rem;
+		flex-wrap: wrap;
+		align-items: center;
+		justify-content: space-between;
+		gap: 0.625rem 1rem;
+	}
+
+	.kainbu-settings-subsection__meta {
+		font-size: 0.8125rem;
+		font-weight: 500;
 	}
 
 	.kainbu-settings-panel {
@@ -588,10 +455,6 @@
 			inset 0 0 0 1px color-mix(in oklab, var(--color-app-primary) 22%, transparent),
 			inset 0 1px 0 color-mix(in oklab, white 6%, transparent),
 			0 4px 16px -10px color-mix(in oklab, var(--color-app-primary) 30%, transparent);
-	}
-
-	.kainbu-settings-panel--muted {
-		background: color-mix(in oklab, var(--color-app-element) 35%, transparent);
 	}
 
 	.kainbu-settings-panel__body {
@@ -613,43 +476,12 @@
 		color: var(--color-app-subtext);
 	}
 
-	.kainbu-settings-swatch-grid {
-		display: flex;
-		flex-wrap: wrap;
-		gap: 0.5rem;
-	}
-
-	.kainbu-settings-swatch-grid--compact {
-		gap: 0.375rem;
-	}
-
-	.kainbu-settings-custom-row {
-		display: flex;
-		align-items: stretch;
-		gap: 0.5rem;
-	}
-
 	.kainbu-settings-note {
 		display: inline-flex;
 		align-items: center;
 		gap: 0.375rem;
 		font-size: 0.75rem;
 		color: var(--color-app-subtext);
-	}
-
-	.kainbu-settings-list {
-		display: flex;
-		flex-direction: column;
-		gap: 0.5rem;
-		padding-left: 1rem;
-		font-size: 0.8125rem;
-		line-height: 1.55;
-		color: var(--color-app-subtext);
-		list-style: disc;
-	}
-
-	.kainbu-settings-list li::marker {
-		color: color-mix(in oklab, var(--color-app-primary) 55%, var(--color-app-subtext));
 	}
 
 	.kainbu-settings-feedback {
@@ -691,16 +523,6 @@
 		box-shadow:
 			inset 0 1px 0 color-mix(in oklab, white 8%, transparent),
 			inset 0 -1px 0 color-mix(in oklab, black 12%, transparent);
-	}
-
-	.kainbu-settings-seg--wide {
-		display: flex;
-		width: 100%;
-	}
-
-	.kainbu-settings-seg--wide .kainbu-settings-seg__btn {
-		flex: 1;
-		justify-content: center;
 	}
 
 	.kainbu-settings-seg__btn {
@@ -765,7 +587,7 @@
 	}
 
 	:global(.kainbu-settings-input) {
-		border-radius: 0.625rem;
+		border-radius: 0.5rem;
 		border: 1px solid color-mix(in oklab, var(--color-app-border) 82%, transparent);
 		background: color-mix(in oklab, var(--color-app-bg) 88%, transparent);
 		color: var(--color-app-text);
@@ -783,96 +605,6 @@
 		box-shadow:
 			inset 0 1px 0 color-mix(in oklab, white 6%, transparent),
 			0 0 0 3px color-mix(in oklab, var(--color-app-primary) 14%, transparent);
-	}
-
-	:global(.kainbu-set-btn) {
-		display: inline-flex;
-		align-items: center;
-		justify-content: center;
-		gap: 0.375rem;
-		border: none;
-		border-radius: 0.625rem;
-		padding: 0.5rem 1rem;
-		font-size: 0.875rem;
-		font-weight: 600;
-		line-height: 1.2;
-		text-decoration: none;
-		transition:
-			transform 0.16s ease,
-			box-shadow 0.16s ease,
-			background 0.16s ease,
-			color 0.16s ease,
-			border-color 0.16s ease;
-	}
-
-	:global(.kainbu-set-btn:focus-visible) {
-		outline: 2px solid color-mix(in oklab, var(--color-app-primary) 70%, white);
-		outline-offset: 2px;
-	}
-
-	:global(.kainbu-set-btn:active:not(:disabled)) {
-		transform: translateY(1px) scale(0.99);
-	}
-
-	:global(.kainbu-set-btn--primary) {
-		background: linear-gradient(
-			180deg,
-			color-mix(in oklab, var(--color-app-primary) 72%, white) 0%,
-			var(--color-app-primary) 46%,
-			color-mix(in oklab, var(--color-app-primary-hover) 88%, black) 100%
-		);
-		color: #fff;
-		text-shadow: 0 1px 0 color-mix(in oklab, var(--color-app-primary-hover) 55%, black);
-		border: 1px solid color-mix(in oklab, var(--color-app-primary-hover) 68%, black);
-		box-shadow:
-			inset 0 1px 0 color-mix(in oklab, white 46%, transparent),
-			inset 0 -1px 0 color-mix(in oklab, black 24%, transparent),
-			0 1px 0 color-mix(in oklab, var(--color-app-primary-hover) 72%, black),
-			0 5px 14px -4px color-mix(in oklab, var(--color-app-primary) 58%, black);
-	}
-
-	:global(.kainbu-set-btn--primary:hover:not(:disabled)) {
-		transform: translateY(-1px);
-	}
-
-	:global(.kainbu-set-btn--ghost) {
-		background: linear-gradient(
-			180deg,
-			color-mix(in oklab, var(--color-app-element) 72%, white) 0%,
-			color-mix(in oklab, var(--color-app-element) 55%, transparent) 100%
-		);
-		color: var(--color-app-text);
-		border: 1px solid color-mix(in oklab, var(--color-app-border) 82%, transparent);
-		box-shadow:
-			inset 0 1px 0 color-mix(in oklab, white 14%, transparent),
-			inset 0 -1px 0 color-mix(in oklab, black 10%, transparent),
-			0 2px 6px -3px color-mix(in oklab, var(--color-app-bg) 70%, transparent);
-	}
-
-	:global(.kainbu-set-btn--ghost:hover:not(:disabled)) {
-		color: var(--color-app-primary);
-		border-color: color-mix(in oklab, var(--color-app-primary) 38%, var(--color-app-border));
-		transform: translateY(-1px);
-	}
-
-	:global(.kainbu-set-btn--compact) {
-		padding: 0.375rem 0.75rem;
-		font-size: 0.75rem;
-		font-weight: 500;
-		border-radius: 0.5rem;
-	}
-
-	:global(.kainbu-set-btn--icon) {
-		height: 2.25rem;
-		width: 2.25rem;
-		padding: 0;
-		border-radius: 0.625rem;
-		color: var(--color-app-subtext);
-	}
-
-	:global(.kainbu-set-btn--danger:hover:not(:disabled)) {
-		color: rgb(251 113 133);
-		border-color: color-mix(in oklab, rgb(251 113 133) 35%, var(--color-app-border));
 	}
 
 	:root[data-color-mode='light'] .kainbu-settings-panel {

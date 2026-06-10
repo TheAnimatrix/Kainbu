@@ -379,8 +379,8 @@ export const customHslSolidTheme = (h: number, s: number, l: number): Background
 	id: `custom-hsl-${clampHslChannel(h, 360)}-${clampHslChannel(s, 100)}-${clampHslChannel(l, 100)}`
 });
 
-export const DEFAULT_DARK_CUSTOM_HSL = { h: 206, s: 78, l: 2 } as const;
-export const DEFAULT_LIGHT_CUSTOM_HSL = { h: 206, s: 18, l: 97 } as const;
+export const DEFAULT_DARK_CUSTOM_HSL = { h: 220, s: 8, l: 6 } as const;
+export const DEFAULT_LIGHT_CUSTOM_HSL = { h: 220, s: 6, l: 98 } as const;
 
 const DARK_TO_LIGHT_SAT_RATIO = DEFAULT_LIGHT_CUSTOM_HSL.s / DEFAULT_DARK_CUSTOM_HSL.s;
 const LIGHT_TO_DARK_SAT_RATIO = DEFAULT_DARK_CUSTOM_HSL.s / DEFAULT_LIGHT_CUSTOM_HSL.s;
@@ -460,6 +460,64 @@ export const DEFAULT_BACKGROUND_THEME: BackgroundTheme = customHslSolidTheme(
 	DEFAULT_DARK_CUSTOM_HSL.s,
 	DEFAULT_DARK_CUSTOM_HSL.l
 );
+
+export const getDefaultBackgroundThemeForColorMode = (colorMode: ColorMode = 'dark'): BackgroundTheme =>
+	adaptBackgroundThemeForColorMode(DEFAULT_BACKGROUND_THEME, colorMode);
+
+export const getDefaultBackgroundSwatch = (colorMode: ColorMode = 'dark') => {
+	const hsl = resolveCustomHslFromTheme(
+		getDefaultBackgroundThemeForColorMode(colorMode),
+		colorMode
+	);
+	return `hsl(${hsl.h} ${hsl.s}% ${hsl.l}%)`;
+};
+
+export const getBackgroundThemeLabel = (
+	theme: BackgroundTheme | null | undefined,
+	colorMode: ColorMode = 'dark'
+): string => {
+	if (!theme) return 'Personal';
+
+	if (theme.kind === 'image') return 'Uploaded image';
+
+	if (
+		theme.kind === 'solid' &&
+		getBackgroundThemeKey(theme) === getBackgroundThemeKey(getDefaultBackgroundThemeForColorMode(colorMode))
+	) {
+		return 'Default';
+	}
+
+	if (theme.kind === 'gradient') {
+		return gradientById.get(normalizePresetId(theme.id))?.label ?? 'Gradient';
+	}
+
+	if (theme.kind === 'solid') {
+		if (isCustomHslSolidId(theme.id)) return 'Custom color';
+		return solidById.get(normalizePresetId(theme.id))?.label ?? 'Solid';
+	}
+
+	return 'Background';
+};
+
+export const getBackgroundThemeSwatch = (
+	theme: BackgroundTheme,
+	colorMode: ColorMode = 'dark',
+	imageUrl = ''
+): { swatch: string | null; previewStyle?: string } => {
+	if (theme.kind === 'image') {
+		return {
+			swatch: null,
+			previewStyle: getBackgroundImagePreviewStyle(imageUrl, colorMode)
+		};
+	}
+
+	if (theme.kind === 'gradient' || (theme.kind === 'solid' && !isCustomHslSolidId(theme.id))) {
+		return { swatch: getBackgroundSwatch(getBackgroundOption(theme), colorMode) };
+	}
+
+	const hsl = resolveCustomHslFromTheme(theme, colorMode);
+	return { swatch: `hsl(${hsl.h} ${hsl.s}% ${hsl.l}%)` };
+};
 
 export const isBackgroundTheme = (value: unknown): value is BackgroundTheme => {
 	if (!isObject(value) || typeof value.kind !== 'string') return false;
@@ -828,11 +886,28 @@ export const DEFAULT_APP_BG_HEX = {
 	)
 } as const;
 
-const resolveThemeAccentColors = (
+const accentFromHue = (hueDegrees: number, colorMode: ColorMode = 'dark') => {
+	const hue = hueDegrees / 360;
+	const saturation = 0.62;
+
+	return {
+		primary: hslToRgb(hue, saturation, colorMode === 'light' ? 0.48 : 0.52),
+		primaryHover: hslToRgb(hue, 0.7, colorMode === 'light' ? 0.38 : 0.42)
+	};
+};
+
+export const getThemeAccentColors = (
 	theme: BackgroundTheme,
 	imageUrl = '',
 	colorMode: ColorMode = 'dark'
 ) => {
+	if (theme.kind === 'solid') {
+		const customHsl = parseCustomHslSolidId(theme.id);
+		if (customHsl) {
+			return accentFromHue(customHsl.h, colorMode);
+		}
+	}
+
 	const scene = getBackgroundScene(theme, imageUrl, colorMode);
 	const warm = resolveChatOrbWarm(theme, scene, colorMode);
 	const { h, s } = rgbToHsl(warm);
@@ -850,7 +925,7 @@ export const applyThemeAccent = (
 ) => {
 	if (typeof document === 'undefined') return;
 
-	const { primary, primaryHover } = resolveThemeAccentColors(theme, imageUrl, colorMode);
+	const { primary, primaryHover } = getThemeAccentColors(theme, imageUrl, colorMode);
 	const primaryHex = rgbHex(primary);
 	const hoverHex = rgbHex(primaryHover);
 	const root = document.documentElement;

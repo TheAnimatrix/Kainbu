@@ -1,12 +1,28 @@
 import { DEFAULT_SETTINGS } from '$lib/kainbu/constants';
-import { normalizeBackgroundTheme } from '$lib/kainbu/backgrounds';
+import {
+	adaptBackgroundThemeForColorMode,
+	normalizeBackgroundTheme,
+	resolveCustomHslFromTheme,
+	shouldAdaptBackgroundThemeForColorMode
+} from '$lib/kainbu/backgrounds';
 import { readStoredColorMode } from '$lib/kainbu/colorMode';
-import type { ColorMode, UserSettings } from '$lib/kainbu/types';
+import type { BackgroundTheme, ColorMode, UserSettings } from '$lib/kainbu/types';
 
 const isObject = (value: unknown): value is Record<string, unknown> =>
 	typeof value === 'object' && value !== null;
 
-const resolveColorMode = (value: Record<string, unknown>): ColorMode => {
+export const inferColorModeFromBackground = (
+	backgroundTheme: BackgroundTheme
+): ColorMode | null => {
+	if (!shouldAdaptBackgroundThemeForColorMode(backgroundTheme)) return null;
+
+	return resolveCustomHslFromTheme(backgroundTheme).l >= 50 ? 'light' : 'dark';
+};
+
+const resolveColorMode = (
+	value: Record<string, unknown>,
+	backgroundTheme: BackgroundTheme
+): ColorMode => {
 	if (value.colorMode === 'light' || value.colorMode === 'dark') {
 		return value.colorMode;
 	}
@@ -15,7 +31,35 @@ const resolveColorMode = (value: Record<string, unknown>): ColorMode => {
 		return value.color_mode;
 	}
 
-	return readStoredColorMode() ?? DEFAULT_SETTINGS.colorMode;
+	return (
+		inferColorModeFromBackground(backgroundTheme) ??
+		readStoredColorMode() ??
+		DEFAULT_SETTINGS.colorMode
+	);
+};
+
+export const reconcileUserSettings = (
+	settings: UserSettings,
+	options: { preferStoredColorMode?: boolean } = {}
+): UserSettings => {
+	let { colorMode, backgroundTheme } = settings;
+
+	if (options.preferStoredColorMode) {
+		const storedColorMode = readStoredColorMode();
+		if (storedColorMode) {
+			colorMode = storedColorMode;
+		}
+	}
+
+	if (shouldAdaptBackgroundThemeForColorMode(backgroundTheme)) {
+		backgroundTheme = adaptBackgroundThemeForColorMode(backgroundTheme, colorMode);
+	}
+
+	return {
+		...settings,
+		colorMode,
+		backgroundTheme
+	};
 };
 
 export const normalizeUserSettings = (value: unknown): UserSettings => {
@@ -23,21 +67,31 @@ export const normalizeUserSettings = (value: unknown): UserSettings => {
 		return structuredClone(DEFAULT_SETTINGS);
 	}
 
-	return {
+	const backgroundTheme = normalizeBackgroundTheme(
+		value.backgroundTheme ?? value.background_theme,
+		DEFAULT_SETTINGS.backgroundTheme
+	);
+	const colorMode = resolveColorMode(value, backgroundTheme);
+
+	return reconcileUserSettings({
 		defaultShowCheckbox:
 			typeof value.defaultShowCheckbox === 'boolean'
 				? value.defaultShowCheckbox
-				: DEFAULT_SETTINGS.defaultShowCheckbox,
+				: typeof value.default_show_checkbox === 'boolean'
+					? value.default_show_checkbox
+					: DEFAULT_SETTINGS.defaultShowCheckbox,
 		preferredAiModelId:
 			typeof value.preferredAiModelId === 'string' && value.preferredAiModelId.trim()
 				? value.preferredAiModelId.trim()
-				: typeof value.preferredModelPreset === 'string' && value.preferredModelPreset.trim()
-					? value.preferredModelPreset.trim()
-					: DEFAULT_SETTINGS.preferredAiModelId,
-		backgroundTheme: normalizeBackgroundTheme(
-			value.backgroundTheme,
-			DEFAULT_SETTINGS.backgroundTheme
-		),
-		colorMode: resolveColorMode(value)
-	};
+				: typeof value.preferred_ai_model_id === 'string' && value.preferred_ai_model_id.trim()
+					? value.preferred_ai_model_id.trim()
+					: typeof value.preferredModelPreset === 'string' && value.preferredModelPreset.trim()
+						? value.preferredModelPreset.trim()
+						: typeof value.preferred_model_preset === 'string' &&
+							  value.preferred_model_preset.trim()
+							? value.preferred_model_preset.trim()
+							: DEFAULT_SETTINGS.preferredAiModelId,
+		backgroundTheme,
+		colorMode
+	});
 };
