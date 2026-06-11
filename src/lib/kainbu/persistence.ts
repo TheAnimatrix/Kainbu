@@ -14,7 +14,7 @@ import { normalizeProjectStructure } from '$lib/kainbu/projectStructure';
 import { normalizeScratchpadData, serializeScratchpadData } from '$lib/kainbu/scratchpad';
 import { normalizeUserSettings } from '$lib/kainbu/settings';
 import { pbNoAutoCancel } from '$lib/kainbu/pbRequest';
-import { isPocketBaseNotFound } from '$lib/pocketbaseErrors';
+import { isPocketBaseNotFound, isProjectPagesStrayIdFieldError } from '$lib/pocketbaseErrors';
 import { isPocketBaseRecordId } from '$lib/kainbu/recordIds';
 import { normalizeDueTimestamp } from '$lib/kainbu/timing';
 import { getPb } from '$lib/kainbu/pocketbaseContext';
@@ -1428,13 +1428,22 @@ export const createProjectPage = async (
 	const pb = getPb();
 	const projectPbId = await getProjectPbId(projectId);
 	const clientId = options?.clientId?.trim() || createId();
-	const data = await pb.collection('project_pages').create({
+	const body = {
 		project: projectPbId,
 		client_id: clientId,
 		name,
 		content: sanitizeProjectPageContent(options?.content ?? ''),
 		position
-	});
+	};
+
+	let data;
+	try {
+		data = await pb.collection('project_pages').create(body);
+	} catch (error) {
+		if (!isProjectPagesStrayIdFieldError(error)) throw error;
+		data = await pb.collection('project_pages').create({ ...body, id: clientId });
+	}
+
 	return mapPageRow(mapPageRecord(data, projectId));
 };
 

@@ -205,7 +205,9 @@
 
 	const flipDurationMs = 180;
 	const boardToolbarPillClass =
-		'inline-flex h-7 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full border px-2.5 text-[11px] font-semibold leading-none transition';
+		'inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md transition';
+	const boardToolbarPillActiveClass = 'text-app-primary';
+	const boardToolbarPillIdleClass = 'text-app-subtext hover:text-app-text';
 	const dndDropTargetStyle = {};
 	const kanbanOrderFingerprint = (columns: KanbanData) =>
 		columns
@@ -1936,36 +1938,38 @@
 	<section class="absolute inset-0 flex overflow-hidden" data-kanban-board-root>
 		{#if !showFullscreenTaskEditor}
 			<div
-				class="flex h-full min-h-0 min-w-0 flex-1 flex-col overflow-hidden py-1 lg:py-2"
+				class="flex h-full min-h-0 min-w-0 flex-1 flex-col overflow-hidden px-3 py-1 lg:py-2"
 			>
 				{#if !isDiffMode}
-					<div class="flex shrink-0 min-w-0 flex-col gap-2 overflow-hidden px-3 pb-2">
-						<div class="flex min-w-0 items-center gap-2 overflow-x-auto overflow-y-hidden">
+					<div class="flex shrink-0 min-w-0 flex-col gap-2 overflow-hidden pb-2">
+						<div class="flex min-w-0 items-center gap-0.5 overflow-x-auto overflow-y-hidden">
 							{#if showCollaborationChrome}
 								<button
 									type="button"
 									class={`${boardToolbarPillClass} ${
 										boardLayoutMode === 'link-groups'
-											? 'border-app-primary/40 bg-app-primary/10 text-app-primary'
-											: 'border-app-border bg-app-surface text-app-subtext hover:text-app-text'
+											? boardToolbarPillActiveClass
+											: boardToolbarPillIdleClass
 									}`}
+									title="Link groups"
+									aria-label="Link groups"
+									aria-pressed={boardLayoutMode === 'link-groups'}
 									onclick={toggleBoardLayoutMode}
 								>
-									<Network size={13} />
-									Link groups
+									<Network size={16} />
 								</button>
 								{#if showShareButton}
 									<BoardViewersPill viewers={boardPresenceViewers} />
 									<button
 										type="button"
-										class={`${boardToolbarPillClass} border-app-border bg-app-surface text-app-subtext hover:border-app-primary/30 hover:text-app-text`}
+										class={`${boardToolbarPillClass} ${boardToolbarPillIdleClass}`}
 										title="Share board"
+										aria-label="Share board"
 										onclick={() => {
 											shareModalOpen = true;
 										}}
 									>
-										<Link2 size={13} />
-										Share
+										<Link2 size={16} />
 									</button>
 								{/if}
 								{#if !isMobile}
@@ -1973,11 +1977,12 @@
 										type="button"
 										class={`${boardToolbarPillClass} ${
 											boardSearchActive
-												? 'border-app-primary/40 bg-app-primary/10 text-app-primary'
-												: 'border-app-border bg-app-surface text-app-subtext hover:text-app-text'
+												? boardToolbarPillActiveClass
+												: boardToolbarPillIdleClass
 										}`}
 										title="Search cards (Ctrl+F)"
 										aria-label="Search cards"
+										aria-pressed={boardSearchActive}
 										onclick={() => {
 											if (boardSearchActive) {
 												closeBoardSearch();
@@ -1986,8 +1991,7 @@
 											void openBoardSearch();
 										}}
 									>
-										<Search size={13} />
-										Search
+										<Search size={16} />
 									</button>
 								{/if}
 							{/if}
@@ -1996,28 +2000,29 @@
 									type="button"
 									class={`${boardToolbarPillClass} ${
 										boardOptionsOpen
-											? 'border-app-primary/40 bg-app-primary/10 text-app-primary'
-											: 'border-app-border bg-app-surface text-app-subtext hover:text-app-text'
+											? boardToolbarPillActiveClass
+											: boardToolbarPillIdleClass
 									}`}
 									title="Board options"
 									aria-label="Board options"
+									aria-expanded={boardOptionsOpen}
 									onclick={() => {
 										closeMenus();
 										boardOptionsOpen = true;
 									}}
 								>
-									<Settings2 size={13} />
-									Options
+									<Settings2 size={16} />
 								</button>
 							{/if}
 							{#if linkViewAnchorId}
 								<button
 									type="button"
-									class="inline-flex items-center gap-1.5 rounded-full border border-app-border bg-app-surface px-3 py-1.5 text-[11px] font-semibold text-app-subtext transition hover:text-app-text"
+									class={`${boardToolbarPillClass} ${boardToolbarPillIdleClass}`}
+									title="Clear link view"
+									aria-label="Clear link view"
 									onclick={clearLinkView}
 								>
-									<Unlink size={13} />
-									Clear link view
+									<Unlink size={16} />
 								</button>
 							{/if}
 						</div>
@@ -2073,7 +2078,6 @@
 				>
 					{#if !isDiffMode}
 						<div class="flex h-full min-w-max items-start gap-3">
-							<div class="w-2 shrink-0"></div>
 							<div
 								class="flex h-full min-w-max items-start gap-3"
 								use:dragHandleZone={{
@@ -2526,10 +2530,9 @@
 									</button>
 								{/if}
 							</div>
-							<div class="w-2 shrink-0"></div>
 						</div>
 					{:else}
-						<div class="flex h-full min-w-max gap-3 px-2">
+						<div class="flex h-full min-w-max gap-3">
 						{#each visibleDiffData as column (column.id)}
 							<div
 								class={`flex max-h-full min-h-44 shrink-0 flex-col self-start overflow-hidden rounded-lg border bg-app-column ${

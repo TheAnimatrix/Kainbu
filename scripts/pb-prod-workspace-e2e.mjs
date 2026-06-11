@@ -83,6 +83,32 @@ const board = await run('create board', () =>
 	})
 );
 
+const pageClientId = crypto.randomUUID();
+await run('create page', async () => {
+	try {
+		return await pb.collection('project_pages').create({
+			project: project.id,
+			client_id: pageClientId,
+			name: 'Notes',
+			content: '',
+			position: 0
+		});
+	} catch (error) {
+		const idError = error?.data?.id || error?.response?.data?.id;
+		if (idError?.code === 'validation_required') {
+			return pb.collection('project_pages').create({
+				project: project.id,
+				client_id: pageClientId,
+				id: pageClientId,
+				name: 'Notes',
+				content: '',
+				position: 0
+			});
+		}
+		throw error;
+	}
+});
+
 await run('create column', () =>
 	pb.collection('project_columns').create({
 		project: project.id,

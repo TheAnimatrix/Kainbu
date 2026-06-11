@@ -3,6 +3,19 @@ import { ClientResponseError } from 'pocketbase';
 export const isPocketBaseNotFound = (error: unknown): boolean =>
 	error instanceof ClientResponseError && error.status === 404;
 
+/** Prod schema bug: a custom text `id` field on project_pages shadows the record id and rejects creates. */
+export const isProjectPagesStrayIdFieldError = (error: unknown): boolean => {
+	if (!(error instanceof ClientResponseError) || error.status !== 400) return false;
+	const data = error.response?.data as Record<string, unknown> | undefined;
+	const idError = data?.id;
+	return (
+		typeof idError === 'object' &&
+		idError !== null &&
+		'code' in idError &&
+		(idError as { code: unknown }).code === 'validation_required'
+	);
+};
+
 /** 404 on the signed-in user's own users record — stale token or deleted account. */
 export const isOwnUserRecordNotFound = (error: unknown, userId: string): boolean => {
 	if (!isPocketBaseNotFound(error) || !userId) return false;

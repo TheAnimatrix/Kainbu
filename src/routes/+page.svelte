@@ -1541,7 +1541,7 @@
 				throw error;
 			}
 			console.error(error);
-			setSyncError(error instanceof Error ? error.message : fallbackMessage);
+			setSyncError(formatPocketBaseError(error, fallbackMessage));
 			throw error;
 		} finally {
 			activeSyncRequests = Math.max(0, activeSyncRequests - 1);
@@ -2628,6 +2628,7 @@
 	const handleCreateBoard = (projectId: string) => {
 		const project = projects.find((entry) => entry.id === projectId);
 		if (!project) return;
+		showProjectSheet = false;
 		nameModalState = {
 			kind: 'create-board',
 			projectId,
@@ -2638,6 +2639,7 @@
 	const handleCreatePage = (projectId: string) => {
 		const project = projects.find((entry) => entry.id === projectId);
 		if (!project) return;
+		showProjectSheet = false;
 		nameModalState = {
 			kind: 'create-page',
 			projectId,
@@ -2671,11 +2673,17 @@
 
 	const handleNameModalSubmit = async () => {
 		if (!nameModalState) return;
-		const { kind, projectId, itemId, value } = nameModalState;
+		const pendingModal = nameModalState;
+		const { kind, projectId, itemId, value } = pendingModal;
 		const name = value.trim();
 		if (!name) return;
 
-		nameModalState = null;
+		const closeNameModal = () => {
+			nameModalState = null;
+		};
+		const restoreNameModal = () => {
+			nameModalState = pendingModal;
+		};
 
 		if (kind === 'create-project') {
 			const currentUser = user;
@@ -2697,7 +2705,9 @@
 				mobileTab = 'kanban';
 				desktopChatCollapsed = true;
 				showProjectSheet = false;
+				closeNameModal();
 			} catch (error) {
+				restoreNameModal();
 				console.error(error);
 			}
 			return;
@@ -2723,7 +2733,9 @@
 				desktopWorkspaceTab = 'kanban';
 				mobileTab = 'kanban';
 				showProjectSheet = false;
+				closeNameModal();
 			} catch (error) {
+				restoreNameModal();
 				console.error(error);
 			}
 		} else if (kind === 'create-page') {
@@ -2742,12 +2754,17 @@
 				desktopWorkspaceTab = 'scratchpad';
 				mobileTab = 'scratchpad';
 				showProjectSheet = false;
+				closeNameModal();
 			} catch (error) {
+				restoreNameModal();
 				console.error(error);
 			}
 		} else if (kind === 'rename-board' && itemId) {
 			const board = project.boards.find((b) => b.id === itemId);
-			if (!board || board.name === name) return;
+			if (!board || board.name === name) {
+				closeNameModal();
+				return;
+			}
 			projects = projects.map((p) =>
 				p.id === projectId
 					? {
@@ -2763,12 +2780,17 @@
 					() => renameProjectBoardRemote(projectId, itemId, name),
 					'Unable to rename this board right now.'
 				);
+				closeNameModal();
 			} catch (error) {
+				restoreNameModal();
 				console.error(error);
 			}
 		} else if (kind === 'rename-page' && itemId) {
 			const page = project.pages.find((p) => p.id === itemId);
-			if (!page || page.name === name) return;
+			if (!page || page.name === name) {
+				closeNameModal();
+				return;
+			}
 			projects = projects.map((p) =>
 				p.id === projectId
 					? {
@@ -2784,7 +2806,9 @@
 					() => renameProjectPageRemote(projectId, itemId, name),
 					'Unable to rename this page right now.'
 				);
+				closeNameModal();
 			} catch (error) {
+				restoreNameModal();
 				console.error(error);
 			}
 		}
@@ -4957,10 +4981,10 @@
 							{#if showBoardSearchControls}
 								<button
 									type="button"
-									class={`inline-flex h-8 w-8 items-center justify-center rounded-md border transition ${
+									class={`inline-flex h-8 w-8 items-center justify-center rounded-md transition ${
 										boardSearchActive
-											? 'border-app-primary/35 bg-app-primary/10 text-app-primary'
-											: 'border-app-border bg-app-element/80 text-app-subtext hover:bg-app-bg/80 hover:text-app-text'
+											? 'text-app-primary'
+											: 'text-app-subtext hover:text-app-text'
 									}`}
 									title={boardSearchActive ? 'Close card search' : 'Search cards (Ctrl+F)'}
 									aria-label={boardSearchActive ? 'Close card search' : 'Search cards'}
