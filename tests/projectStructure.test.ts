@@ -64,14 +64,24 @@ describe('mergeProjectBoardsByUpdatedAt', () => {
 		expect(mergeProjectBoardsByUpdatedAt(localBoards, remoteBoards)).toEqual(localBoards);
 	});
 
-	it('includes boards that only exist on one side', () => {
+	it('includes remote-only boards and drops stale local-only boards by default', () => {
 		const localBoards = [board('local-only', 50)];
 		const remoteBoards = [board('remote-only', 50)];
 
 		expect(mergeProjectBoardsByUpdatedAt(localBoards, remoteBoards).map((entry) => entry.id)).toEqual([
-			'local-only',
 			'remote-only'
 		]);
+	});
+
+	it('keeps local-only boards while their create/sync is pending', () => {
+		const localBoards = [board('local-only', 50)];
+		const remoteBoards = [board('remote-only', 50)];
+
+		expect(
+			mergeProjectBoardsByUpdatedAt(localBoards, remoteBoards, new Set(['local-only'])).map(
+				(entry) => entry.id
+			)
+		).toEqual(['local-only', 'remote-only']);
 	});
 
 	it('includes remote boards missing from a stale local snapshot', () => {

@@ -258,7 +258,20 @@ app.get('/api/workspace-ai/task-title', methodNotAllowed);
 app.get('/api/workspace-ai/transcribe-images', methodNotAllowed);
 
 app.post('/api/workspace-ai/stream', async (c) => {
-	await loadAiModelCatalog();
+	try {
+		await loadAiModelCatalog();
+		await getAuthenticatedUserId(c.req.header('Authorization'));
+	} catch (error) {
+		const message = error instanceof Error ? error.message : 'Unknown error';
+		const status =
+			error && typeof error === 'object' && 'status' in error && typeof error.status === 'number'
+				? (error.status as number)
+				: message === 'Unauthorized'
+					? 401
+					: 500;
+		return c.json({ error: message }, status as 400 | 401 | 500);
+	}
+
 	const body = (await c.req.json()) as AiWorkspaceRequest;
 	const authorization = c.req.header('Authorization');
 	const encoder = new TextEncoder();

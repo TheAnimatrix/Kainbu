@@ -196,13 +196,17 @@ const touchRes = await fetch(`${API}/api/workspace/projects/touch`, {
 const touchBody = await touchRes.json().catch(() => ({}));
 console.log(touchRes.ok ? 'OK' : 'FAIL', 'workspace touch', touchRes.status, touchBody);
 
-// Realtime subscribe (what the app does on load)
-try {
-	const unsub = await pb.collection('projects').subscribe('*', () => {});
-	unsub();
-	console.log('OK realtime subscribe projects');
-} catch (error) {
-	console.log('FAIL realtime', error?.message || error);
+// Realtime subscribe (what the app does on load; requires browser EventSource)
+if (typeof EventSource === 'undefined') {
+	console.log('SKIP realtime subscribe (no EventSource in this runtime)');
+} else {
+	try {
+		const unsub = await pb.collection('projects').subscribe('*', () => {});
+		unsub();
+		console.log('OK realtime subscribe projects');
+	} catch (error) {
+		console.log('FAIL realtime', error?.message || error);
+	}
 }
 
 console.log('done', { email, userId, projectClientId });

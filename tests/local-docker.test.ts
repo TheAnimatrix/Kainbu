@@ -10,6 +10,16 @@
  */
 import { describe, it, expect, beforeAll } from 'vitest';
 import PocketBase from 'pocketbase';
+import {
+	createProject,
+	createProjectBoard,
+	createProjectPage,
+	deleteProjectBoard,
+	deleteProjectPage,
+	fetchWorkspace
+} from '../src/lib/kainbu/persistence';
+import { setPocketBaseClient } from '../src/lib/kainbu/pocketbaseContext';
+import { setWorkspaceApiConfig } from '../src/lib/kainbu/workspaceApi';
 
 const WEB = process.env.KAINBU_TEST_WEB || 'http://127.0.0.1:3000';
 const PB = process.env.KAINBU_TEST_PB || 'http://127.0.0.1:8090';
@@ -117,6 +127,77 @@ describe('Local Docker — workspace data', () => {
 			filter: `client_id = "${projectClientId}"`
 		});
 		expect(projects.length).toBe(1);
+	});
+});
+
+describe('Local Docker — board/page delete', () => {
+	let deleteProjectId = '';
+	let boardToDeleteId = '';
+	let boardToKeepId = '';
+	let pageToDeleteId = '';
+	let pageToKeepId = '';
+
+	beforeAll(async () => {
+		const client = pb();
+		await client.collection('users').authWithPassword(email, password);
+		setPocketBaseClient(client);
+		setWorkspaceApiConfig({
+			getApiBaseUrl: () => API,
+			getAccessToken: async () => client.authStore.token
+		});
+
+		const project = await createProject(userId, 'Delete E2E', undefined, {
+			skipWorkspaceFetch: true
+		});
+		deleteProjectId = project.id;
+
+		const boardA = await createProjectBoard(deleteProjectId, 'tf', 1);
+		const boardB = await createProjectBoard(deleteProjectId, 'tf2', 2);
+		const pageA = await createProjectPage(deleteProjectId, 'notes-a', 1);
+		const pageB = await createProjectPage(deleteProjectId, 'notes-b', 2);
+		boardToDeleteId = boardA.id;
+		boardToKeepId = boardB.id;
+		pageToDeleteId = pageA.id;
+		pageToKeepId = pageB.id;
+
+		const workspace = await fetchWorkspace(userId, { fresh: true });
+		const loaded = workspace.projects.find((entry) => entry.id === deleteProjectId);
+		expect(loaded?.boards.map((board) => board.id)).toEqual(
+			expect.arrayContaining([project.boards[0]?.id, boardToDeleteId, boardToKeepId])
+		);
+		expect(loaded?.pages.map((page) => page.id)).toEqual(
+			expect.arrayContaining([project.pages[0]?.id, pageToDeleteId, pageToKeepId])
+		);
+	});
+
+	it('deleteProjectBoard removes the board from a fresh workspace fetch', async () => {
+		await deleteProjectBoard(deleteProjectId, boardToDeleteId);
+
+		const workspace = await fetchWorkspace(userId, { fresh: true });
+		const project = workspace.projects.find((entry) => entry.id === deleteProjectId);
+		expect(project?.boards.some((board) => board.id === boardToDeleteId)).toBe(false);
+		expect(project?.boards.some((board) => board.id === boardToKeepId)).toBe(true);
+	});
+
+	it('a second fresh fetch still omits the deleted board', async () => {
+		const workspace = await fetchWorkspace(userId, { fresh: true });
+		const project = workspace.projects.find((entry) => entry.id === deleteProjectId);
+		expect(project?.boards.some((board) => board.id === boardToDeleteId)).toBe(false);
+	});
+
+	it('deleteProjectPage removes the page from a fresh workspace fetch', async () => {
+		await deleteProjectPage(deleteProjectId, pageToDeleteId);
+
+		const workspace = await fetchWorkspace(userId, { fresh: true });
+		const project = workspace.projects.find((entry) => entry.id === deleteProjectId);
+		expect(project?.pages.some((page) => page.id === pageToDeleteId)).toBe(false);
+		expect(project?.pages.some((page) => page.id === pageToKeepId)).toBe(true);
+	});
+
+	it('a second fresh fetch still omits the deleted page', async () => {
+		const workspace = await fetchWorkspace(userId, { fresh: true });
+		const project = workspace.projects.find((entry) => entry.id === deleteProjectId);
+		expect(project?.pages.some((page) => page.id === pageToDeleteId)).toBe(false);
 	});
 });
 

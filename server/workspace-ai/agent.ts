@@ -194,10 +194,10 @@ export const handleWorkspaceAiRequest = async (
 	auth: string | undefined,
 	progressReporter?: (p: AiProgressEvent) => void
 ): Promise<AiWorkspaceResponse> => {
+	const userId = await getAuthenticatedUserId(auth);
 	validateWorkspaceAiRequest(req);
 	const requestId = randomUUID();
 	const startedAt = Date.now();
-	const userId = await getAuthenticatedUserId(auth);
 	const log = (message: string, data?: unknown) => {
 		if (data !== undefined) {
 			console.log(`[WorkspaceAI][${requestId}] ${message}`, data);

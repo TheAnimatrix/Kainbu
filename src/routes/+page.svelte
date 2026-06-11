@@ -1849,30 +1849,36 @@
 			}
 
 			const preferLocalFallback = localProject.updatedAt > remoteProject.updatedAt;
-			const preferLocalBoardList = localProject.boards.length > remoteProject.boards.length;
-			const preferLocalPageList = localProject.pages.length > remoteProject.pages.length;
-			const mergedBoards = (
-				preferLocalBoardList
-					? localProject.boards
-					: mergeProjectBoardsByUpdatedAt(
-							localProject.boards,
-							remoteProject.boards,
-							new Set([
-								...getPendingBoardPreferenceBoardIds(remoteProject.id),
-								...getPendingKanbanBoardIds(remoteProject.id)
-							])
-						)
+			const remoteBoardIds = new Set(remoteProject.boards.map((board) => board.id));
+			const remotePageIds = new Set(remoteProject.pages.map((page) => page.id));
+			for (const deletionKey of [...pendingBoardDeletions]) {
+				if (!deletionKey.startsWith(`${remoteProject.id}::board::`)) continue;
+				const boardId = deletionKey.slice(`${remoteProject.id}::board::`.length);
+				if (!remoteBoardIds.has(boardId)) {
+					pendingBoardDeletions.delete(deletionKey);
+				}
+			}
+			for (const deletionKey of [...pendingPageDeletions]) {
+				if (!deletionKey.startsWith(`${remoteProject.id}::page::`)) continue;
+				const pageId = deletionKey.slice(`${remoteProject.id}::page::`.length);
+				if (!remotePageIds.has(pageId)) {
+					pendingPageDeletions.delete(deletionKey);
+				}
+			}
+			const mergedBoards = mergeProjectBoardsByUpdatedAt(
+				localProject.boards,
+				remoteProject.boards,
+				new Set([
+					...getPendingBoardPreferenceBoardIds(remoteProject.id),
+					...getPendingKanbanBoardIds(remoteProject.id)
+				])
 			).filter(
 				(board) => !pendingBoardDeletions.has(getBoardHistoryKey(remoteProject.id, board.id))
 			);
-			const mergedPages = (
-				preferLocalPageList
-					? localProject.pages
-					: mergeProjectPagesByUpdatedAt(
-							localProject.pages,
-							remoteProject.pages,
-							getPendingSyncPageIds(remoteProject.id)
-						)
+			const mergedPages = mergeProjectPagesByUpdatedAt(
+				localProject.pages,
+				remoteProject.pages,
+				getPendingSyncPageIds(remoteProject.id)
 			).filter((page) => !pendingPageDeletions.has(getPageSyncKey(remoteProject.id, page.id)));
 			const preferLocalAiState = pendingChatSyncs.has(remoteProject.id) || preferLocalFallback;
 			const activeBoardId = resolveMergedActiveId(
@@ -2890,14 +2896,13 @@
 			);
 			scheduleSnapshotPersist();
 		} catch (error) {
+			pendingBoardDeletions.delete(deletionKey);
 			if (isPocketBaseNotFound(error)) return;
 			console.error(error);
 			applyWorkspaceState({
 				nextProjects: previousProjects,
 				preferredProjectId: currentProjectId
 			});
-		} finally {
-			pendingBoardDeletions.delete(deletionKey);
 		}
 	};
 
@@ -2940,14 +2945,13 @@
 			);
 			scheduleSnapshotPersist();
 		} catch (error) {
+			pendingPageDeletions.delete(deletionKey);
 			if (isPocketBaseNotFound(error)) return;
 			console.error(error);
 			applyWorkspaceState({
 				nextProjects: previousProjects,
 				preferredProjectId: currentProjectId
 			});
-		} finally {
-			pendingPageDeletions.delete(deletionKey);
 		}
 	};
 

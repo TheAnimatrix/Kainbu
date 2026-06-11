@@ -11,7 +11,7 @@
  */
 import { describe, it, expect } from 'vitest';
 
-const BASE = process.env.KAINBU_TEST_BASE || 'http://127.0.0.1:8788';
+const BASE = process.env.KAINBU_TEST_BASE || 'http://127.0.0.1:8789';
 const TOKEN = process.env.KAINBU_TEST_TOKEN ?? '';
 const PROJECT_ID = process.env.KAINBU_TEST_PROJECT_ID ?? '';
 let modelIdPromise: Promise<string> | null = null;

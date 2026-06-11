@@ -193,7 +193,9 @@ export const mergeProjectBoardsByUpdatedAt = (
 		}
 
 		if (localBoard) {
-			merged.push(localBoard);
+			if (preferLocalBoardIds.has(boardId)) {
+				merged.push(localBoard);
+			}
 			continue;
 		}
 
@@ -234,7 +236,9 @@ export const mergeProjectPagesByUpdatedAt = (
 		}
 
 		if (localPage) {
-			merged.push(localPage);
+			if (preferLocalPageIds.has(pageId)) {
+				merged.push(localPage);
+			}
 			continue;
 		}
 
