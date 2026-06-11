@@ -1,7 +1,7 @@
 <script lang="ts">
-	import { onDestroy, onMount } from 'svelte';
+	import { onDestroy, onMount, tick } from 'svelte';
 	import { browser } from '$app/environment';
-	import { fade } from 'svelte/transition';
+	import { crossfade, fade } from 'svelte/transition';
 	import { page } from '$app/stores';
 	import { replaceState } from '$app/navigation';
 	type AuthChangeEvent =
@@ -277,10 +277,16 @@
 	let highlightedTaskIds: string[] = [];
 	let boardSearchActive = false;
 	let boardSearchQuery = '';
+	let boardSearchInput: HTMLInputElement | null = null;
+	let priorBoardSearchActive = false;
 	let projectRailCompact = browser ? readStoredProjectRailCompact() : true;
 
 	const projectSwitchFadeIn = { duration: 200 };
 	const projectSwitchFadeOut = { duration: 150 };
+	const [boardHeaderSend, boardHeaderReceive] = crossfade({
+		duration: 200,
+		fallback: (node) => fade(node, { duration: 200 })
+	});
 	let showProjectSheet = false;
 	let desktopChatWidth = DESKTOP_CHAT_WIDTH;
 	let desktopChatCollapsed = true;
@@ -580,6 +586,19 @@
 	$: if (!showBoardSearchControls && (boardSearchActive || boardSearchQuery)) {
 		closeBoardSearch();
 	}
+
+	$: if (
+		isMobile &&
+		mobileTab === 'kanban' &&
+		boardSearchActive &&
+		!priorBoardSearchActive
+	) {
+		void tick().then(() => {
+			boardSearchInput?.focus();
+			boardSearchInput?.select();
+		});
+	}
+	$: priorBoardSearchActive = boardSearchActive;
 
 	const handleWorkspaceKeydown = (event: KeyboardEvent) => {
 		if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'f') {
@@ -4818,8 +4837,42 @@
 								</button>
 							{/if}
 
-							<div class="flex min-w-0 flex-1 items-center gap-2">
-								{#if isMobile && mobileTab === 'chat' && currentProject}
+							<div class="relative flex min-w-0 flex-1 items-center gap-2 overflow-hidden">
+								{#if isMobile && mobileTab === 'kanban'}
+									<div class="relative min-h-10 min-w-0 flex-1">
+										{#if boardSearchActive}
+											<label
+												class="absolute inset-0 flex min-w-0 items-center gap-2 rounded-lg border border-app-border/70 bg-app-bg/90 px-2.5 py-1.5"
+												in:boardHeaderReceive={{ key: 'board-header-slot' }}
+												out:boardHeaderSend={{ key: 'board-header-slot' }}
+											>
+												<Search size={14} class="shrink-0 text-app-subtext" />
+												<input
+													bind:this={boardSearchInput}
+													bind:value={boardSearchQuery}
+													type="search"
+													class="min-w-0 flex-1 bg-transparent text-sm text-app-text outline-none placeholder:text-app-subtext/60"
+													placeholder="Search cards…"
+													aria-label="Search cards by title, description, or tags"
+													on:keydown={(event) => {
+														if (event.key === 'Escape') {
+															event.preventDefault();
+															closeBoardSearch();
+														}
+													}}
+												/>
+											</label>
+										{:else}
+											<h1
+												class="absolute inset-0 flex min-w-0 items-center truncate text-sm font-semibold tracking-tight text-app-text"
+												in:boardHeaderReceive={{ key: 'board-header-slot' }}
+												out:boardHeaderSend={{ key: 'board-header-slot' }}
+											>
+												{mobileHeaderTitle}
+											</h1>
+										{/if}
+									</div>
+								{:else if isMobile && mobileTab === 'chat' && currentProject}
 									<button
 										bind:this={mobileChatSessionTrigger}
 										type="button"

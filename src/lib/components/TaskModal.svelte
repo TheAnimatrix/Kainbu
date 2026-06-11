@@ -1,5 +1,6 @@
 <script lang="ts">
-	import { onDestroy } from 'svelte';
+	import { browser } from '$app/environment';
+	import { onDestroy, tick } from 'svelte';
 	import {
 		Check,
 		CheckSquare,
@@ -95,6 +96,10 @@
 	};
 
 	const AUTOSAVE_DELAY_MS = 520;
+	const TAG_COLOR_PICKER_WIDTH = 232;
+	const TAG_COLOR_PICKER_HEIGHT = 200;
+	const FLOATING_MENU_GAP = 6;
+	const FLOATING_MENU_GUTTER = 12;
 	const LAYOUT_OPTIONS: { mode: DesktopLayoutMode; label: string }[] = [
 		{ mode: 'modal', label: 'Centered modal' },
 		{ mode: 'dock', label: 'Right dock' },
@@ -109,8 +114,64 @@
 	let tagSearch = '';
 	let tonePickerOpen = false;
 	let tagColorPickerOpen = false;
+	let tagColorPickerButton: HTMLButtonElement | null = null;
+	let tagColorPickerPosition: { top: number; left: number } | null = null;
 	let layoutPickerOpen = false;
 	let selectedTagColor: string = TAG_COLORS[0]?.value ?? '';
+
+	const portalToBody = (node: HTMLElement) => {
+		if (!browser) return {};
+		document.body.appendChild(node);
+		return {
+			destroy() {
+				node.remove();
+			}
+		};
+	};
+
+	const getFloatingMenuPosition = (
+		trigger: HTMLElement,
+		menuWidth: number,
+		menuHeight: number
+	) => {
+		const rect = trigger.getBoundingClientRect();
+		const viewportWidth = window.innerWidth || document.documentElement.clientWidth;
+		const viewportHeight = window.innerHeight || document.documentElement.clientHeight;
+		const maxLeft = Math.max(FLOATING_MENU_GUTTER, viewportWidth - menuWidth - FLOATING_MENU_GUTTER);
+		let left = Math.min(rect.right - menuWidth, maxLeft);
+		left = Math.max(FLOATING_MENU_GUTTER, left);
+
+		const belowTop = rect.bottom + FLOATING_MENU_GAP;
+		const opensAbove = belowTop + menuHeight > viewportHeight - FLOATING_MENU_GUTTER;
+		const top = opensAbove
+			? Math.max(FLOATING_MENU_GUTTER, rect.top - menuHeight - FLOATING_MENU_GAP)
+			: belowTop;
+
+		return {
+			top: Math.max(FLOATING_MENU_GUTTER, top),
+			left
+		};
+	};
+
+	const closeTagColorPicker = () => {
+		tagColorPickerOpen = false;
+		tagColorPickerPosition = null;
+	};
+
+	const toggleTagColorPicker = async () => {
+		if (tagColorPickerOpen) {
+			closeTagColorPicker();
+			return;
+		}
+		if (!tagColorPickerButton) return;
+		tagColorPickerPosition = getFloatingMenuPosition(
+			tagColorPickerButton,
+			TAG_COLOR_PICKER_WIDTH,
+			TAG_COLOR_PICKER_HEIGHT
+		);
+		tagColorPickerOpen = true;
+		await tick();
+	};
 	let autosaveTimer: ReturnType<typeof setTimeout> | null = null;
 	let saveState: SaveState = 'saved';
 	let saveMessage = 'All changes saved';
@@ -700,6 +761,7 @@
 		SURFACE_TONE_OPTIONS[0];
 	$: currentTagColorSwatch =
 		TAG_COLORS.find((color) => color.value === selectedTagColor) ?? TAG_COLORS[0];
+	$: if (activeTab !== 'properties' && tagColorPickerOpen) closeTagColorPicker();
 	$: usePanePresentation = !isMobile && presentation === 'pane';
 	$: overlayScopeClass = isMobile ? 'fixed' : 'absolute';
 	$: resolvedDesktopLayoutMode = isMobile ? 'fullscreen' : desktopLayoutMode;
@@ -815,16 +877,22 @@
 		if (event.key === 'Escape') {
 			if (tonePickerOpen || tagColorPickerOpen || layoutPickerOpen) {
 				tonePickerOpen = false;
-				tagColorPickerOpen = false;
+				closeTagColorPicker();
 				layoutPickerOpen = false;
 			} else {
 				void requestClose();
 			}
 		}
 	}}
-	on:mousedown={() => {
+	on:mousedown={(event) => {
+		const target = event.target as HTMLElement | null;
+		if (
+			target?.closest('[data-task-modal-tag-color-picker], [data-task-modal-tag-color-trigger]')
+		) {
+			return;
+		}
 		tonePickerOpen = false;
-		tagColorPickerOpen = false;
+		closeTagColorPicker();
 		layoutPickerOpen = false;
 	}}
 />
@@ -1090,7 +1158,7 @@
 										on:mousedown|stopPropagation
 										on:click={() => (tonePickerOpen = !tonePickerOpen)}
 									>
-										<span class={`inline-block h-3.5 w-3.5 rounded-sm border ${currentTone.swatchClass}`}></span>
+										<span class={`inline-block h-3.5 w-3.5 rounded-md border ${currentTone.swatchClass}`}></span>
 										{currentTone.label}
 										<ChevronDown size={12} class={`transition ${tonePickerOpen ? 'rotate-180' : ''}`} />
 									</button>
@@ -1106,7 +1174,7 @@
 														type="button"
 														aria-label={`Set card tone to ${tone.label}`}
 														title={tone.label}
-														class={`h-7 w-7 rounded-sm border p-0 transition ${tone.swatchClass} ${
+														class={`h-7 w-7 rounded-md border p-0 transition ${tone.swatchClass} ${
 															(draft.color || '') === tone.value
 																? 'scale-110 border-white/80 ring-2 ring-app-primary/45'
 																: 'hover:scale-110 hover:border-app-primary/35'
@@ -1145,41 +1213,17 @@
 											/>
 											<div class="relative">
 												<button
+													bind:this={tagColorPickerButton}
 													type="button"
+													data-task-modal-tag-color-trigger
 													class="inline-flex items-center rounded-full p-1 text-app-subtext transition hover:text-app-text"
 													aria-label="Pick tag color"
+													aria-expanded={tagColorPickerOpen}
 													on:mousedown|stopPropagation
-													on:click={() => (tagColorPickerOpen = !tagColorPickerOpen)}
+													on:click={() => void toggleTagColorPicker()}
 												>
-													<span class={`inline-block h-3.5 w-3.5 rounded-sm border ${currentTagColorSwatch.swatchClass}`}></span>
+													<span class={`inline-block h-3.5 w-3.5 rounded-md border ${currentTagColorSwatch.swatchClass}`}></span>
 												</button>
-												{#if tagColorPickerOpen}
-													<div
-														role="presentation"
-														class="absolute right-0 bottom-full z-20 mb-1.5 w-[14.5rem] max-w-[min(14.5rem,calc(100vw-3rem))] rounded-md border border-app-border bg-app-surface p-3 shadow-kainbu-md"
-														on:mousedown|stopPropagation
-													>
-														<p class="mb-2 text-[10px] font-bold uppercase tracking-[0.18em] text-app-subtext">Tag color</p>
-														<div class="grid grid-cols-4 gap-2">
-															{#each TAG_COLORS as color}
-																<button
-																	type="button"
-																	aria-label={`Select ${color.value.replace('tone:', '')} color`}
-																	title={color.value.replace('tone:', '')}
-																	class={`h-8 w-8 border p-0 transition ${color.swatchClass} ${
-																		selectedTagColor === color.value
-																			? 'border-white/80 ring-2 ring-app-primary/45 ring-offset-2 ring-offset-app-surface'
-																			: 'hover:-translate-y-0.5 hover:border-app-primary/35'
-																	}`}
-																	on:click={() => {
-																		selectedTagColor = color.value;
-																		tagColorPickerOpen = false;
-																	}}
-																></button>
-															{/each}
-														</div>
-													</div>
-												{/if}
 											</div>
 											<button
 												type="button"
@@ -1264,6 +1308,27 @@
 
 						{#if activeTab === 'files'}
 							<div>
+								<div class="mb-3 flex items-center justify-end">
+									<button
+										type="button"
+										class="inline-flex items-center gap-1.5 rounded-lg border border-app-border bg-app-element/40 px-2.5 py-1.5 text-xs font-semibold text-app-subtext transition hover:border-app-primary/35 hover:text-app-primary"
+										on:click={() => attachmentInput?.click()}
+									>
+										<Upload size={13} />
+										Add file
+									</button>
+									<input
+										bind:this={attachmentInput}
+										type="file"
+										multiple
+										class="hidden"
+										on:change={(event) => {
+											const files = Array.from((event.currentTarget as HTMLInputElement).files || []);
+											(event.currentTarget as HTMLInputElement).value = '';
+											void handleAttachmentFiles(files);
+										}}
+									/>
+								</div>
 								{#if detailsLoading && !taskAssets.length && !pendingUploads.length}
 									<p class="text-sm text-app-subtext">Loading attachments…</p>
 								{:else}
@@ -1367,91 +1432,118 @@
 			{/if}
 
 			<!-- Tab strip (fixed at bottom) -->
-			<div class="shrink-0 border-t border-app-border bg-app-surface">
-				<div class={`mx-auto flex w-full max-w-3xl items-center gap-1 ${isMobile ? 'px-4' : 'px-5'}`}>
+			<nav class="kainbu-mobile-tab-bar" aria-label="Task details">
+				<div class="kainbu-mobile-tab-bar__track" role="tablist">
 					<button
 						type="button"
+						role="tab"
+						aria-selected={activeTab === 'properties'}
 						aria-pressed={activeTab === 'properties'}
 						title="Properties"
-						class={`inline-flex flex-1 items-center justify-center gap-1.5 border-t-2 px-3 py-2 text-[11px] font-bold uppercase tracking-[0.18em] transition ${
-							activeTab === 'properties'
-								? 'border-app-primary text-app-text'
-								: 'border-transparent text-app-subtext hover:text-app-text'
+						aria-label="Properties"
+						class={`kainbu-mobile-tab-bar__item relative${
+							activeTab === 'properties' ? ' kainbu-mobile-tab-bar__item--active' : ''
 						}`}
 						on:click={() => (activeTab = activeTab === 'properties' ? null : 'properties')}
 					>
-						<Lock size={13} />
-						<span class="hidden sm:inline">Properties</span>
+						<Lock size={20} />
 						{#if explicitLinkedTasks.length + implicitReferenceIds.length > 0}
-							<span class="rounded-full bg-app-element px-1.5 py-0.5 text-[10px] tracking-normal text-app-subtext">
+							<span
+								class="absolute right-2 top-1.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-app-primary px-1 text-[9px] font-bold leading-none text-white"
+								aria-hidden="true"
+							>
 								{explicitLinkedTasks.length + implicitReferenceIds.length}
 							</span>
 						{/if}
 					</button>
 					<button
 						type="button"
+						role="tab"
+						aria-selected={activeTab === 'files'}
 						aria-pressed={activeTab === 'files'}
 						title="Files"
-						class={`inline-flex flex-1 items-center justify-center gap-1.5 border-t-2 px-3 py-2 text-[11px] font-bold uppercase tracking-[0.18em] transition ${
-							activeTab === 'files'
-								? 'border-app-primary text-app-text'
-								: 'border-transparent text-app-subtext hover:text-app-text'
+						aria-label="Files"
+						class={`kainbu-mobile-tab-bar__item relative${
+							activeTab === 'files' ? ' kainbu-mobile-tab-bar__item--active' : ''
 						}`}
 						on:click={() => (activeTab = activeTab === 'files' ? null : 'files')}
 					>
-						<Paperclip size={13} />
-						<span class="hidden sm:inline">Files</span>
+						<Paperclip size={20} />
 						{#if taskAssets.length + pendingUploads.length > 0}
-							<span class="rounded-full bg-app-element px-1.5 py-0.5 text-[10px] tracking-normal text-app-subtext">
+							<span
+								class="absolute right-2 top-1.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-app-primary px-1 text-[9px] font-bold leading-none text-white"
+								aria-hidden="true"
+							>
 								{taskAssets.length + pendingUploads.length}
 							</span>
 						{/if}
 					</button>
 					<button
 						type="button"
+						role="tab"
+						aria-selected={activeTab === 'comments'}
 						aria-pressed={activeTab === 'comments'}
 						title="Comments"
-						class={`inline-flex flex-1 items-center justify-center gap-1.5 border-t-2 px-3 py-2 text-[11px] font-bold uppercase tracking-[0.18em] transition ${
-							activeTab === 'comments'
-								? 'border-app-primary text-app-text'
-								: 'border-transparent text-app-subtext hover:text-app-text'
+						aria-label="Comments"
+						class={`kainbu-mobile-tab-bar__item relative${
+							activeTab === 'comments' ? ' kainbu-mobile-tab-bar__item--active' : ''
 						}`}
 						on:click={() => (activeTab = activeTab === 'comments' ? null : 'comments')}
 					>
-						<MessageSquare size={13} />
-						<span class="hidden sm:inline">Comments</span>
+						<MessageSquare size={20} />
 						{#if taskComments.length > 0}
-							<span class="rounded-full bg-app-element px-1.5 py-0.5 text-[10px] tracking-normal text-app-subtext">
+							<span
+								class="absolute right-2 top-1.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-app-primary px-1 text-[9px] font-bold leading-none text-white"
+								aria-hidden="true"
+							>
 								{taskComments.length}
 							</span>
 						{/if}
 					</button>
-					{#if activeTab === 'files'}
-						<button
-							type="button"
-							class="ml-1 inline-flex items-center gap-1.5 rounded-md border border-app-border bg-app-element/40 px-2 py-1 text-[11px] font-semibold text-app-subtext transition hover:border-app-primary/35 hover:text-app-primary"
-							on:click={() => attachmentInput?.click()}
-						>
-							<Upload size={11} />
-							Add
-						</button>
-						<input
-							bind:this={attachmentInput}
-							type="file"
-							multiple
-							class="hidden"
-							on:change={(event) => {
-								const files = Array.from((event.currentTarget as HTMLInputElement).files || []);
-								(event.currentTarget as HTMLInputElement).value = '';
-								void handleAttachmentFiles(files);
-							}}
-						/>
-					{/if}
 				</div>
-			</div>
+			</nav>
 		</div>
 	</div>
 </div>
+
+{#if tagColorPickerOpen && tagColorPickerPosition}
+	<div class="pointer-events-none fixed inset-0 z-[160]" use:portalToBody>
+		<button
+			type="button"
+			class="pointer-events-auto fixed inset-0 cursor-default bg-transparent"
+			aria-label="Close tag color picker"
+			on:pointerdown|stopPropagation
+			on:click={closeTagColorPicker}
+		></button>
+		<div
+			role="presentation"
+			data-task-modal-tag-color-picker
+			class="pointer-events-auto fixed w-[14.5rem] max-w-[min(14.5rem,calc(100vw-3rem))] rounded-md border border-app-border bg-app-surface p-3 shadow-kainbu-md"
+			style={`top:${tagColorPickerPosition.top}px;left:${tagColorPickerPosition.left}px;`}
+			on:mousedown|stopPropagation
+		>
+			<p class="mb-2 text-[10px] font-bold uppercase tracking-[0.18em] text-app-subtext">Tag color</p>
+			<div class="grid grid-cols-4 gap-2">
+				{#each TAG_COLORS as color}
+					<button
+						type="button"
+						aria-label={`Select ${color.value.replace('tone:', '')} color`}
+						title={color.value.replace('tone:', '')}
+						class={`h-8 w-8 rounded-md border p-0 transition ${color.swatchClass} ${
+							selectedTagColor === color.value
+								? 'border-white/80 ring-2 ring-app-primary/45 ring-offset-2 ring-offset-app-surface'
+								: 'hover:-translate-y-0.5 hover:border-app-primary/35'
+						}`}
+						on:click={() => {
+							selectedTagColor = color.value;
+							closeTagColorPicker();
+						}}
+					></button>
+				{/each}
+			</div>
+		</div>
+	</div>
+{/if}
 
 <style>
 	.task-modal__doc {

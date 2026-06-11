@@ -3,10 +3,9 @@
 migrate(
 	(app) => {
 		const appSettings = app.findCollectionByNameOrId('app_settings');
+		const fieldNames = new Set(appSettings.fields.map((field) => field.name));
 
-		try {
-			appSettings.fields.getByName('ai_models_json');
-		} catch {
+		if (!fieldNames.has('ai_models_json')) {
 			appSettings.fields.add(
 				new TextField({
 					name: 'ai_models_json',

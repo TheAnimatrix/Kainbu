@@ -424,7 +424,7 @@
 		return [...groupColumns, ...residualColumns];
 	})();
 	let priorBoardSearchActive = false;
-	$: if (active && boardSearchActive && !priorBoardSearchActive) {
+	$: if (active && boardSearchActive && !priorBoardSearchActive && !isMobile) {
 		void tick().then(() => {
 			boardSearchInput?.focus();
 			boardSearchInput?.select();
@@ -1939,7 +1939,8 @@
 				class="flex h-full min-h-0 min-w-0 flex-1 flex-col overflow-hidden py-1 lg:py-2"
 			>
 				{#if !isDiffMode}
-					<div class="flex shrink-0 min-w-0 items-center gap-2 px-3 pb-2">
+					<div class="flex shrink-0 min-w-0 flex-col gap-2 overflow-hidden px-3 pb-2">
+						<div class="flex min-w-0 items-center gap-2 overflow-x-auto overflow-y-hidden">
 							{#if showCollaborationChrome}
 								<button
 									type="button"
@@ -1967,26 +1968,28 @@
 										Share
 									</button>
 								{/if}
-								<button
-									type="button"
-									class={`${boardToolbarPillClass} ${
-										boardSearchActive
-											? 'border-app-primary/40 bg-app-primary/10 text-app-primary'
-											: 'border-app-border bg-app-surface text-app-subtext hover:text-app-text'
-									}`}
-									title="Search cards (Ctrl+F)"
-									aria-label="Search cards"
-									onclick={() => {
-										if (boardSearchActive) {
-											closeBoardSearch();
-											return;
-										}
-										void openBoardSearch();
-									}}
-								>
-									<Search size={13} />
-									Search
-								</button>
+								{#if !isMobile}
+									<button
+										type="button"
+										class={`${boardToolbarPillClass} ${
+											boardSearchActive
+												? 'border-app-primary/40 bg-app-primary/10 text-app-primary'
+												: 'border-app-border bg-app-surface text-app-subtext hover:text-app-text'
+										}`}
+										title="Search cards (Ctrl+F)"
+										aria-label="Search cards"
+										onclick={() => {
+											if (boardSearchActive) {
+												closeBoardSearch();
+												return;
+											}
+											void openBoardSearch();
+										}}
+									>
+										<Search size={13} />
+										Search
+									</button>
+								{/if}
 							{/if}
 							{#if showCollaborationChrome}
 								<button
@@ -2007,33 +2010,6 @@
 									Options
 								</button>
 							{/if}
-							{#if boardSearchActive}
-								<div class="flex min-w-[12rem] max-w-sm flex-1 items-center gap-1.5">
-									<input
-										bind:this={boardSearchInput}
-										bind:value={boardSearchQuery}
-										type="search"
-										class="w-full min-w-0 rounded-full border border-app-border bg-app-bg px-3 py-1.5 text-[11px] text-app-text outline-none placeholder:text-app-subtext/60 focus:border-app-primary/50"
-										placeholder="Search title, description, tags…"
-										aria-label="Search cards by title, description, or tags"
-										onkeydown={(event) => {
-											if (event.key === 'Escape') {
-												event.preventDefault();
-												closeBoardSearch();
-											}
-										}}
-									/>
-									<button
-										type="button"
-										class="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-app-subtext transition hover:bg-app-element hover:text-app-text"
-										title="Close search"
-										aria-label="Close search"
-										onclick={closeBoardSearch}
-									>
-										<X size={14} />
-									</button>
-								</div>
-							{/if}
 							{#if linkViewAnchorId}
 								<button
 									type="button"
@@ -2044,6 +2020,50 @@
 									Clear link view
 								</button>
 							{/if}
+						</div>
+						{#if !isMobile}
+							<div
+								class={`grid transition-[grid-template-rows] duration-200 ease-out motion-reduce:transition-none ${
+									boardSearchActive ? 'grid-rows-[1fr]' : 'grid-rows-[0fr]'
+								}`}
+							>
+								<div class="overflow-hidden">
+									<div
+										class="flex min-w-0 items-center gap-1.5"
+										class:pointer-events-none={!boardSearchActive}
+										aria-hidden={!boardSearchActive}
+									>
+										<input
+											bind:this={boardSearchInput}
+											bind:value={boardSearchQuery}
+											type="search"
+											tabindex={boardSearchActive ? 0 : -1}
+											class="w-full min-w-0 rounded-full border border-app-border bg-app-bg px-3 py-1.5 text-[11px] text-app-text outline-none transition-opacity duration-200 placeholder:text-app-subtext/60 focus:border-app-primary/50 motion-reduce:transition-none {boardSearchActive
+												? 'opacity-100'
+												: 'opacity-0'}"
+											placeholder="Search title, description, tags…"
+											aria-label="Search cards by title, description, or tags"
+											onkeydown={(event) => {
+												if (event.key === 'Escape') {
+													event.preventDefault();
+													closeBoardSearch();
+												}
+											}}
+										/>
+										<button
+											type="button"
+											tabindex={boardSearchActive ? 0 : -1}
+											class="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-app-subtext transition hover:bg-app-element hover:text-app-text"
+											title="Close search"
+											aria-label="Close search"
+											onclick={closeBoardSearch}
+										>
+											<X size={14} />
+										</button>
+									</div>
+								</div>
+							</div>
+						{/if}
 					</div>
 				{/if}
 				<div
@@ -3343,7 +3363,7 @@
 											type="button"
 											aria-label={`Select ${color.value.replace('tone:', '')} color`}
 											title={color.value.replace('tone:', '')}
-											class={`h-5 w-5 border p-0 transition ${color.swatchClass} ${
+											class={`h-5 w-5 rounded-md border p-0 transition ${color.swatchClass} ${
 												taskTagMenuNewColor === color.value
 													? 'scale-110 border-white/80 ring-1 ring-app-primary/50'
 													: 'hover:scale-105 hover:border-app-primary/35'

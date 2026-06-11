@@ -1304,7 +1304,9 @@
 			bind:this={historyViewport}
 			use:observeHistoryViewport
 			on:scroll={handleHistoryScroll}
-			class={`min-h-0 flex-1 overflow-y-auto [overflow-anchor:none] ${isMobileChrome ? 'px-4 py-4' : 'px-5 py-5'}`}
+			class={`min-h-0 flex-1 overflow-y-auto [overflow-anchor:none] ${
+				isMobileChrome ? 'kainbu-chat-history--top-fade px-4 py-4' : 'px-5 py-5'
+			}`}
 		>
 			{#if !history.length}
 				<div class="flex h-full flex-col items-center justify-center text-center text-app-subtext">

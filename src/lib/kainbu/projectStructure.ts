@@ -13,8 +13,11 @@ import type {
 
 const cloneKanbanData = (kanbanData: KanbanData) => structuredClone(kanbanData || []);
 
+const fallbackBoardId = (projectId: string) => `__fallback_board__${projectId}`;
+const fallbackPageId = (projectId: string) => `__fallback_page__${projectId}`;
+
 const createFallbackBoard = (project: Pick<Project, 'id' | 'kanbanData' | 'createdAt' | 'updatedAt'>): ProjectBoard => ({
-	id: createId(),
+	id: fallbackBoardId(project.id),
 	projectId: project.id,
 	name: 'Board',
 	position: 0,
@@ -26,7 +29,7 @@ const createFallbackBoard = (project: Pick<Project, 'id' | 'kanbanData' | 'creat
 });
 
 const createFallbackPage = (project: Pick<Project, 'id' | 'scratchpadData' | 'createdAt' | 'updatedAt'>): ProjectPage => ({
-	id: createId(),
+	id: fallbackPageId(project.id),
 	projectId: project.id,
 	name: 'Notes',
 	content: getActiveScratchpadPad(normalizeScratchpadData(project.scratchpadData || '')).content,

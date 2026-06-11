@@ -1,8 +1,19 @@
 /// <reference path="../pb_data/types.d.ts" />
 
+/**
+ * Repair project_boards when 1730000025 no-oped:
+ * getByName() does not throw on a missing field, so try/catch idempotency never added
+ * share_slug / share_public.
+ */
 migrate(
 	(app) => {
-		const boards = app.findCollectionByNameOrId('project_boards');
+		let boards;
+		try {
+			boards = app.findCollectionByNameOrId('project_boards');
+		} catch {
+			return;
+		}
+
 		const fieldNames = new Set(boards.fields.map((field) => field.name));
 		let changed = false;
 
@@ -27,7 +38,6 @@ migrate(
 			changed = true;
 		}
 
-		// Drop a broken index from failed earlier deploys (column/index ordering).
 		const indexes = boards.indexes || [];
 		const withoutBrokenIndex = indexes.filter(
 			(entry) => !String(entry).includes('idx_project_boards_share_slug')

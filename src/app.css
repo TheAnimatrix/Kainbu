@@ -19,7 +19,6 @@
 	--color-app-accent: #71717a;
 	--color-app-accent-hover: #52525b;
 
-	--color-workspace-header-fade: rgba(0, 0, 0, 0.42);
 	--shadow-kainbu-md: 0 12px 32px -16px rgba(0, 0, 0, 0.55);
 	--shadow-kainbu-lg: 0 22px 56px -24px rgba(0, 0, 0, 0.68);
 	--shadow-kainbu-xl: 0 34px 90px -34px rgba(0, 0, 0, 0.82);
@@ -48,7 +47,6 @@
 		--color-app-primary-hover: #3f3f46;
 		--color-app-accent: #52525b;
 		--color-app-accent-hover: #3f3f46;
-		--color-workspace-header-fade: rgba(15, 23, 42, 0.14);
 		--shadow-kainbu-md: 0 10px 28px -14px rgba(15, 23, 42, 0.14);
 		--shadow-kainbu-lg: 0 18px 48px -20px rgba(15, 23, 42, 0.16);
 		--shadow-kainbu-xl: 0 28px 70px -28px rgba(15, 23, 42, 0.18);
@@ -260,30 +258,6 @@
 
 	.kainbu-menu-item--danger:hover:not(:disabled) {
 		background: color-mix(in oklab, rgb(244 63 94) 10%, transparent);
-	}
-
-	.kainbu-workspace-header::after {
-		content: '';
-		position: absolute;
-		top: 100%;
-		left: 0;
-		right: 0;
-		z-index: 20;
-		height: 4rem;
-		pointer-events: none;
-		background: linear-gradient(
-			to bottom,
-			var(--color-workspace-header-fade) 0%,
-			color-mix(in oklab, var(--color-workspace-header-fade) 62%, transparent) 32%,
-			color-mix(in oklab, var(--color-workspace-header-fade) 28%, transparent) 62%,
-			transparent 100%
-		);
-	}
-
-	@media (min-width: 1024px) {
-		.kainbu-workspace-header::after {
-			content: none;
-		}
 	}
 
 	.kainbu-menu-item__icon,
@@ -1133,6 +1107,21 @@
 	.kainbu-chat-prose--mobile {
 		font-size: 0.875rem;
 		line-height: 1.7;
+	}
+
+	.kainbu-chat-history--top-fade {
+		-webkit-mask-image: linear-gradient(
+			to bottom,
+			transparent 0,
+			rgb(0 0 0 / 0.45) 0.875rem,
+			black 2.75rem
+		);
+		mask-image: linear-gradient(
+			to bottom,
+			transparent 0,
+			rgb(0 0 0 / 0.45) 0.875rem,
+			black 2.75rem
+		);
 	}
 
 	.kainbu-chat-prose > :first-child {
