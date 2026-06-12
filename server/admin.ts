@@ -173,6 +173,32 @@ export const syncAuthEmailTemplates = async (pb?: PocketBase) => {
 	const mail = await loadMailDeliveryConfig(client);
 	if (!mail.ready || !mail.appUrl) return { synced: false as const, mail };
 
+	// When using Resend, configure PocketBase SMTP to use Resend's SMTP relay.
+	// PocketBase's built-in mailer (verification, password reset) only supports SMTP,
+	// so we can't leave it disabled when Resend is the chosen provider.
+	if (mail.provider === 'resend' && mail.resendApiKey) {
+		const current = await client.settings.getAll();
+		const currentSmtp = (current.smtp || {}) as Record<string, unknown>;
+		if (!currentSmtp.enabled || currentSmtp.host !== 'smtp.resend.com') {
+			await client.settings.update({
+				smtp: {
+					enabled: true,
+					host: 'smtp.resend.com',
+					port: 587,
+					username: 'resend',
+					password: mail.resendApiKey,
+					authMethod: 'PLAIN',
+					tls: true
+				},
+				meta: {
+					...((current.meta || {}) as Record<string, unknown>),
+					senderAddress: mail.fromEmail,
+					senderName: mail.fromName
+				}
+			});
+		}
+	}
+
 	await repairUsersCollectionApiRules(client, verificationEmailTemplates(mail.appUrl));
 	return { synced: true as const, mail };
 };
@@ -556,10 +582,23 @@ export const handleAdminPutAuthEmailSettings = async (c: Context) => {
 							tls: body.smtp?.tls === true,
 							authMethod: body.smtp?.authMethod === 'LOGIN' ? 'LOGIN' : 'PLAIN'
 						}
-					: {
-							...currentSmtp,
-							enabled: false
-						}
+					: provider === 'resend'
+						? {
+								enabled: true,
+								host: 'smtp.resend.com',
+								port: 587,
+								username: 'resend',
+								password:
+									typeof patch.resend_api_key === 'string'
+										? patch.resend_api_key
+										: settingsText(existing, 'resend_api_key'),
+								authMethod: 'PLAIN',
+								tls: true
+							}
+						: {
+								...currentSmtp,
+								enabled: false
+							}
 		});
 
 		const saved = await upsertSettingsRecord(patch);
