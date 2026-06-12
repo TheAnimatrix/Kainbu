@@ -4,6 +4,7 @@
 		Download,
 		FileText,
 		FolderPlus,
+		Grid,
 		LayoutPanelTop,
 		LogOut,
 		Pencil,
@@ -36,6 +37,7 @@
 	export let onRestore: (file: File) => void;
 	export let onOpenSettings: () => void;
 	export let onSignOut: () => void;
+	export let onDashboard: () => void;
 
 	let editingId: string | null = null;
 	let editName = '';
@@ -89,6 +91,15 @@
 		</div>
 
 		<div class="min-h-0 flex-1 space-y-1 overflow-y-auto px-3 py-3">
+			<button
+				type="button"
+				class="flex w-full items-center justify-center gap-2 rounded-lg bg-app-element/30 px-4 py-2.5 text-sm font-medium text-app-text transition hover:bg-app-element/50"
+				on:click={onDashboard}
+			>
+				<Grid size={15} />
+				Dashboard
+			</button>
+
 			<button
 				type="button"
 				class="flex w-full items-center justify-center gap-2 rounded-lg border border-dashed border-app-primary/35 px-4 py-2.5 text-sm font-medium text-app-primary"

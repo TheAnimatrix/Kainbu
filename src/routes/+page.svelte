@@ -5680,6 +5680,10 @@
 				onRestore={handleRestoreProjects}
 				onOpenSettings={openSettings}
 				onSignOut={handleSignOut}
+				onDashboard={() => {
+					setWorkspaceTab('dashboard');
+					showProjectSheet = false;
+				}}
 			/>
 		{/if}
 	</div>
