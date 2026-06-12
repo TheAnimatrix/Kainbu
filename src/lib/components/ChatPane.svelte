@@ -164,7 +164,12 @@
 	let modelMenuTrigger: HTMLButtonElement | null = null;
 	let thinkingMenuTrigger: HTMLButtonElement | null = null;
 	let settingsMenuTrigger: HTMLButtonElement | null = null;
-	let composerMenuPosition: { top: number; left: number; width: number } | null = null;
+	let composerMenuPosition: {
+		top?: number;
+		bottom?: number;
+		left: number;
+		width: number;
+	} | null = null;
 
 	$: switcherFilteredSessions = switcherSearchQuery.trim()
 		? sortedSessions.filter((session) =>
@@ -279,14 +284,20 @@
 					? Math.max(rect.width, isMobileChrome ? 240 : 288)
 					: Math.max(rect.width, 168);
 		const maxLeft = Math.max(8, window.innerWidth - width - 8);
-		const panelHeight = kind === 'settings' ? 320 : 256;
-		const aboveTop = rect.top - panelHeight - 6;
-		const fitsAbove = aboveTop >= 8;
-		composerMenuPosition = {
-			top: fitsAbove ? aboveTop : Math.max(8, rect.bottom + 6),
-			left: Math.min(rect.left, maxLeft),
-			width
-		};
+		const maxPanelHeight = kind === 'settings' ? 320 : 256;
+		const gap = 6;
+		const fitsAbove = rect.top - maxPanelHeight - gap >= 8;
+		composerMenuPosition = fitsAbove
+			? {
+					bottom: window.innerHeight - rect.top + gap,
+					left: Math.min(rect.left, maxLeft),
+					width
+				}
+			: {
+					top: Math.max(8, rect.bottom + gap),
+					left: Math.min(rect.left, maxLeft),
+					width
+				};
 	};
 
 	const openComposerMenu = async (kind: ComposerMenuKind) => {
@@ -2046,7 +2057,11 @@
 					? 'Thinking level'
 					: 'AI settings'}
 			class="pointer-events-auto fixed overflow-hidden rounded-lg border border-app-border bg-app-surface shadow-kainbu-xl"
-			style={`top:${composerMenuPosition.top}px; left:${composerMenuPosition.left}px; width:${composerMenuPosition.width}px;`}
+			style={`${
+				composerMenuPosition.top != null ? `top:${composerMenuPosition.top}px;` : ''
+			}${
+				composerMenuPosition.bottom != null ? `bottom:${composerMenuPosition.bottom}px;` : ''
+			} left:${composerMenuPosition.left}px; width:${composerMenuPosition.width}px;`}
 			on:mousedown|stopPropagation
 		>
 			<div
