@@ -1,4 +1,5 @@
 import PocketBase, { ClientResponseError } from 'pocketbase';
+import { formatPocketBaseError } from '../src/lib/pocketbaseErrors.js';
 import { getEnv, getRequiredEnv } from './env.js';
 
 export const getPocketBaseUrl = () =>
@@ -74,7 +75,7 @@ export const mapPocketBaseError = (error: unknown) => {
 			message:
 				status === 404
 					? 'The requested resource was not found.'
-					: error.message || 'PocketBase request failed.'
+					: formatPocketBaseError(error, 'PocketBase request failed.')
 		};
 	}
 

@@ -1,4 +1,6 @@
-FROM ghcr.io/muchobien/pocketbase:latest
+# Pinned: unpinned :latest caused JSVM hook-API drift and stale-image surprises
+# across deploys. Bump deliberately and re-test the pb_hooks mailer flow.
+FROM ghcr.io/muchobien/pocketbase:0.38.2
 
 COPY pocketbase/pb_migrations /pb_migrations
 COPY pocketbase/pb_hooks /pb_hooks

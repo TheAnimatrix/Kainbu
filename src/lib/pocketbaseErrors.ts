@@ -26,6 +26,51 @@ export const isOwnUserRecordNotFound = (error: unknown, userId: string): boolean
 	);
 };
 
+const AUTH_FIELD_LABELS: Record<string, string> = {
+	identity: 'Email',
+	email: 'Email',
+	password: 'Password',
+	passwordConfirm: 'Password confirmation'
+};
+
+const formatAuthFieldMessage = (field: string, message: string): string => {
+	const label = AUTH_FIELD_LABELS[field] ?? field.charAt(0).toUpperCase() + field.slice(1);
+	const trimmed = message.trim();
+	if (/^cannot be blank\.?$/i.test(trimmed)) {
+		return `${label} cannot be blank.`;
+	}
+	if (/^(must|missing|invalid) /i.test(trimmed)) {
+		return `${label} ${trimmed.charAt(0).toLowerCase()}${trimmed.slice(1)}`;
+	}
+	if (trimmed.toLowerCase().startsWith(label.toLowerCase())) {
+		return trimmed;
+	}
+	return `${label}: ${trimmed}`;
+};
+
+const collectPocketBaseFieldMessages = (value: unknown, field = ''): string[] => {
+	if (typeof value === 'string' && value.trim()) {
+		return field ? [formatAuthFieldMessage(field, value)] : [value.trim()];
+	}
+
+	if (!value || typeof value !== 'object') {
+		return [];
+	}
+
+	if ('message' in value && typeof (value as { message: unknown }).message === 'string') {
+		const message = String((value as { message: string }).message);
+		if (field === 'email' && /already exists|not unique|unique/i.test(message)) {
+			return ['An account with that email already exists. Sign in instead.'];
+		}
+		return field ? [formatAuthFieldMessage(field, message)] : [message];
+	}
+
+	return Object.entries(value as Record<string, unknown>).flatMap(([key, nested]) => {
+		if (key === 'message') return [];
+		return collectPocketBaseFieldMessages(nested, key);
+	});
+};
+
 /** Surface PocketBase validation / rule errors instead of generic "Failed to create record." */
 export function formatPocketBaseError(error: unknown, fallback: string): string {
 	if (!(error instanceof ClientResponseError)) {
@@ -41,19 +86,7 @@ export function formatPocketBaseError(error: unknown, fallback: string): string 
 
 	const data = error.response?.data as Record<string, unknown> | undefined;
 	if (data && typeof data === 'object') {
-		const fieldMessages = Object.entries(data)
-			.filter(([key]) => key !== 'message')
-			.flatMap(([field, value]) => {
-				if (typeof value === 'object' && value && 'message' in value) {
-					const message = String((value as { message: unknown }).message);
-					if (field === 'email' && /already exists|not unique|unique/i.test(message)) {
-						return ['An account with that email already exists. Sign in instead.'];
-					}
-					return [`${field}: ${message}`];
-				}
-				if (typeof value === 'string') return [`${field}: ${value}`];
-				return [];
-			});
+		const fieldMessages = collectPocketBaseFieldMessages(data);
 		if (fieldMessages.length) return fieldMessages.join(' ');
 	}
 

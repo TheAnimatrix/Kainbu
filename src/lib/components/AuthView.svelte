@@ -2,7 +2,8 @@
 	import { LogIn, Mail, Lock, UserPlus } from '$lib/icons';
 	import { BRAND_KATAKANA, BRAND_NAME } from '$lib/kainbu/constants';
 	import BrandMark from '$lib/components/BrandMark.svelte';
-	import { createEventDispatcher } from 'svelte';
+	import { getVerificationResendCooldownRemaining } from '$lib/auth/verificationResend';
+	import { createEventDispatcher, onDestroy } from 'svelte';
 	import type { BackgroundTheme } from '$lib/kainbu/types';
 
 	export let loading = false;
@@ -10,6 +11,7 @@
 	export let signupsEnabled = true;
 	export let emailConfigured = false;
 	export let showResendVerification = false;
+	export let verificationEmail = '';
 	export let infoMessage = '';
 	export let errorMessage = '';
 	export let theme: BackgroundTheme | undefined = undefined;
@@ -21,6 +23,8 @@
 	let email = '';
 	let password = '';
 	let isSignUp = false;
+	let resendCooldownRemaining = 0;
+	let cooldownTimer: ReturnType<typeof setInterval> | null = null;
 	const emailInputId = 'auth-email';
 	const passwordInputId = 'auth-password';
 
@@ -29,6 +33,28 @@
 		resetPassword: { email: string };
 		resendVerification: { email: string };
 	}>();
+
+	const resendTargetEmail = () => (verificationEmail || email).trim().toLowerCase();
+
+	const syncResendCooldown = () => {
+		resendCooldownRemaining = getVerificationResendCooldownRemaining(resendTargetEmail());
+	};
+
+	const ensureCooldownTicker = () => {
+		syncResendCooldown();
+		if (cooldownTimer) {
+			clearInterval(cooldownTimer);
+			cooldownTimer = null;
+		}
+		if (resendCooldownRemaining <= 0) return;
+		cooldownTimer = setInterval(() => {
+			syncResendCooldown();
+			if (resendCooldownRemaining <= 0 && cooldownTimer) {
+				clearInterval(cooldownTimer);
+				cooldownTimer = null;
+			}
+		}, 1000);
+	};
 
 	const submit = () => {
 		dispatch('submit', { email, password, isSignUp });
@@ -39,12 +65,18 @@
 	};
 
 	const requestVerificationResend = () => {
-		dispatch('resendVerification', { email });
+		dispatch('resendVerification', { email: resendTargetEmail() });
 	};
 
 	$: if (!signupsEnabled && isSignUp) {
 		isSignUp = false;
 	}
+
+	$: showResendVerification, verificationEmail, email, loading, ensureCooldownTicker();
+
+	onDestroy(() => {
+		if (cooldownTimer) clearInterval(cooldownTimer);
+	});
 </script>
 
 <div
@@ -128,7 +160,7 @@
 					bind:value={password}
 					type="password"
 					required
-					minlength="6"
+					minlength="8"
 					placeholder="Password"
 					autocomplete={isSignUp ? 'new-password' : 'current-password'}
 					class="w-full rounded-lg border border-app-border bg-app-bg py-2.5 pl-10 pr-3 text-sm text-app-text outline-none transition focus:border-app-primary/60 focus:ring-2 focus:ring-app-primary/20"
@@ -157,11 +189,15 @@
 			{#if emailConfigured && showResendVerification}
 				<button
 					type="button"
-					class="text-xs text-app-subtext transition hover:text-app-primary"
-					disabled={loading}
+					class="text-xs text-app-subtext transition hover:text-app-primary disabled:cursor-not-allowed disabled:opacity-60"
+					disabled={loading || resendCooldownRemaining > 0 || !resendTargetEmail()}
 					on:click={requestVerificationResend}
 				>
-					Resend verification email
+					{#if resendCooldownRemaining > 0}
+						Resend verification email in {resendCooldownRemaining}s
+					{:else}
+						Resend verification email
+					{/if}
 				</button>
 			{/if}
 			{#if emailConfigured && !isSignUp}

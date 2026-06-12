@@ -6,6 +6,11 @@
 	import { formatPocketBaseError } from '$lib/pocketbaseErrors';
 	import { getWorkspaceApiAccessToken, resolveWorkspaceApiUrl } from '$lib/kainbu/api';
 	import { fetchAuthSettings, signupWithAuthSettings } from '$lib/kainbu/adminApi';
+	import {
+		isAuthRecordUnverified,
+		markVerificationResendSent,
+		normalizeVerificationEmail
+	} from '$lib/auth/verificationResend';
 	import { BRAND_NAME } from '$lib/kainbu/constants';
 
 	let loading = false;
@@ -20,6 +25,7 @@
 	let emailConfigured = false;
 	let emailVerificationEnabled = false;
 	let showResendVerification = false;
+	let verificationEmail = '';
 
 	const formatCode = (raw: string) => {
 		const compact = raw.replace(/[^A-Za-z0-9]/g, '').toUpperCase().slice(0, 8);
@@ -50,21 +56,29 @@
 		return () => unsubscribe();
 	});
 
-	const rejectUnverifiedSession = (email: string) => {
-		if (!emailVerificationEnabled || pocketbase.authStore.record?.verified !== false) {
-			return false;
-		}
-		pocketbase.authStore.clear();
+	const promptVerificationRequired = (email: string) => {
+		verificationEmail = normalizeVerificationEmail(email);
 		errorMessage =
 			'Verify your email before signing in. Check your inbox for the verification link.';
 		showResendVerification = true;
+	};
+
+	const rejectUnverifiedSession = (email: string) => {
+		if (!emailVerificationEnabled || !isAuthRecordUnverified(pocketbase.authStore.model)) {
+			return false;
+		}
+		const accountEmail = normalizeVerificationEmail(
+			String(pocketbase.authStore.model?.email || email)
+		);
+		pocketbase.authStore.clear();
+		promptVerificationRequired(accountEmail);
 		return true;
 	};
 
 	const handleResendVerificationRequest = async (
 		event: CustomEvent<{ email: string }>
 	) => {
-		const normalizedEmail = event.detail.email.trim().toLowerCase();
+		const normalizedEmail = normalizeVerificationEmail(event.detail.email || verificationEmail);
 		errorMessage = '';
 		infoMessage = '';
 		if (!normalizedEmail) {
@@ -74,8 +88,10 @@
 		authLoading = true;
 		try {
 			await pocketbase.collection('users').requestVerification(normalizedEmail);
-			showResendVerification = false;
-			infoMessage = 'Verification email sent if that account is unverified.';
+			verificationEmail = normalizedEmail;
+			markVerificationResendSent(normalizedEmail);
+			showResendVerification = true;
+			infoMessage = 'Verification email sent. Check your inbox.';
 		} catch (error) {
 			errorMessage = formatPocketBaseError(error, 'Unable to send verification email.');
 		} finally {
@@ -94,6 +110,7 @@
 			if (isSignUp) {
 				const result = await signupWithAuthSettings(email, password);
 				if (result.requiresVerification) {
+					verificationEmail = normalizeVerificationEmail(email);
 					infoMessage =
 						'Account created. Check your email before signing in to authorize the CLI.';
 					showResendVerification = true;
@@ -188,6 +205,7 @@
 			{signupsEnabled}
 			{emailConfigured}
 			{showResendVerification}
+			{verificationEmail}
 			{infoMessage}
 			{errorMessage}
 			on:submit={handleAuthSubmit}

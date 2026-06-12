@@ -15,6 +15,11 @@
 	import type { ColorMode, KanbanData, PublicBoardShareResponse } from '$lib/kainbu/types';
 	import { isPocketBaseConfigured, pocketbase } from '$lib/pocketbaseClient';
 	import { formatPocketBaseError } from '$lib/pocketbaseErrors';
+	import {
+		isAuthRecordUnverified,
+		markVerificationResendSent,
+		normalizeVerificationEmail
+	} from '$lib/auth/verificationResend';
 
 	type AuthUser = { id: string; email?: string };
 
@@ -30,6 +35,7 @@
 	let emailConfigured = false;
 	let emailVerificationEnabled = false;
 	let showResendVerification = false;
+	let verificationEmail = '';
 	let authInfoMessage = '';
 	let authErrorMessage = '';
 	let isAuthLoading = false;
@@ -65,6 +71,47 @@
 		}
 	};
 
+	const promptVerificationRequired = (email: string) => {
+		verificationEmail = normalizeVerificationEmail(email);
+		authErrorMessage =
+			'Verify your email before signing in. Check your inbox for the verification link.';
+		showResendVerification = true;
+	};
+
+	const rejectUnverifiedSession = (email: string) => {
+		if (!emailVerificationEnabled || !isAuthRecordUnverified(pocketbase.authStore.model)) {
+			return false;
+		}
+		const accountEmail = normalizeVerificationEmail(
+			String(pocketbase.authStore.model?.email || email)
+		);
+		pocketbase.authStore.clear();
+		promptVerificationRequired(accountEmail);
+		return true;
+	};
+
+	const handleResendVerificationRequest = async (email: string) => {
+		authErrorMessage = '';
+		authInfoMessage = '';
+		const normalizedEmail = normalizeVerificationEmail(email || verificationEmail);
+		if (!normalizedEmail) {
+			authErrorMessage = 'Enter your email before requesting a verification link.';
+			return;
+		}
+		isAuthLoading = true;
+		try {
+			await pocketbase.collection('users').requestVerification(normalizedEmail);
+			verificationEmail = normalizedEmail;
+			markVerificationResendSent(normalizedEmail);
+			showResendVerification = true;
+			authInfoMessage = 'Verification email sent. Check your inbox.';
+		} catch (error) {
+			authErrorMessage = formatPocketBaseError(error, 'Unable to send verification email.');
+		} finally {
+			isAuthLoading = false;
+		}
+	};
+
 	const handleAuthSubmit = async (payload: {
 		email: string;
 		password: string;
@@ -75,19 +122,23 @@
 		isAuthLoading = true;
 		authErrorMessage = '';
 		authInfoMessage = '';
+		showResendVerification = false;
 
 		try {
 			if (payload.isSignUp) {
 				const result = await signupWithAuthSettings(payload.email, payload.password);
 				if (result.requiresVerification) {
+					verificationEmail = normalizeVerificationEmail(payload.email);
 					authInfoMessage =
 						'Account created. Check your email for a verification link before signing in.';
 					showResendVerification = true;
 					return;
 				}
 				await pocketbase.collection('users').authWithPassword(payload.email, payload.password);
+				if (rejectUnverifiedSession(payload.email)) return;
 			} else {
 				await pocketbase.collection('users').authWithPassword(payload.email, payload.password);
+				if (rejectUnverifiedSession(payload.email)) return;
 			}
 
 			user = toAuthUser(pocketbase.authStore.model);
@@ -183,9 +234,11 @@
 							{signupsEnabled}
 							{emailConfigured}
 							{showResendVerification}
+							{verificationEmail}
 							on:submit={(event) => handleAuthSubmit(event.detail)}
 							on:resetPassword={() => {}}
-							on:resendVerification={() => {}}
+							on:resendVerification={(event) =>
+								handleResendVerificationRequest(event.detail.email)}
 						/>
 					</div>
 				</div>
