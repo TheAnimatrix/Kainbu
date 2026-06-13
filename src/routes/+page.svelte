@@ -251,6 +251,7 @@
 	let lastSyncedAiThinkingModelId = '';
 	let profile: UserProfile | null = null;
 	let profileLoaded = false;
+	let profileLoadedAt = 0;
 	let desktopWorkspaceTab: WorkspaceTab = 'dashboard';
 	let mobileTab: WorkspaceTab = 'dashboard';
 	let mobileChatPane: { toggleSessionSwitcher: () => void } | undefined;
@@ -569,6 +570,7 @@
 		profileLoaded &&
 		!authHydrating &&
 		!workspaceHydrating &&
+		Date.now() - profileLoadedAt > 1500 &&
 		!normalizeUsername(profile?.username);
 	$: void ensureBackgroundSignedUrl('personal', settings.backgroundTheme);
 	$: void ensureBackgroundSignedUrl('project', currentProject?.backgroundTheme ?? null);
@@ -1390,6 +1392,7 @@
 		settings = createInitialSettings();
 		profile = null;
 		profileLoaded = false;
+		profileLoadedAt = 0;
 		settingsSection = 'appearance';
 		dirtySettings = false;
 		usernameDraft = '';
@@ -2075,6 +2078,7 @@
 			if (loadVersion === workspaceLoadVersion) {
 				workspaceHydrating = false;
 				profileLoaded = true;
+				profileLoadedAt = profileLoadedAt || Date.now();
 				hydrateWorkspaceFromUrl();
 			}
 		}
@@ -4680,6 +4684,7 @@
 		const userChanged = previousUserId !== nextUser.id;
 		if (userChanged) {
 			profileLoaded = false;
+			profileLoadedAt = 0;
 			syncUsernameDraftFromProfile(createFallbackUserProfile(nextUser));
 		}
 		authHydrating = false;
