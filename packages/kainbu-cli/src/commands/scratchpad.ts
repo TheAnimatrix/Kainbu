@@ -4,6 +4,7 @@ import type { Command } from 'commander';
 import type { ScratchpadData } from '../../../../src/lib/kainbu/types.js';
 import { resolveContext } from '../context.js';
 import { printResult } from '../output.js';
+import { ui } from '../color.js';
 import { initRuntime } from '../runtime.js';
 import { resolveByIdOrName } from './shared.js';
 
@@ -83,7 +84,7 @@ export const registerScratchpadCommands = (program: Command) => {
 					nextData,
 					meta.scratchpadRev
 				);
-				console.log(`Scratchpad updated (rev ${result.scratchpadRev}).`);
+				console.log(`${ui.success('Scratchpad updated')} ${ui.meta(`(rev ${result.scratchpadRev})`)}`);
 			} catch (error) {
 				const message = error instanceof Error ? error.message : 'Scratchpad update failed.';
 				const status =
@@ -117,7 +118,10 @@ export const registerScratchpadCommands = (program: Command) => {
 			printResult(
 				{ json: Boolean(options.json), quiet: false },
 				rows,
-				rows.map((row) => `${row.active ? '*' : ' '} ${row.id}  ${row.name}`)
+				rows.map(
+					(row) =>
+						`${row.active ? ui.active('*') : ' '} ${ui.id(row.id)}  ${ui.name(row.name)}`
+				)
 			);
 		});
 
@@ -135,7 +139,7 @@ export const registerScratchpadCommands = (program: Command) => {
 				pads: [...meta.scratchpadData.pads, nextPad]
 			};
 			await updateProjectScratchpad(project.id, nextData, meta.scratchpadRev);
-			console.log(`Created pad ${name} (${nextPad.id})`);
+			console.log(`${ui.success('Created pad')} ${ui.name(name)} ${ui.id(`(${nextPad.id})`)}`);
 		});
 
 	pad
@@ -156,7 +160,7 @@ export const registerScratchpadCommands = (program: Command) => {
 				)
 			};
 			await updateProjectScratchpad(project.id, nextData, meta.scratchpadRev);
-			console.log(`Renamed pad to ${newName}`);
+			console.log(`${ui.success('Renamed pad to')} ${ui.name(newName)}`);
 		});
 
 	pad
@@ -182,6 +186,6 @@ export const registerScratchpadCommands = (program: Command) => {
 				pads: remaining
 			};
 			await updateProjectScratchpad(project.id, nextData, meta.scratchpadRev);
-			console.log('Deleted pad');
+			console.log(ui.removed('Deleted pad'));
 		});
 };

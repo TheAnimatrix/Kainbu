@@ -8,6 +8,7 @@ import type { Command } from 'commander';
 import type { KanbanData } from '../../../../src/lib/kainbu/types.js';
 import { resolveContext } from '../context.js';
 import { printResult, type OutputMode } from '../output.js';
+import { ui } from '../color.js';
 import { initRuntime } from '../runtime.js';
 import {
 	buildBoardRefIndex,
@@ -63,7 +64,7 @@ export const registerTaskCommands = (program: Command) => {
 					result,
 					result.tasks.map(
 						(entry) =>
-							`${entry.ref}  ${entry.title}  [${entry.columnRef} ${entry.columnTitle}]  ${entry.id}`
+							`${ui.ref(entry.ref)}  ${entry.title}  ${ui.meta(`[${entry.columnRef} ${entry.columnTitle}]`)}  ${ui.id(entry.id)}`
 					)
 				);
 			}
@@ -85,10 +86,10 @@ export const registerTaskCommands = (program: Command) => {
 				{ json: Boolean(options.json), quiet: false },
 				{ ref, ...found.task, columnId: found.column.id, columnTitle: found.column.title },
 				[
-					`${ref}  ${found.task.title}`,
+					`${ui.ref(ref)}  ${ui.heading(found.task.title)}`,
 					found.task.description ? found.task.description : '',
-					`column: ${found.column.title} (${found.column.id})`,
-					`id: ${found.task.id}`
+					`${ui.meta('column:')} ${ui.name(found.column.title)} ${ui.id(`(${found.column.id})`)}`,
+					`${ui.meta('id:')} ${ui.id(found.task.id)}`
 				].filter(Boolean)
 			);
 		});
@@ -131,7 +132,7 @@ export const registerTaskCommands = (program: Command) => {
 				);
 
 				await syncProjectBoard(project.id, board.id, kanban, next);
-				console.log(`Added task ${title}`);
+				console.log(`${ui.success('Added task')} ${ui.name(title)}`);
 			}
 		);
 
@@ -182,7 +183,7 @@ export const registerTaskCommands = (program: Command) => {
 				}
 
 				await syncProjectBoard(project.id, board.id, kanban, next);
-				console.log('Updated task');
+				console.log(ui.success('Updated task'));
 			}
 		);
 
@@ -203,7 +204,7 @@ export const registerTaskCommands = (program: Command) => {
 			}));
 
 			await syncProjectBoard(project.id, board.id, kanban, next);
-			console.log('Deleted task');
+			console.log(ui.removed('Deleted task'));
 		});
 
 	task
@@ -233,6 +234,6 @@ export const registerTaskCommands = (program: Command) => {
 			}));
 
 			await syncProjectBoard(project.id, board.id, kanban, next);
-			console.log('Toggled task checkbox');
+			console.log(ui.success('Toggled task checkbox'));
 		});
 };

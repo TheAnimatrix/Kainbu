@@ -2,6 +2,7 @@ import { createProjectBoard, deleteProjectBoard, renameProjectBoard } from '@kai
 import type { Command } from 'commander';
 import { resolveContext, setActiveBoard } from '../context.js';
 import { printResult, type OutputMode } from '../output.js';
+import { ui } from '../color.js';
 import { initRuntime } from '../runtime.js';
 import { resolveByIdOrName } from './shared.js';
 
@@ -26,7 +27,9 @@ export const registerBoardCommands = (program: Command) => {
 			printResult(
 				{ json: Boolean(options.json), quiet: false },
 				rows,
-				rows.map((row) => `${row.id}  ${row.name}  (${row.columnCount} columns)`)
+				rows.map(
+					(row) => `${ui.id(row.id)}  ${ui.name(row.name)}  ${ui.meta(`(${row.columnCount} columns)`)}`
+				)
 			);
 		});
 
@@ -39,7 +42,7 @@ export const registerBoardCommands = (program: Command) => {
 			const { project } = await resolveContext({ project: options.project, requireBoard: false });
 			const selected = resolveByIdOrName(project.boards, target, 'board');
 			await setActiveBoard(selected.id);
-			console.log(`Active board: ${selected.name} (${selected.id})`);
+			console.log(`${ui.active('Active board:')} ${ui.name(selected.name)} ${ui.id(`(${selected.id})`)}`);
 		});
 
 	board
@@ -56,7 +59,7 @@ export const registerBoardCommands = (program: Command) => {
 			printResult(
 				{ json: Boolean(options.json), quiet: false },
 				{ id: created.id, name: created.name },
-				[`Created board ${created.name} (${created.id})`]
+				[`${ui.success('Created board')} ${ui.name(created.name)} ${ui.id(`(${created.id})`)}`]
 			);
 		});
 
@@ -69,7 +72,7 @@ export const registerBoardCommands = (program: Command) => {
 			await initRuntime();
 			const { project, board: active } = await resolveContext(options);
 			await renameProjectBoard(project.id, active.id, name);
-			console.log(`Renamed board to ${name}`);
+			console.log(`${ui.success('Renamed board to')} ${ui.name(name)}`);
 		});
 
 	board
@@ -84,6 +87,6 @@ export const registerBoardCommands = (program: Command) => {
 			}
 			const selected = resolveByIdOrName(project.boards, target, 'board');
 			await deleteProjectBoard(project.id, selected.id);
-			console.log(`Deleted board ${selected.name}`);
+			console.log(`${ui.removed('Deleted board')} ${ui.name(selected.name)}`);
 		});
 };

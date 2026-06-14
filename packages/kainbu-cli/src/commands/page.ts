@@ -8,6 +8,7 @@ import { readFile } from 'node:fs/promises';
 import type { Command } from 'commander';
 import { resolveContext } from '../context.js';
 import { printResult } from '../output.js';
+import { ui } from '../color.js';
 import { initRuntime } from '../runtime.js';
 import { resolveByIdOrName } from './shared.js';
 
@@ -30,7 +31,9 @@ export const registerPageCommands = (program: Command) => {
 			printResult(
 				{ json: Boolean(options.json), quiet: false },
 				rows,
-				rows.map((row) => `${row.id}  ${row.name}  (${row.contentLength} chars)`)
+				rows.map(
+					(row) => `${ui.id(row.id)}  ${ui.name(row.name)}  ${ui.meta(`(${row.contentLength} chars)`)}`
+				)
 			);
 		});
 
@@ -58,7 +61,7 @@ export const registerPageCommands = (program: Command) => {
 			await initRuntime();
 			const { project } = await resolveContext({ project: options.project, requireBoard: false });
 			const created = await createProjectPage(project.id, name, project.pages.length);
-			console.log(`Created page ${created.name} (${created.id})`);
+			console.log(`${ui.success('Created page')} ${ui.name(created.name)} ${ui.id(`(${created.id})`)}`);
 		});
 
 	page
@@ -70,7 +73,7 @@ export const registerPageCommands = (program: Command) => {
 			const { project } = await resolveContext({ project: options.project, requireBoard: false });
 			const selected = resolveByIdOrName(project.pages, target, 'page');
 			await renameProjectPage(project.id, selected.id, newName);
-			console.log(`Renamed page to ${newName}`);
+			console.log(`${ui.success('Renamed page to')} ${ui.name(newName)}`);
 		});
 
 	page
@@ -95,7 +98,7 @@ export const registerPageCommands = (program: Command) => {
 						})
 					: await readFile(options.file, 'utf8');
 			await updateProjectPageContent(project.id, selected.id, content);
-			console.log(`Updated page ${selected.name}`);
+			console.log(`${ui.success('Updated page')} ${ui.name(selected.name)}`);
 		});
 
 	page
@@ -107,6 +110,6 @@ export const registerPageCommands = (program: Command) => {
 			const { project } = await resolveContext({ project: options.project, requireBoard: false });
 			const selected = resolveByIdOrName(project.pages, target, 'page');
 			await deleteProjectPage(project.id, selected.id);
-			console.log(`Deleted page ${selected.name}`);
+			console.log(`${ui.removed('Deleted page')} ${ui.name(selected.name)}`);
 		});
 };

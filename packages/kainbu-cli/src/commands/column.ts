@@ -9,6 +9,7 @@ import type { Command } from 'commander';
 import type { KanbanData } from '../../../../src/lib/kainbu/types.js';
 import { resolveContext } from '../context.js';
 import { printResult } from '../output.js';
+import { ui } from '../color.js';
 import { initRuntime } from '../runtime.js';
 import { findColumnByRefOrTitle } from './kanban-utils.js';
 
@@ -40,7 +41,10 @@ export const registerColumnCommands = (program: Command) => {
 			printResult(
 				{ json: Boolean(options.json), quiet: false },
 				rows,
-				rows.map((row) => `${row.ref}  ${row.title}  (${row.taskCount} tasks)  ${row.id}`)
+				rows.map(
+					(row) =>
+						`${ui.ref(row.ref)}  ${ui.name(row.title)}  ${ui.meta(`(${row.taskCount} tasks)`)}  ${ui.id(row.id)}`
+				)
 			);
 		});
 
@@ -69,7 +73,7 @@ export const registerColumnCommands = (program: Command) => {
 					}
 				];
 				await syncProjectBoard(project.id, board.id, kanban, next);
-				console.log(`Added column ${title}`);
+				console.log(`${ui.success('Added column')} ${ui.name(title)}`);
 			}
 		);
 
@@ -109,7 +113,7 @@ export const registerColumnCommands = (program: Command) => {
 						: entry
 				);
 				await syncProjectBoard(project.id, board.id, kanban, next);
-				console.log(`Updated column ${options.title}`);
+				console.log(`${ui.success('Updated column')} ${ui.name(options.title)}`);
 			}
 		);
 
@@ -130,6 +134,6 @@ export const registerColumnCommands = (program: Command) => {
 				throw new Error(`Column not found: ${target}`);
 			}
 			await syncProjectBoard(project.id, board.id, kanban, next);
-			console.log('Deleted column');
+			console.log(ui.removed('Deleted column'));
 		});
 };

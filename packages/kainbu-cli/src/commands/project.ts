@@ -2,6 +2,7 @@ import { createProject, fetchWorkspace, renameProject } from '@kainbu/core';
 import type { Command } from 'commander';
 import { resolveContext, setActiveProject } from '../context.js';
 import { printResult, type OutputMode } from '../output.js';
+import { ui } from '../color.js';
 import { initRuntime, requireUser } from '../runtime.js';
 import { resolveByIdOrName } from './shared.js';
 
@@ -31,7 +32,9 @@ export const registerProjectCommands = (program: Command) => {
 			printResult(
 				{ json: Boolean(options.json), quiet: false },
 				rows,
-				rows.map((row) => `${row.id}  ${row.name}  (${row.boardCount} boards)`)
+				rows.map(
+					(row) => `${ui.id(row.id)}  ${ui.name(row.name)}  ${ui.meta(`(${row.boardCount} boards)`)}`
+				)
 			);
 		});
 
@@ -44,7 +47,7 @@ export const registerProjectCommands = (program: Command) => {
 			const workspace = await fetchWorkspace(user.id);
 			const selected = resolveByIdOrName(workspace.projects, target, 'project');
 			await setActiveProject(selected.id);
-			console.log(`Active project: ${selected.name} (${selected.id})`);
+			console.log(`${ui.active('Active project:')} ${ui.name(selected.name)} ${ui.id(`(${selected.id})`)}`);
 		});
 
 	project
@@ -59,7 +62,7 @@ export const registerProjectCommands = (program: Command) => {
 			printResult(
 				{ json: Boolean(options.json), quiet: false },
 				{ id: created.id, name: created.name },
-				[`Created project ${created.name} (${created.id})`]
+				[`${ui.success('Created project')} ${ui.name(created.name)} ${ui.id(`(${created.id})`)}`]
 			);
 		});
 
@@ -70,6 +73,6 @@ export const registerProjectCommands = (program: Command) => {
 			const mode: OutputMode = { json: Boolean(options.json), quiet: Boolean(options.quiet) };
 			const { project: active } = await resolveContext({ project: options.project, requireBoard: false });
 			await renameProject(active.id, name);
-			printResult(mode, { id: active.id, name }, [`Renamed project to ${name}`]);
+			printResult(mode, { id: active.id, name }, [`${ui.success('Renamed project to')} ${ui.name(name)}`]);
 		});
 };

@@ -5,6 +5,7 @@ import { readJsonResponse } from '../http.js';
 import { isInteractive, promptChoice, promptLine } from '../prompt.js';
 import { getApiBase, initRuntime, resetRuntimeAccessToken } from '../runtime.js';
 import { printError, printResult, type OutputMode } from '../output.js';
+import { ui } from '../color.js';
 import { KainbuError } from '../errors.js';
 import {
 	getActiveAuthProfile,
@@ -114,7 +115,7 @@ export const registerAuthCommands = (program: Command) => {
 				}
 				const pb = getPocketBaseClient();
 				pb.authStore.save(options.token, null);
-				printResult(mode, { ok: true }, ['Logged in with provided token.']);
+				printResult(mode, { ok: true }, [ui.success('Logged in with provided token.')]);
 				return;
 			}
 
@@ -142,7 +143,7 @@ export const registerAuthCommands = (program: Command) => {
 					printResult(
 						mode,
 						{ ok: true, profile: pick.name, apiBase, user: me },
-						[`Switched to profile "${pick.name}" (${me.email || me.username || me.id}).`]
+						[`${ui.success('Switched to profile')} ${ui.name(`"${pick.name}"`)} ${ui.meta(`(${me.email || me.username || me.id})`)}`]
 					);
 					return;
 				}
@@ -205,8 +206,8 @@ export const registerAuthCommands = (program: Command) => {
 				mode,
 				{ ok: true, profile: profile.name, apiBase: server, user: identity },
 				[
-					`Logged in as ${identity.email || identity.username || identity.id} on ${server}.`,
-					`Saved to profile "${profile.name}".`
+					`${ui.success('Logged in as')} ${ui.name(identity.email || identity.username || identity.id)} ${ui.meta(`on ${server}`)}`,
+					`${ui.meta('Saved to profile')} ${ui.name(`"${profile.name}"`)}`
 				]
 			);
 		});
@@ -229,7 +230,7 @@ export const registerAuthCommands = (program: Command) => {
 			}
 			await deleteCliSession();
 			resetRuntimeAccessToken();
-			console.log('Logged out.');
+			console.log(ui.success('Logged out.'));
 		});
 
 	program
@@ -250,8 +251,8 @@ export const registerAuthCommands = (program: Command) => {
 						is_admin: me.is_admin
 					},
 					[
-						`user: ${me.email || me.username || me.id}`,
-						`auth: ${me.auth_method === 'api-key' ? 'API key' : 'PocketBase session'}`
+						`${ui.meta('user:')} ${ui.name(me.email || me.username || me.id)}`,
+						`${ui.meta('auth:')} ${me.auth_method === 'api-key' ? 'API key' : 'PocketBase session'}`
 					]
 				);
 			} catch (error) {
@@ -281,7 +282,7 @@ export const registerAuthCommands = (program: Command) => {
 					printResult(
 						{ json: Boolean(cmdOptions.json), quiet: false },
 						{ ok: true, active: profile.name },
-						[`Active profile: ${profile.name} (${profile.apiBase})`]
+						[`${ui.active('Active profile:')} ${ui.name(profile.name)} ${ui.meta(`(${profile.apiBase})`)}`]
 					);
 					return;
 				}
@@ -297,7 +298,7 @@ export const registerAuthCommands = (program: Command) => {
 							`Remove profile "${target.name}" (${target.apiBase})? [y/N] `
 						);
 						if ((confirm || '').trim().toLowerCase() !== 'y') {
-							console.log('Cancelled.');
+							console.log(ui.warn('Cancelled.'));
 							return;
 						}
 					}
@@ -306,7 +307,7 @@ export const registerAuthCommands = (program: Command) => {
 					printResult(
 						{ json: Boolean(cmdOptions.json), quiet: false },
 						{ ok: removed, removed: target.name },
-						[removed ? `Removed profile "${target.name}".` : 'No profile removed.']
+						[removed ? `${ui.removed('Removed profile')} ${ui.name(`"${target.name}"`)}` : ui.warn('No profile removed.')]
 					);
 					return;
 				}
@@ -334,7 +335,7 @@ export const registerAuthCommands = (program: Command) => {
 					printResult(
 						{ json: Boolean(cmdOptions.json), quiet: false },
 						{ ok: true, active: cmdOptions.rename },
-						[`Renamed to "${cmdOptions.rename}".`]
+						[`${ui.success('Renamed to')} ${ui.name(`"${cmdOptions.rename}"`)}`]
 					);
 					return;
 				}
@@ -348,8 +349,11 @@ export const registerAuthCommands = (program: Command) => {
 						profiles
 					},
 					profiles.length === 0
-						? ['No profiles yet. Run: kainbu login']
-						: profiles.map((p) => `${file.activeProfile === p.name ? '* ' : '  '}${p.name}  ${p.apiBase}`)
+						? [ui.meta('No profiles yet. Run: kainbu login')]
+						: profiles.map(
+								(p) =>
+									`${file.activeProfile === p.name ? ui.active('* ') : '  '}${ui.name(p.name)}  ${ui.meta(p.apiBase)}`
+							)
 				);
 			}
 		);
@@ -385,9 +389,9 @@ export const registerAuthCommands = (program: Command) => {
 					verifyError
 				},
 				[
-					`api: ${apiBase}`,
-					`active: ${file.activeProfile || '(none)'}`,
-					`user: ${me ? (me.email || me.username || me.id) : verifyError || '(unverified)'}`
+					`${ui.meta('api:')} ${apiBase}`,
+					`${ui.meta('active:')} ${file.activeProfile ? ui.name(file.activeProfile) : ui.warn('(none)')}`,
+					`${ui.meta('user:')} ${me ? ui.name(me.email || me.username || me.id) : ui.warn(verifyError || '(unverified)')}`
 				]
 			);
 		});
@@ -421,8 +425,8 @@ async function runDeviceFlow(options: LoginArgs, mode: OutputMode) {
 	const verificationUrl =
 		startPayload.verificationUrl || `${apiBase}/cli/authorize?code=${encodeURIComponent(userCode)}`;
 
-	console.log(`Device code: ${userCode}`);
-	console.log(`If needed, open: ${verificationUrl}`);
+	console.log(`${ui.meta('Device code:')} ${ui.heading(userCode)}`);
+	console.log(`${ui.meta('If needed, open:')} ${verificationUrl}`);
 
 	if (options.open !== false) {
 		const { exec } = await import('node:child_process');
@@ -496,7 +500,7 @@ async function runDeviceFlow(options: LoginArgs, mode: OutputMode) {
 				(exchangePayload as { user?: Record<string, unknown> }).user || null
 			);
 
-			printResult(mode, { ok: true, email: exchangePayload }, ['Logged in successfully.']);
+			printResult(mode, { ok: true, email: exchangePayload }, [ui.success('Logged in successfully.')]);
 			return;
 		}
 

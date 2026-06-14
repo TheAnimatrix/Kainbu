@@ -1,3 +1,5 @@
+import { c } from './color.js';
+
 export type OutputMode = {
 	json: boolean;
 	quiet: boolean;
@@ -17,6 +19,6 @@ export const printResult = (mode: OutputMode, payload: unknown, humanLines?: str
 };
 
 export const printError = (message: string, hint?: string) => {
-	console.error(`Error: ${message}`);
-	if (hint) console.error(`Hint: ${hint}`);
+	console.error(`${c.red(c.bold('Error:'))} ${message}`);
+	if (hint) console.error(`${c.yellow('Hint:')} ${hint}`);
 };

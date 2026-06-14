@@ -10,6 +10,7 @@ import {
 } from '@kainbu/core';
 import type { Command } from 'commander';
 import { printResult } from '../output.js';
+import { ui } from '../color.js';
 import { initRuntime } from '../runtime.js';
 
 const findProjectEnv = () => {
@@ -48,7 +49,7 @@ export const registerConfigCommands = (program: Command) => {
 			await mkdir(getCliConfigDir(), { recursive: true });
 			const target = join(getCliConfigDir(), '.env');
 			await copyFile(source, target);
-			console.log(`Imported ${source} → ${target}`);
+			console.log(`${ui.success('Imported')} ${ui.id(source)} → ${ui.id(target)}`);
 		});
 
 	config
@@ -67,7 +68,7 @@ export const registerConfigCommands = (program: Command) => {
 					...(options.pocketbaseUrl ? { pocketbaseUrl: options.pocketbaseUrl } : {}),
 					...(options.apiBase ? { apiBase: options.apiBase } : {})
 				});
-				console.log('Config updated.');
+				console.log(ui.success('Config updated.'));
 			}
 		);
 
@@ -105,10 +106,10 @@ export const registerConfigCommands = (program: Command) => {
 				{ json: Boolean(options.json), quiet: false },
 				payload,
 				[
-					`config: ${getCliConfigDir()}`,
-					`global .env: ${payload.globalEnvFile || '(missing)'}`,
-					`active project: ${file.activeProjectId || '(none)'}`,
-					`active board: ${file.activeBoardId || '(none)'}`
+					`${ui.meta('config:')} ${ui.id(getCliConfigDir())}`,
+					`${ui.meta('global .env:')} ${payload.globalEnvFile ? ui.id(payload.globalEnvFile) : ui.warn('(missing)')}`,
+					`${ui.meta('active project:')} ${file.activeProjectId ? ui.id(file.activeProjectId) : ui.warn('(none)')}`,
+					`${ui.meta('active board:')} ${file.activeBoardId ? ui.id(file.activeBoardId) : ui.warn('(none)')}`
 				]
 			);
 		});
