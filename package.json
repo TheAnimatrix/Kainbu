@@ -72,6 +72,7 @@
 		"@capacitor/browser": "^7.0.2",
 		"@capacitor/cli": "^7.4.4",
 		"@capacitor/core": "^7.4.4",
+		"@capgo/capacitor-updater": "^8.49.1",
 		"@hono/node-server": "^1.19.11",
 		"@iconify-json/fluent": "^1.2.48",
 		"@iconify/svelte": "^5.2.1",

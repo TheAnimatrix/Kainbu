@@ -4,11 +4,24 @@ const config: CapacitorConfig = {
   appId: 'com.avarnic.kainbu',
   appName: 'Kainbu',
   webDir: 'build',
-  // server: {
-  //   url: 'http://192.168.0.9:3000',
-  //   cleartext: true,
-  //   androidScheme: 'http'
-  // }
+  plugins: {
+    LiveUpdate: {
+      appId: 'com.avarnic.kainbu',
+      channel: 'production',
+      autoUpdate: 'nativeVersion',
+    },
+  },
+  android: {
+    backgroundColor: '#0e0f11',
+    allowMixedContent: true,
+    buildOptions: {
+      keystorePath: undefined,
+      keystorePassword: undefined,
+      keystoreAlias: undefined,
+      keystoreAliasPassword: undefined,
+      releaseType: 'APK',
+    },
+  },
 };
 
 export default config;
