@@ -1,4 +1,7 @@
 import { pocketbase } from '$lib/pocketbaseClient';
+import { getAvatarUrlFromClient, resolveAvatarFilename as resolveAvatarFilenameCore } from './avatarUrl.js';
+
+export { resolveAvatarFilenameCore as resolveAvatarFilename };
 
 export const AVATAR_ALLOWED_MIME_TYPES = ['image/jpeg', 'image/png', 'image/webp'] as const;
 export const AVATAR_MAX_UPLOAD_BYTES = 2 * 1024 * 1024;
@@ -22,27 +25,11 @@ type AvatarRecord = {
 	avatar?: string | string[] | null;
 };
 
-export const resolveAvatarFilename = (record: AvatarRecord) => {
-	const value = record.avatar;
-	if (typeof value === 'string' && value.trim()) {
-		return value.trim();
-	}
-	if (Array.isArray(value)) {
-		const first = value.find((entry) => typeof entry === 'string' && entry.trim());
-		return typeof first === 'string' ? first.trim() : null;
-	}
-	return null;
-};
-
 export const getUserAvatarUrl = (
 	record: AvatarRecord,
 	filename?: string | null,
-	client = pocketbase
-) => {
-	const avatar = filename ?? resolveAvatarFilename(record);
-	if (!avatar) return null;
-	return client.files.getURL(record, avatar);
-};
+	client: { files: { getURL: (record: { id: string }, filename: string) => string } } = pocketbase
+) => getAvatarUrlFromClient(client, record, filename);
 
 export const getAvatarInitial = (label: string) => {
 	const trimmed = label.trim();
