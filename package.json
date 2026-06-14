@@ -36,7 +36,7 @@
 		"test:docker": "vitest run tests/local-docker.test.ts tests/admin-docker.test.ts",
 		"cli:build": "npm run build --workspace=kainbu",
 		"cli:link": "npm run build --workspace=kainbu && npm link --workspace=kainbu",
-		"test:cli": "vitest run tests/cliContext.test.ts tests/cliBoardList.test.ts tests/cliDeviceAuth.test.ts"
+		"test:cli": "vitest run tests/cliContext.test.ts tests/cliBoardList.test.ts tests/cliDeviceAuth.test.ts tests/cliAuthProfiles.test.ts tests/apiKeysHash.test.ts"
 	},
 	"devDependencies": {
 		"@capacitor/assets": "^3.0.5",

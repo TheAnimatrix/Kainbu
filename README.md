@@ -68,12 +68,20 @@ Web: [http://localhost:3001](http://localhost:3001) (Vite proxies `/api` to port
 
 ## CLI
 
-See [docs/CLI.md](docs/CLI.md). Configure PocketBase URL:
+See [docs/CLI.md](docs/CLI.md). The CLI uses **per-user API keys** that you
+mint from **Settings → Access** in the web UI:
 
 ```bash
-kainbu config set --pocketbase-url http://127.0.0.1:8090 --api-base http://127.0.0.1:8788
-kainbu login
+kainbu login --server https://kainbu.example.com --api-key kbu_v1_...
+kainbu auth profiles                       # manage multiple servers
+kainbu whoami
+kainbu project list
 ```
+
+The CLI never needs a PocketBase URL on a self-hosted domain — the API
+key works directly against the Hono API. The legacy device-code flow is
+still available via `kainbu login --device` for environments where you
+don't have a key yet.
 
 ## Environment variables
 
@@ -85,6 +93,7 @@ kainbu login
 | `OPENROUTER_API_KEY` | Workspace AI routes (fallback if not set in admin UI) |
 | `KAINBU_ADMIN_EMAILS` | Comma-separated emails with in-app admin access (`/admin`) |
 | `KAINBU_PUBLIC_URL` | CLI device-login links |
+| `KAINBU_API_KEY` | One-shot CLI API key (overrides saved profile) |
 
 ## Android (optional)
 

@@ -9,6 +9,7 @@
 	},
 	"exports": {
 		".": "./src/index.ts",
+		"./env": "./src/env.ts",
 		"./pocketbase": "./src/pocketbase.ts",
 		"./board": "./src/board.ts",
 		"./persistence": "./src/persistence.ts",

@@ -70,6 +70,16 @@ export const getPocketBaseEnv = () => {
 	return { url };
 };
 
+/**
+ * Reads KAINBU_API_KEY from the process environment. Used by the runtime as
+ * the CI / non-interactive fallback when no profile exists in auth.json.
+ */
+export const getEnvApiKey = (): string | null => {
+	loadCliEnv();
+	const raw = normalizeEnvValue(process.env.KAINBU_API_KEY);
+	return raw || null;
+};
+
 export const getDefaultApiBase = () => {
 	loadCliEnv();
 	const fileConfig = readConfigFileSync();

@@ -22,7 +22,8 @@ export default defineConfig({
 	esbuildOptions(options) {
 		options.alias = {
 			$lib: libDir,
-			'@kainbu/core': resolve(packageDir, '../kainbu-core/src/index.ts')
+			'@kainbu/core': resolve(packageDir, '../kainbu-core/src/index.ts'),
+			'@kainbu/core/env': resolve(packageDir, '../kainbu-core/src/env.ts')
 		};
 	},
 	noExternal: [/@kainbu\/core/, /^\$lib/]

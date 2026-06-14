@@ -102,7 +102,7 @@ export const createCliPocketBaseClient = () => {
 		const raw = readFileSync(getCliSessionPath(), 'utf8');
 		const parsed = parseJsonFile<unknown>(raw, getCliSessionPath());
 		if (isStoredSession(parsed)) {
-			pb.authStore.save(parsed.token, parsed.record || null);
+			pb.authStore.save(parsed.token, (parsed.record as never) || null);
 		}
 	} catch {
 		// no session yet

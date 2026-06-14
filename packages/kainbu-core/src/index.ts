@@ -4,6 +4,7 @@ export { findColumnByRefOrTitle } from '../../../src/lib/kainbu/boardRefs.js';
 export * from '../../../src/lib/kainbu/boardList.js';
 export * from '../../../src/lib/kainbu/pocketbaseContext.js';
 export * from '../../../src/lib/kainbu/workspaceApi.js';
+export { fetchWorkspaceMe, type WorkspaceMe } from '../../../src/lib/kainbu/workspaceApi.js';
 export {
 	fetchWorkspace,
 	fetchProjectBoardKanban,
@@ -27,6 +28,7 @@ export {
 	getCliConfigDir,
 	getCliConfigPath,
 	getDefaultApiBase,
+	getEnvApiKey,
 	getPocketBaseEnv,
 	loadCliEnv,
 	readCliConfig,
@@ -35,6 +37,21 @@ export {
 	writeCliSession,
 	type CliConfig
 } from './pocketbase.js';
+export {
+	getActiveAuthProfile,
+	getAuthFileLocation,
+	listAuthProfiles,
+	readAuthFile,
+	removeAuthProfile,
+	resolveEffectiveApiBase,
+	setActiveAuthProfile,
+	touchActiveProfile,
+	updateActiveProfileApiBase,
+	upsertAuthProfile,
+	type AuthFile,
+	type AuthProfile,
+	type AuthProfileSummary
+} from './auth.js';
 export { setProjectActiveBoard, getProjectBoard } from '../../../src/lib/kainbu/projectStructure.js';
 export { createId } from '../../../src/lib/kainbu/id.js';
 export { normalizeScratchpadData, serializeScratchpadData } from '../../../src/lib/kainbu/scratchpad.js';
