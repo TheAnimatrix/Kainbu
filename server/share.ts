@@ -19,7 +19,7 @@ import {
 	projectRelationFilter,
 	resolveProjectClientId
 } from './pbWorkspace.js';
-import { createAdminPb, getAuthenticatedUserId } from './pocketbase.js';
+import { createAdminPb, resolveAuthenticatedUserId } from './pocketbase.js';
 
 const DEFAULT_COLUMN_WIDTH = 268;
 const DEFAULT_TAG_COLOR = '#94a3b8';
@@ -57,7 +57,7 @@ const relationId = (value: unknown) => {
 const getOptionalUserId = async (authorization: string | undefined) => {
 	if (!authorization?.startsWith('Bearer ')) return null;
 	try {
-		return await getAuthenticatedUserId(authorization);
+		return (await resolveAuthenticatedUserId(authorization)).userId;
 	} catch {
 		return null;
 	}
@@ -356,7 +356,7 @@ export const handleWorkspaceBoardShareRequest = async (
 	authorization: string | undefined,
 	origin?: string
 ) => {
-	const userId = await getAuthenticatedUserId(authorization);
+	const userId = (await resolveAuthenticatedUserId(authorization)).userId;
 	const admin = await createAdminPb();
 	const projectId = requireString(body.projectId, 'projectId');
 	const boardId = requireString(body.boardId, 'boardId');

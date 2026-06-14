@@ -20,7 +20,7 @@ import type {
     Tag,
     Task,
 } from "./types.js";
-import { createAdminPb, getAuthenticatedUserId } from "../pocketbase.js";
+import { createAdminPb, resolveAuthenticatedUserId } from "../pocketbase.js";
 import { getProjectPbId, pbEscapeFilter, projectClientFilter, projectRelationFilter } from "../pbWorkspace.js";
 import { areKanbanTasksEqualForDiff } from "../../src/lib/kainbu/diff.js";
 import type { BoardRefMap } from "./kanban-ops.js";
@@ -467,7 +467,7 @@ const mapPbTask = (
 });
 
 const ensureProjectAccess = async (projectId: string, authorization: string | undefined) => {
-    const userId = await getAuthenticatedUserId(authorization);
+    const userId = (await resolveAuthenticatedUserId(authorization)).userId;
     const admin = await createAdminPb();
     const projectPbId = await getProjectPbId(admin, projectId);
 

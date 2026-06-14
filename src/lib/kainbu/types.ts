@@ -8,7 +8,7 @@ export interface AiThinkingConfig {
 	level?: Exclude<AiThinkingLevel, 'none'>;
 }
 export type WorkspaceTab = 'dashboard' | 'kanban' | 'scratchpad' | 'chat' | 'settings';
-export type SettingsSection = 'account' | 'appearance';
+export type SettingsSection = 'account' | 'appearance' | 'access';
 export type ColorMode = 'light' | 'dark';
 export type SyncStatus = 'idle' | 'local' | 'syncing' | 'synced' | 'error';
 export type UsernameAvailabilityState = 'idle' | 'checking' | 'available' | 'taken' | 'invalid';

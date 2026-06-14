@@ -496,3 +496,82 @@ describe('Invalid token handling', () => {
 		}
 	});
 });
+
+describe.runIf(hasAuth)('API key auth (kbu_ tokens)', () => {
+	const list = async () => {
+		const res = await fetch(`${BASE}/api/me/api-keys`, { headers: authHeaders() });
+		return { res, body: (await res.json().catch(() => ({}))) as { items?: Array<{ id: string; prefix: string; revoked_at: string | null }>; error?: string } };
+	};
+	const create = async (name: string) => {
+		const res = await fetch(`${BASE}/api/me/api-keys`, {
+			method: 'POST',
+			headers: authHeaders(),
+			body: JSON.stringify({ name })
+		});
+		return {
+			res,
+			body: (await res.json().catch(() => ({}))) as {
+				id?: string;
+				token?: string;
+				prefix?: string;
+				error?: string;
+			}
+		};
+	};
+
+	it('rejects a kbu_ token that is not in the database', async () => {
+		const res = await fetch(`${BASE}/api/me`, {
+			headers: { Authorization: 'Bearer kbu_v1_definitely_not_a_real_key_1234567890' }
+		});
+		expect(res.status).toBe(401);
+	});
+
+	it('rejects an empty kbu_ token', async () => {
+		const res = await fetch(`${BASE}/api/me`, {
+			headers: { Authorization: 'Bearer kbu_' }
+		});
+		expect(res.status).toBe(401);
+	});
+
+	it('create → list → use → revoke lifecycle returns the raw token only once', async () => {
+		const label = `e2e-deploy-${Date.now()}`;
+		const created = await create(label);
+		expect(created.res.status).toBe(200);
+		expect(created.body.token).toMatch(/^kbu_v1_/);
+		expect(created.body.prefix).toMatch(/^kbu_v1_/);
+
+		// The raw token must NEVER appear in the list response.
+		const listed = await list();
+		expect(listed.res.status).toBe(200);
+		expect(JSON.stringify(listed.body)).not.toContain(created.body.token);
+		const row = listed.body.items?.find((item) => item.id === created.body.id);
+		expect(row?.prefix).toBe(created.body.prefix);
+		expect(row?.revoked_at).toBeNull();
+
+		// The raw token must be usable as a bearer against the API.
+		const meRes = await fetch(`${BASE}/api/me`, {
+			headers: { Authorization: `Bearer ${created.body.token}` }
+		});
+		expect(meRes.status).toBe(200);
+		const me = (await meRes.json()) as { auth_method?: string };
+		expect(me.auth_method).toBe('api-key');
+
+		// The snapshot endpoint must accept the API key too.
+		const snapRes = await fetch(`${BASE}/api/workspace/snapshot`, {
+			headers: { Authorization: `Bearer ${created.body.token}` }
+		});
+		expect(snapRes.status).toBe(200);
+
+		// Revoke and confirm subsequent use fails.
+		const revokeRes = await fetch(`${BASE}/api/me/api-keys/${created.body.id}`, {
+			method: 'DELETE',
+			headers: authHeaders()
+		});
+		expect(revokeRes.status).toBe(200);
+
+		const meAfter = await fetch(`${BASE}/api/me`, {
+			headers: { Authorization: `Bearer ${created.body.token}` }
+		});
+		expect(meAfter.status).toBe(401);
+	});
+});

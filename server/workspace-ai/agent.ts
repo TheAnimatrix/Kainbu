@@ -40,7 +40,7 @@ import {
 	type OpenRouterMessage
 } from './openrouter-stream.js';
 import { buildHistoryMessages } from './history-messages.js';
-import { getAuthenticatedUserId } from '../pocketbase.js';
+import { resolveAuthenticatedUserId } from '../pocketbase.js';
 import { recordAiUsageEvent } from '../ai-usage.js';
 import {
 	createToolRunCounters,
@@ -194,7 +194,7 @@ export const handleWorkspaceAiRequest = async (
 	auth: string | undefined,
 	progressReporter?: (p: AiProgressEvent) => void
 ): Promise<AiWorkspaceResponse> => {
-	const userId = await getAuthenticatedUserId(auth);
+	const userId = (await resolveAuthenticatedUserId(auth)).userId;
 	validateWorkspaceAiRequest(req);
 	const requestId = randomUUID();
 	const startedAt = Date.now();

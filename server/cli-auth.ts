@@ -1,6 +1,6 @@
 import { randomBytes, randomUUID } from 'node:crypto';
 import type { Context } from 'hono';
-import { createAdminPb, getAuthenticatedUserId } from './pocketbase.js';
+import { createAdminPb, resolveAuthenticatedUserId } from './pocketbase.js';
 import { pbEscapeFilter } from './pbWorkspace.js';
 
 const DEVICE_CODE_TTL_MS = 10 * 60 * 1000;
@@ -180,7 +180,7 @@ export const handleCliDeviceApprove = async (c: Context) => {
 
 	let userId: string;
 	try {
-		userId = await getAuthenticatedUserId(authorization);
+		userId = (await resolveAuthenticatedUserId(authorization)).userId;
 	} catch {
 		return c.json({ error: 'Unauthorized' }, 401);
 	}

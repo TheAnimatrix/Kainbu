@@ -2,7 +2,7 @@ import type PocketBase from 'pocketbase';
 import type { BackgroundTheme } from '../src/lib/kainbu/types.js';
 import { formatPocketBaseError } from '../src/lib/pocketbaseErrors.js';
 import { sendProjectInviteEmail } from './mailDelivery.js';
-import { createAdminPb, getAuthenticatedUserId } from './pocketbase.js';
+import { createAdminPb, resolveAuthenticatedUserId } from './pocketbase.js';
 import { ClientResponseError } from 'pocketbase';
 import {
 	getProjectPbId,
@@ -354,7 +354,7 @@ export const handleWorkspaceTouchProjectRequest = async (
 	body: WorkspaceProjectRequest,
 	authorization: string | undefined
 ) => {
-	const userId = await getAuthenticatedUserId(authorization);
+	const userId = (await resolveAuthenticatedUserId(authorization)).userId;
 	const admin = await createAdminPb();
 	const projectId = requireString(body.projectId, 'projectId');
 
@@ -373,7 +373,7 @@ export const handleWorkspaceBoardPresenceRequest = async (
 	body: WorkspaceBoardPresenceRequest,
 	authorization: string | undefined
 ) => {
-	const userId = await getAuthenticatedUserId(authorization);
+	const userId = (await resolveAuthenticatedUserId(authorization)).userId;
 	const admin = await createAdminPb();
 	const projectId = requireString(body.projectId, 'projectId');
 	const boardId =
@@ -398,7 +398,7 @@ export const handleWorkspacePinProjectRequest = async (
 	body: WorkspaceProjectRequest & { pinned?: boolean },
 	authorization: string | undefined
 ) => {
-	const userId = await getAuthenticatedUserId(authorization);
+	const userId = (await resolveAuthenticatedUserId(authorization)).userId;
 	const admin = await createAdminPb();
 	const projectId = requireString(body.projectId, 'projectId');
 	const pinned = body.pinned === true;
@@ -418,7 +418,7 @@ export const handleWorkspaceScratchpadRequest = async (
 	body: WorkspaceScratchpadRequest,
 	authorization: string | undefined
 ) => {
-	const userId = await getAuthenticatedUserId(authorization);
+	const userId = (await resolveAuthenticatedUserId(authorization)).userId;
 	const admin = await createAdminPb();
 	const projectId = requireString(body.projectId, 'projectId');
 	const scratchpadData = requireString(body.scratchpadData, 'scratchpadData');
@@ -454,7 +454,7 @@ export const handleWorkspaceProjectBackgroundRequest = async (
 	body: WorkspaceProjectBackgroundRequest,
 	authorization: string | undefined
 ) => {
-	const userId = await getAuthenticatedUserId(authorization);
+	const userId = (await resolveAuthenticatedUserId(authorization)).userId;
 	const admin = await createAdminPb();
 	const projectId = requireString(body.projectId, 'projectId');
 	const backgroundTheme = requireBackgroundThemeOrNull(body.backgroundTheme, 'backgroundTheme');
@@ -473,7 +473,7 @@ export const handleWorkspaceCreateInviteRequest = async (
 	body: WorkspaceInviteCreateRequest,
 	authorization: string | undefined
 ) => {
-	const userId = await getAuthenticatedUserId(authorization);
+	const userId = (await resolveAuthenticatedUserId(authorization)).userId;
 	const admin = await createAdminPb();
 	const projectId = requireString(body.projectId, 'projectId');
 	const inviteeEmail = requireString(body.inviteeEmail, 'inviteeEmail').toLowerCase();
@@ -529,7 +529,7 @@ export const handleWorkspaceRespondInviteRequest = async (
 	body: WorkspaceInviteRespondRequest,
 	authorization: string | undefined
 ) => {
-	const userId = await getAuthenticatedUserId(authorization);
+	const userId = (await resolveAuthenticatedUserId(authorization)).userId;
 	const admin = await createAdminPb();
 	const inviteId = requireString(body.inviteId, 'inviteId');
 	const accept = requireBoolean(body.accept, 'accept');
@@ -584,7 +584,7 @@ export const handleWorkspaceCancelInviteRequest = async (
 	body: WorkspaceInviteCancelRequest,
 	authorization: string | undefined
 ) => {
-	const userId = await getAuthenticatedUserId(authorization);
+	const userId = (await resolveAuthenticatedUserId(authorization)).userId;
 	const admin = await createAdminPb();
 	const inviteId = requireString(body.inviteId, 'inviteId');
 	const invite = await getInviteOrThrow(admin, inviteId);
@@ -603,7 +603,7 @@ export const handleWorkspaceRemoveMemberRequest = async (
 	body: WorkspaceRemoveMemberRequest,
 	authorization: string | undefined
 ) => {
-	const userId = await getAuthenticatedUserId(authorization);
+	const userId = (await resolveAuthenticatedUserId(authorization)).userId;
 	const admin = await createAdminPb();
 	const projectId = requireString(body.projectId, 'projectId');
 	const memberUserId = requireString(body.memberUserId, 'memberUserId');
@@ -635,7 +635,7 @@ export const handleWorkspaceLeaveProjectRequest = async (
 	body: WorkspaceLeaveProjectRequest,
 	authorization: string | undefined
 ) => {
-	const userId = await getAuthenticatedUserId(authorization);
+	const userId = (await resolveAuthenticatedUserId(authorization)).userId;
 	const admin = await createAdminPb();
 	const projectId = requireString(body.projectId, 'projectId');
 	const membership = await ensureMembership(admin, projectId, userId);
@@ -665,7 +665,7 @@ export const handleWorkspaceMemberProfilesRequest = async (
 	body: WorkspaceMemberProfilesRequest,
 	authorization: string | undefined
 ) => {
-	const userId = await getAuthenticatedUserId(authorization);
+	const userId = (await resolveAuthenticatedUserId(authorization)).userId;
 	const admin = await createAdminPb();
 	const requestedUserIds = [
 		...new Set(

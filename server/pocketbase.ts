@@ -1,5 +1,6 @@
 import PocketBase, { ClientResponseError } from 'pocketbase';
 import { formatPocketBaseError } from '../src/lib/pocketbaseErrors.js';
+import { looksLikeApiToken, resolveApiKeyUser } from './apiKeys.js';
 import { getEnv, getRequiredEnv } from './env.js';
 
 export const getPocketBaseUrl = () =>
@@ -142,4 +143,51 @@ export const getAuthenticatedUser = async (authorization: string | undefined) =>
 		throw new Error('Unauthorized');
 	}
 	return record;
+};
+
+/**
+ * Like `getAuthenticatedUserId`, but accepts either a PocketBase JWT **or**
+ * a per-user API key. The `kbu_` prefix on the bearer is the discriminator.
+ *
+ * Returns `{ userId, authMethod: 'api-key' | 'jwt' }` so handlers can
+ * observability-tag the path if they want.
+ */
+export type AuthenticatedContext = {
+	userId: string;
+	authMethod: 'api-key' | 'jwt';
+};
+
+export const resolveAuthenticatedUserId = async (
+	authorization: string | undefined
+): Promise<AuthenticatedContext> => {
+	if (!authorization?.startsWith('Bearer ')) {
+		throw new Error('Unauthorized');
+	}
+	const token = authorization.slice('Bearer '.length).trim();
+	if (!token) {
+		throw new Error('Unauthorized');
+	}
+
+	if (looksLikeApiToken(token)) {
+		const resolved = await resolveApiKeyUser(token, { touchLastUsed: true });
+		if (resolved) {
+			return { userId: resolved.userId, authMethod: 'api-key' };
+		}
+		// Don't fall through to the JWT path. A `kbu_` token that doesn't
+		// resolve (unknown / revoked / expired) is its own failure mode.
+		throw new Error('Unauthorized');
+	}
+
+	const pb = createUserPb(token);
+	if (!pb.authStore.isValid || !pb.authStore.model?.id) {
+		try {
+			await pb.collection('users').authRefresh();
+		} catch {
+			throw new Error('Unauthorized');
+		}
+	}
+	const model = pb.authStore.model;
+	if (!model?.id) throw new Error('Unauthorized');
+	if (model.disabled === true) throw new Error('Unauthorized');
+	return { userId: model.id, authMethod: 'jwt' };
 };

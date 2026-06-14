@@ -99,3 +99,20 @@ export const invokeWorkspaceApi = async <T>(path: string, options: WorkspaceApiO
 
 	return payload as T;
 };
+
+export type WorkspaceMe = {
+	id: string;
+	email: string | null;
+	username: string | null;
+	is_admin: boolean;
+	auth_method: 'api-key' | 'jwt';
+};
+
+/**
+ * Returns the currently-authenticated user, accepting either a PB JWT or an
+ * API key in the active workspace API config. Used by the CLI as the
+ * "whoami" path so a self-hosted-domain login with only an API key works
+ * without ever talking to PocketBase directly.
+ */
+export const fetchWorkspaceMe = async (): Promise<WorkspaceMe> =>
+	invokeWorkspaceApi<WorkspaceMe>('/api/me', { method: 'GET' });

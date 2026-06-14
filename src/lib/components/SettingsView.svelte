@@ -3,6 +3,7 @@
 	import { ArrowLeft, ImageUp, Moon, Sun, Trash2 } from '$lib/icons';
 	import AccountIdentityForm from '$lib/components/AccountIdentityForm.svelte';
 	import BackgroundThemePicker from '$lib/components/BackgroundThemePicker.svelte';
+	import SettingsApiKeys from '$lib/components/SettingsApiKeys.svelte';
 	import UserAvatar from '$lib/components/UserAvatar.svelte';
 	import { fetchAdminMe } from '$lib/kainbu/adminApi';
 	import { pocketbase } from '$lib/pocketbaseClient';
@@ -107,8 +108,13 @@
 		}
 	};
 
-	$: pageTitle = section === 'account' ? 'Account' : 'Appearance';
-	$: pageKicker = section === 'account' ? 'Profile and access' : 'Look and feel';
+	$: pageTitle = section === 'account' ? 'Account' : section === 'access' ? 'Access' : 'Appearance';
+	$: pageKicker =
+		section === 'account'
+			? 'Profile and access'
+			: section === 'access'
+				? 'API keys and CLI'
+				: 'Look and feel';
 	$: avatarLabel = username ? `@${username}` : email || 'Your profile';
 </script>
 
@@ -142,6 +148,15 @@
 					on:click={() => onSectionChange('account')}
 				>
 					Account
+				</button>
+				<button
+					type="button"
+					role="tab"
+					aria-selected={section === 'access'}
+					class={`kainbu-settings-seg__btn ${section === 'access' ? 'kainbu-settings-seg__btn--active' : ''}`}
+					on:click={() => onSectionChange('access')}
+				>
+					Access
 				</button>
 				<button
 					type="button"
@@ -280,6 +295,8 @@
 					</div>
 				</form>
 			</div>
+		{:else if section === 'access'}
+			<SettingsApiKeys />
 		{:else}
 			<div class="kainbu-settings__stack">
 				<div class="kainbu-settings-panel">

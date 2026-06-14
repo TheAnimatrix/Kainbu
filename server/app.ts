@@ -8,7 +8,7 @@ import { getEnv } from './env.js';
 import { getOpenRouterApiKey } from './openrouter-key.js';
 import { extractUsageFromResponse } from './workspace-ai/openrouter-stream.js';
 import { recordAiUsageEvent } from './ai-usage.js';
-import { getAuthenticatedUserId } from './pocketbase.js';
+import { getAuthenticatedUserId, resolveAuthenticatedUserId } from './pocketbase.js';
 import {
 	handleAdminGetAiSettings,
 	handleAdminGetAuthEmailSettings,
@@ -40,6 +40,13 @@ import {
 	handleCliDevicePoll,
 	handleCliDeviceStart
 } from './cli-auth.js';
+import {
+	handleApiKeyCreate,
+	handleApiKeyList,
+	handleApiKeyRevoke,
+	handleMe
+} from './apiKeysRoute.js';
+import { handleWorkspaceSnapshot } from './workspaceSnapshot.js';
 import {
 	handlePublicBoardShareRequest,
 	handleWorkspaceBoardShareRequest,
@@ -260,7 +267,7 @@ app.get('/api/workspace-ai/transcribe-images', methodNotAllowed);
 app.post('/api/workspace-ai/stream', async (c) => {
 	try {
 		await loadAiModelCatalog();
-		await getAuthenticatedUserId(c.req.header('Authorization'));
+		await resolveAuthenticatedUserId(c.req.header('Authorization'));
 	} catch (error) {
 		const message = error instanceof Error ? error.message : 'Unknown error';
 		const status =
@@ -338,7 +345,7 @@ app.post('/api/workspace-ai/session-title', async (c) => {
 			return c.json({ error: 'userMessage is required' }, 400);
 		}
 
-		const userId = await getAuthenticatedUserId(c.req.header('Authorization'));
+		const { userId } = await resolveAuthenticatedUserId(c.req.header('Authorization'));
 		const title = await generateSessionTitle(userMessage, assistantReply, {
 			userId,
 			requestId: randomUUID()
@@ -374,7 +381,7 @@ app.post('/api/workspace-ai/task-title', async (c) => {
 			return c.json({ error: 'title is required' }, 400);
 		}
 
-		const userId = await getAuthenticatedUserId(c.req.header('Authorization'));
+		const { userId } = await resolveAuthenticatedUserId(c.req.header('Authorization'));
 		const rewritten = await generateTaskTitle(title, description, columnTitle, {
 			userId,
 			requestId: randomUUID()
@@ -417,7 +424,7 @@ app.post('/api/workspace-ai/transcribe-images', async (c) => {
 			return c.json({ error: 'images is required' }, 400);
 		}
 
-		await getAuthenticatedUserId(c.req.header('Authorization'));
+		await resolveAuthenticatedUserId(c.req.header('Authorization'));
 		// Populate the model catalog cache so the vision fallback config resolves;
 		// every other AI route does this before reading model configs.
 		await loadAiModelCatalog();
@@ -650,5 +657,19 @@ app.post('/api/cli/device/approve', async (c) => {
 		return handleWorkspaceMutationError(c, error);
 	}
 });
+
+// Per-user API key management. Accepts either a PB JWT or an API key in the
+// `Authorization` header. The CLI uses `GET /api/me` to verify a freshly
+// pasted key, and the web settings page uses the full CRUD set.
+app.get('/api/me', handleMe);
+app.get('/api/me/api-keys', handleApiKeyList);
+app.post('/api/me/api-keys', handleApiKeyCreate);
+app.delete('/api/me/api-keys/:id', handleApiKeyRevoke);
+
+// Workspace snapshot. The CLI on a self-hosted domain uses this with an API
+// key to fetch projects/boards/tasks without ever talking to PocketBase
+// directly. The web app uses the same route, so there's a single source of
+// truth for "what's in my workspace".
+app.get('/api/workspace/snapshot', handleWorkspaceSnapshot);
 
 export default app;
