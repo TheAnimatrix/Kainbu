@@ -14,11 +14,9 @@
  *    so audit/usage data still resolves, but `resolveApiKeyUser` rejects
  *    them.
  *
- * API rules:
- *  - `listRule` / `viewRule` / `deleteRule` = owner-only
- *  - `createRule` / `updateRule` = `null` (server admin client only — the CLI
- *    and the web UI both go through Hono endpoints, never the PB SDK for
- *    this collection).
+ * API rules: all `null` (admin-only). The web UI and CLI both go through
+ * Hono endpoints with the admin PocketBase client — never the PB SDK for
+ * this collection.
  */
 migrate(
 	(app) => {
@@ -31,11 +29,11 @@ migrate(
 			tokens = new Collection({
 				name: 'user_api_tokens',
 				type: 'base',
-				listRule: '@request.auth.id != "" && user.id = @request.auth.id',
-				viewRule: '@request.auth.id != "" && user.id = @request.auth.id',
+				listRule: null,
+				viewRule: null,
 				createRule: null,
 				updateRule: null,
-				deleteRule: '@request.auth.id != "" && user.id = @request.auth.id',
+				deleteRule: null,
 				fields: [
 					{
 						name: 'user',
@@ -60,19 +58,55 @@ migrate(
 			app.save(tokens);
 		}
 
-		// Repair: ensure rules + indexes are present even on partial migration.
-		const expectedRules = {
-			listRule: '@request.auth.id != "" && user.id = @request.auth.id',
-			viewRule: '@request.auth.id != "" && user.id = @request.auth.id',
-			createRule: null,
-			updateRule: null,
-			deleteRule: '@request.auth.id != "" && user.id = @request.auth.id'
+		// Repair partial migrations: ensure fields, indexes, and admin-only rules.
+		const fieldNames = new Set(tokens.fields.map((field) => field.name));
+		let changed = false;
+
+		const ensureRelation = (name, options) => {
+			if (fieldNames.has(name)) return;
+			tokens.fields.add(
+				new RelationField({
+					name,
+					required: options.required,
+					maxSelect: options.maxSelect,
+					collectionId: options.collectionId,
+					cascadeDelete: options.cascadeDelete ?? false
+				})
+			);
+			fieldNames.add(name);
+			changed = true;
 		};
 
-		let changed = false;
-		for (const [key, value] of Object.entries(expectedRules)) {
-			if (tokens[key] !== value) {
-				tokens[key] = value;
+		const ensureText = (name, required, max) => {
+			if (fieldNames.has(name)) return;
+			tokens.fields.add(new TextField({ name, required, max }));
+			fieldNames.add(name);
+			changed = true;
+		};
+
+		const ensureDate = (name) => {
+			if (fieldNames.has(name)) return;
+			tokens.fields.add(new DateField({ name, required: false }));
+			fieldNames.add(name);
+			changed = true;
+		};
+
+		ensureRelation('user', {
+			required: true,
+			maxSelect: 1,
+			collectionId: users.id,
+			cascadeDelete: true
+		});
+		ensureText('name', true, 64);
+		ensureText('token_hash', true, 128);
+		ensureText('prefix', true, 16);
+		ensureDate('last_used_at');
+		ensureDate('expires_at');
+		ensureDate('revoked_at');
+
+		for (const key of ['listRule', 'viewRule', 'createRule', 'updateRule', 'deleteRule']) {
+			if (tokens[key] !== null) {
+				tokens[key] = null;
 				changed = true;
 			}
 		}
