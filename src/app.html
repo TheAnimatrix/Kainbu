@@ -7,14 +7,26 @@
 			content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content"
 		/>
 		<meta name="theme-color" content="#0e0f11" />
+		<meta name="description" content="AI-Powered Kanban + Note editor" />
+		<meta name="mobile-web-app-capable" content="yes" />
+		<meta name="apple-mobile-web-app-capable" content="yes" />
+		<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+		<meta name="apple-mobile-web-app-title" content="Kainbu" />
+		<link rel="manifest" href="/manifest.json" />
+		<link rel="apple-touch-icon" href="/icons/apple-touch-icon.png" />
+		<link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+		<script>
+			if ('serviceWorker' in navigator) {
+				navigator.serviceWorker.register('/sw.js').catch(() => {});
+			}
+		</script>
 		<style>
 			html,
 			body {
 				background-color: hsl(220, 8%, 6%);
 			}
 
-			html[data-color-mode='light'],
-			html[data-color-mode='light'] body {
+			html[data-color-mode='light'], html[data-color-mode='light'] body {
 				background-color: hsl(220, 6%, 98%);
 			}
 		</style>
