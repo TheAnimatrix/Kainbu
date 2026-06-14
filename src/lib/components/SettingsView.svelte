@@ -427,7 +427,7 @@
 		text-wrap: balance;
 	}
 
-	.kainbu-settings__stack {
+	:global(.kainbu-settings__stack) {
 		display: flex;
 		flex-direction: column;
 		gap: 1rem;
@@ -458,7 +458,7 @@
 		font-weight: 500;
 	}
 
-	.kainbu-settings-panel {
+	:global(.kainbu-settings-panel) {
 		border-radius: 0.875rem;
 		background: color-mix(in oklab, var(--color-app-surface) 86%, transparent);
 		box-shadow:
@@ -466,7 +466,7 @@
 			0 1px 3px color-mix(in oklab, var(--color-app-bg) 45%, transparent);
 	}
 
-	.kainbu-settings-panel--accent {
+	:global(.kainbu-settings-panel--accent) {
 		background: color-mix(in oklab, var(--color-app-primary) 6%, var(--color-app-surface));
 		box-shadow:
 			inset 0 0 0 1px color-mix(in oklab, var(--color-app-primary) 22%, transparent),
@@ -474,18 +474,18 @@
 			0 4px 16px -10px color-mix(in oklab, var(--color-app-primary) 30%, transparent);
 	}
 
-	.kainbu-settings-panel__body {
+	:global(.kainbu-settings-panel__body) {
 		padding: 1.125rem 1.25rem 1.25rem;
 	}
 
-	.kainbu-settings-panel__title {
+	:global(.kainbu-settings-panel__title) {
 		font-size: 0.9375rem;
 		font-weight: 600;
 		letter-spacing: -0.01em;
 		color: var(--color-app-text);
 	}
 
-	.kainbu-settings-panel__desc {
+	:global(.kainbu-settings-panel__desc) {
 		margin-top: 0.25rem;
 		max-width: 42ch;
 		font-size: 0.8125rem;
@@ -493,7 +493,7 @@
 		color: var(--color-app-subtext);
 	}
 
-	.kainbu-settings-note {
+	:global(.kainbu-settings-note) {
 		display: inline-flex;
 		align-items: center;
 		gap: 0.375rem;
@@ -501,20 +501,20 @@
 		color: var(--color-app-subtext);
 	}
 
-	.kainbu-settings-feedback {
+	:global(.kainbu-settings-feedback) {
 		font-size: 0.75rem;
 		font-weight: 500;
 	}
 
-	.kainbu-settings-feedback--success {
+	:global(.kainbu-settings-feedback--success) {
 		color: rgb(52 211 153);
 	}
 
-	.kainbu-settings-feedback--error {
+	:global(.kainbu-settings-feedback--error) {
 		color: rgb(251 113 133);
 	}
 
-	.kainbu-settings-spinner {
+	:global(.kainbu-settings-spinner) {
 		display: block;
 		height: 1rem;
 		width: 1rem;
@@ -624,7 +624,7 @@
 			0 0 0 3px color-mix(in oklab, var(--color-app-primary) 14%, transparent);
 	}
 
-	:root[data-color-mode='light'] .kainbu-settings-panel {
+	:root[data-color-mode='light'] :global(.kainbu-settings-panel) {
 		box-shadow:
 			inset 0 1px 0 rgb(255 255 255 / 0.72),
 			0 1px 3px color-mix(in oklab, var(--color-app-bg) 12%, transparent);

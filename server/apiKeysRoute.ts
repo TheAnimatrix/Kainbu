@@ -2,6 +2,7 @@ import type { Context } from 'hono';
 import { createAdminPb, resolveAuthenticatedUserId } from './pocketbase.js';
 import { generateApiToken, maskApiToken } from './apiKeys.js';
 import { mapPocketBaseError } from './pocketbase.js';
+import { pbEscapeFilter } from './pbWorkspace.js';
 
 const apiKeyError = (error: unknown) => {
 	const { status, message } = mapPocketBaseError(error);
@@ -27,8 +28,8 @@ export const handleApiKeyList = async (c: Context) => {
 		const { userId } = await resolveAuthenticatedUserId(c.req.header('Authorization'));
 		const pb = await createAdminPb();
 		const list = await pb.collection('user_api_tokens').getList<Record<string, unknown>>(1, 200, {
-			filter: `user = "${userId}"`,
-			sort: '-created',
+			filter: `user = "${pbEscapeFilter(userId)}"`,
+			sort: '-id',
 			fields: 'id,name,prefix,last_used_at,expires_at,revoked_at,created'
 		});
 		return c.json({ items: list.items.map(toApiKeyRow) });

@@ -100,9 +100,24 @@ migrate(
 		ensureText('name', true, 64);
 		ensureText('token_hash', true, 128);
 		ensureText('prefix', true, 16);
+		const ensureAutodate = (name, onCreate, onUpdate) => {
+			if (fieldNames.has(name)) return;
+			tokens.fields.add(
+				new AutodateField({
+					name,
+					onCreate,
+					onUpdate
+				})
+			);
+			fieldNames.add(name);
+			changed = true;
+		};
+
 		ensureDate('last_used_at');
 		ensureDate('expires_at');
 		ensureDate('revoked_at');
+		ensureAutodate('created', true, false);
+		ensureAutodate('updated', true, true);
 
 		for (const key of ['listRule', 'viewRule', 'createRule', 'updateRule', 'deleteRule']) {
 			if (tokens[key] !== null) {

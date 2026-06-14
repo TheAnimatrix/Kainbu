@@ -88,6 +88,9 @@
 </script>
 
 <div class="kainbu-settings__stack">
+	{#if error}
+		<p class="kainbu-settings-feedback kainbu-settings-feedback--error">{error}</p>
+	{/if}
 	<form class="kainbu-settings-panel" on:submit|preventDefault={create}>
 		<div class="kainbu-settings-panel__body">
 			<h3 class="kainbu-settings-panel__title">Create an API key</h3>
@@ -119,9 +122,6 @@
 					{saving ? 'Creating…' : 'Create key'}
 				</button>
 			</div>
-			{#if error}
-				<p class="kainbu-settings-feedback kainbu-settings-feedback--error mt-3">{error}</p>
-			{/if}
 		</div>
 	</form>
 
