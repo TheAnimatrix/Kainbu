@@ -19,7 +19,11 @@ export function resolvePocketBaseUrl(): string {
 	const fromEnv = readVitePocketBaseUrl();
 	if (fromEnv) return fromEnv;
 	if (typeof window !== 'undefined') {
-		return `${window.location.origin}/pb`;
+		// In Capacitor (native app) the origin is localhost — use the real server instead
+		const isNative = window.location.protocol === 'capacitor:' ||
+			(window.location.hostname === 'localhost' && window.location.port === '');
+		const origin = isNative ? 'https://kainbu.avarnic.com' : window.location.origin;
+		return `${origin}/pb`;
 	}
 	return 'http://127.0.0.1:8090';
 }
