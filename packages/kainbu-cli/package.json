@@ -1,10 +1,11 @@
 {
 	"name": "kainbu",
-	"version": "0.1.0",
+	"version": "0.1.1",
 	"description": "Kainbu workspace CLI — projects, boards, tasks, pages, and scratchpad from your terminal",
+	"keywords": ["kanban", "cli", "tasks", "kainbu", "pocketbase"],
+	"homepage": "https://kainbu.avarnic.com/landing",
 	"type": "module",
-	"license": "UNLICENSED",
-	"private": true,
+	"license": "GPL-3.0-or-later",
 	"engines": {
 		"node": ">=22"
 	},

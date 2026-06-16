@@ -68,20 +68,36 @@ Web: [http://localhost:3001](http://localhost:3001) (Vite proxies `/api` to port
 
 ## CLI
 
-See [docs/CLI.md](docs/CLI.md). The CLI uses **per-user API keys** that you
-mint from **Settings → Access** in the web UI:
+Install from npm (Node ≥ 22):
+
+```bash
+npm install -g kainbu      # or run ad-hoc: npx kainbu <command>
+```
+
+### Log in
+
+The CLI uses **per-user API keys** that you mint from **Settings → Access**
+in the web UI:
 
 ```bash
 kainbu login --server https://kainbu.example.com --api-key kbu_v1_...
-kainbu auth profiles                       # manage multiple servers
-kainbu whoami
-kainbu project list
+kainbu whoami                              # confirm the signed-in user
+kainbu auth profiles                       # manage multiple servers / accounts
 ```
 
-The CLI never needs a PocketBase URL on a self-hosted domain — the API
-key works directly against the Hono API. The legacy device-code flow is
-still available via `kainbu login --device` for environments where you
-don't have a key yet.
+### View tasks
+
+```bash
+kainbu project list                        # list your projects
+kainbu use <project>                       # set the active project (name or id)
+kainbu board list                          # boards in the active project
+kainbu ls                                  # tasks on the active board, grouped by column
+kainbu ls <board>                          # tasks on any board, without switching
+kainbu ls --without=Done --sort=-created   # hide columns / sort within columns
+```
+
+See [docs/CLI.md](docs/CLI.md) for the full command reference (columns, pages,
+scratchpad, filtering, and pagination).
 
 ## Environment variables
 

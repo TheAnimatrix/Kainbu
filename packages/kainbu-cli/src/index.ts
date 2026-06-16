@@ -14,13 +14,16 @@ import { initRuntime } from './runtime.js';
 import { resolveContext, setActiveBoard, setActiveProject } from './context.js';
 import { requireUser } from './runtime.js';
 import { fetchWorkspace } from '@kainbu/core';
+// Single source of truth for the version: bundled from package.json at build
+// time, so `kainbu -V` can never drift from the published npm version.
+import pkg from '../package.json' with { type: 'json' };
 
 const program = new Command();
 
 program
 	.name('kainbu')
 	.description('Kainbu workspace CLI')
-	.version('0.0.1')
+	.version(pkg.version)
 	.showHelpAfterError('(add --help for usage)');
 
 // Colorize help output with consistent tones. configureHelp/configureOutput
