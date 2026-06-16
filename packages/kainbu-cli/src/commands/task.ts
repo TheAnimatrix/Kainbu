@@ -217,8 +217,8 @@ export const registerTaskCommands = (program: Command) => {
 					entry.id === column.id
 						? {
 								...entry,
+								// Prepend so the new task lands at the top of the column.
 								tasks: [
-									...entry.tasks,
 									{
 										id: createId(),
 										title,
@@ -226,14 +226,17 @@ export const registerTaskCommands = (program: Command) => {
 										tags: [],
 										createdAt: Date.now(),
 										updatedAt: Date.now()
-									}
+									},
+									...entry.tasks
 								]
 							}
 						: entry
 				);
 
 				await syncProjectBoard(project.id, board.id, kanban, next);
-				console.log(`${ui.success('Added task')} ${ui.name(title)}`);
+				console.log(
+					`${ui.success('Added task')} ${ui.name(title)} ${ui.meta('to column')} ${ui.name(column.title)} ${ui.meta('of board')} ${ui.name(board.name)}`
+				);
 			}
 		);
 
