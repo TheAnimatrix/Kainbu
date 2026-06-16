@@ -3,7 +3,7 @@ import {
 	deleteProjectPage,
 	renameProjectPage,
 	updateProjectPageContent
-} from '@kainbu/core';
+} from '../writes.js';
 import { readFile } from 'node:fs/promises';
 import type { Command } from 'commander';
 import { resolveContext } from '../context.js';

@@ -1,4 +1,5 @@
-import { createId, fetchProjectScratchpadMeta, updateProjectScratchpad } from '@kainbu/core';
+import { createId, updateProjectScratchpad } from '@kainbu/core';
+import { fetchProjectScratchpadMeta } from '../writes.js';
 import { readFile } from 'node:fs/promises';
 import type { Command } from 'commander';
 import type { ScratchpadData } from '../../../../src/lib/kainbu/types.js';

@@ -1,4 +1,5 @@
-import { createProject, fetchWorkspace, renameProject } from '@kainbu/core';
+import { fetchWorkspace } from '@kainbu/core';
+import { createProject, renameProject } from '../writes.js';
 import type { Command } from 'commander';
 import { resolveContext, setActiveProject } from '../context.js';
 import { printResult, type OutputMode } from '../output.js';
@@ -56,8 +57,8 @@ export const registerProjectCommands = (program: Command) => {
 		.option('--json', 'Print JSON')
 		.action(async (name: string, options: { json?: boolean }) => {
 			await initRuntime();
-			const user = await requireUser();
-			const created = await createProject(user.id, name);
+			await requireUser();
+			const created = await createProject(name);
 			await setActiveProject(created.id);
 			printResult(
 				{ json: Boolean(options.json), quiet: false },

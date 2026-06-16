@@ -80,6 +80,28 @@ kainbu auth status                            # show active profile + verify the
 See `kainbu --help` for project, board, task, page, and scratchpad
 commands.
 
+### Listing tasks
+
+`kainbu task list [board]` (alias `kainbu ls [board]`) lists every task on a
+board, grouped by column, with a `[x]`/`[ ]` checkbox for checkable tasks.
+`[board]` lets you read any board without making it active.
+
+| Flag | Effect |
+|------|--------|
+| `--with <cols>` | Only these columns (comma-separated ref/id/title), e.g. `--with=Bugs` |
+| `--without <cols>` | Hide these columns, e.g. `--without=Planning,Bugs` |
+| `--sort <field>` | Sort within each column. `field` is `created`, `modified`, or `title`; prefix `+` ascending (default) or `-` descending, e.g. `--sort=-created` (`date` is an alias for `created`) |
+| `--filter <preds>` | Filter tasks (comma-separated). `has_content` keeps only tasks with a markdown description |
+| `--column <ref>` | Filter to a single column (ref/id/title) |
+| `--limit <n>` / `--offset <n>` | Paginate (default lists everything; a footer shows when truncated) |
+| `--json` | Machine-readable output (`{ tasks, total, hasMore, nextOffset }`) |
+
+```bash
+kainbu ls --without=Planning,Bugs       # everything except those columns
+kainbu ls --with=Bugs --sort=-created   # newest bugs first
+kainbu ls --filter=has_content          # only tasks with a description
+```
+
 ## Configuration files
 
 | Path | Purpose |

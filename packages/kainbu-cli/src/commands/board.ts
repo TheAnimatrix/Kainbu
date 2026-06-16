@@ -1,4 +1,4 @@
-import { createProjectBoard, deleteProjectBoard, renameProjectBoard } from '@kainbu/core';
+import { createProjectBoard, deleteProjectBoard, renameProjectBoard } from '../writes.js';
 import type { Command } from 'commander';
 import { resolveContext, setActiveBoard } from '../context.js';
 import { printResult, type OutputMode } from '../output.js';

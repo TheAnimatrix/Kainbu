@@ -1,9 +1,15 @@
 import type PocketBase from 'pocketbase';
-import type { BackgroundTheme } from '../src/lib/kainbu/types.js';
+import type { BackgroundTheme, Project } from '../src/lib/kainbu/types.js';
 import { formatPocketBaseError } from '../src/lib/pocketbaseErrors.js';
 import { sendProjectInviteEmail } from './mailDelivery.js';
 import { createAdminPb, resolveAuthenticatedUserId } from './pocketbase.js';
 import { ClientResponseError } from 'pocketbase';
+import { syncBoardWithPb } from '../src/lib/kainbu/boardSyncCore.js';
+import { createId } from '../src/lib/kainbu/id.js';
+import { EMPTY_PROJECT } from '../src/lib/kainbu/constants.js';
+import { normalizeBoardPreferences } from '../src/lib/kainbu/boardPreferences.js';
+import { normalizeProjectStructure } from '../src/lib/kainbu/projectStructure.js';
+import { normalizeScratchpadData, serializeScratchpadData } from '../src/lib/kainbu/scratchpad.js';
 import {
 	getProjectPbId,
 	getProjectRecord,
@@ -719,4 +725,396 @@ export const handleWorkspaceMemberProfilesRequest = async (
 					: null
 		}))
 	};
+};
+
+// ---------------------------------------------------------------------------
+// Board / page / project write handlers.
+//
+// These exist so the CLI (which authenticates with an API key and has no
+// PocketBase session) can perform every workspace write through the HTTP API.
+// They run the same kanban-diff logic as the web app via `syncBoardWithPb`,
+// and enforce project membership before touching any record.
+// ---------------------------------------------------------------------------
+
+type KanbanData = Project['kanbanData'];
+
+type WorkspaceBoardSyncRequest = {
+	projectId: string;
+	boardId: string;
+	previous: KanbanData;
+	next: KanbanData;
+};
+
+type WorkspaceBoardCreateRequest = {
+	projectId: string;
+	name: string;
+	position?: number;
+};
+
+type WorkspaceBoardMutateRequest = {
+	projectId: string;
+	boardId: string;
+	name?: string;
+};
+
+type WorkspacePageCreateRequest = {
+	projectId: string;
+	name: string;
+	position?: number;
+	content?: string;
+};
+
+type WorkspacePageMutateRequest = {
+	projectId: string;
+	pageId: string;
+	name?: string;
+	content?: string;
+};
+
+type WorkspaceProjectCreateRequest = {
+	name?: string;
+};
+
+type WorkspaceProjectRenameRequest = {
+	projectId: string;
+	name: string;
+};
+
+const isKanbanColumn = (value: unknown): value is KanbanData[number] =>
+	isRecord(value) && typeof value.id === 'string' && Array.isArray((value as { tasks?: unknown }).tasks);
+
+const requireKanbanData = (value: unknown, field: string): KanbanData => {
+	if (!Array.isArray(value) || !value.every(isKanbanColumn)) {
+		throw new WorkspaceApiError(400, `${field} must be an array of board columns.`);
+	}
+	return value as KanbanData;
+};
+
+const sanitizeProjectPageContent = (content: unknown) => {
+	if (typeof content !== 'string') return '';
+	return content.replace(/\0/g, '').slice(0, 500_000);
+};
+
+/** Find a project child (board/page/…) by its app-level client_id, scoped to the project. */
+const findProjectChildByClientId = async (
+	admin: PocketBase,
+	collection: string,
+	projectPbId: string,
+	clientId: string
+) => {
+	try {
+		return await admin
+			.collection(collection)
+			.getFirstListItem(
+				`${projectRelationFilter(projectPbId)} && client_id = "${pbEscapeFilter(clientId)}"`
+			);
+	} catch {
+		return null;
+	}
+};
+
+export const handleWorkspaceBoardSyncRequest = async (
+	body: WorkspaceBoardSyncRequest,
+	authorization: string | undefined
+) => {
+	const userId = (await resolveAuthenticatedUserId(authorization)).userId;
+	const admin = await createAdminPb();
+	const projectId = requireString(body.projectId, 'projectId');
+	const boardId = requireString(body.boardId, 'boardId');
+	const previous = requireKanbanData(body.previous, 'previous');
+	const next = requireKanbanData(body.next, 'next');
+
+	await ensureMembership(admin, projectId, userId);
+
+	const projectPbId = await getProjectPbId(admin, projectId);
+	const board = await findProjectChildByClientId(admin, 'project_boards', projectPbId, boardId);
+	if (!board) {
+		throw new WorkspaceApiError(404, 'Board not found.');
+	}
+
+	await syncBoardWithPb(admin, projectId, boardId, previous, next);
+	return { ok: true };
+};
+
+export const handleWorkspaceBoardCreateRequest = async (
+	body: WorkspaceBoardCreateRequest,
+	authorization: string | undefined
+) => {
+	const userId = (await resolveAuthenticatedUserId(authorization)).userId;
+	const admin = await createAdminPb();
+	const projectId = requireString(body.projectId, 'projectId');
+	const name = requireString(body.name, 'name');
+	const position =
+		typeof body.position === 'number' && Number.isFinite(body.position) ? body.position : 0;
+
+	await ensureMembership(admin, projectId, userId);
+
+	const projectPbId = await getProjectPbId(admin, projectId);
+	const clientId = createId();
+	const record = await admin.collection('project_boards').create({
+		project: projectPbId,
+		client_id: clientId,
+		name,
+		position,
+		preferences: normalizeBoardPreferences(undefined)
+	});
+
+	return { ok: true, id: clientId, name: String(record.name || name) };
+};
+
+export const handleWorkspaceBoardRenameRequest = async (
+	body: WorkspaceBoardMutateRequest,
+	authorization: string | undefined
+) => {
+	const userId = (await resolveAuthenticatedUserId(authorization)).userId;
+	const admin = await createAdminPb();
+	const projectId = requireString(body.projectId, 'projectId');
+	const boardId = requireString(body.boardId, 'boardId');
+	const name = requireString(body.name, 'name');
+
+	await ensureMembership(admin, projectId, userId);
+
+	const projectPbId = await getProjectPbId(admin, projectId);
+	const board = await findProjectChildByClientId(admin, 'project_boards', projectPbId, boardId);
+	if (!board) throw new WorkspaceApiError(404, 'Board not found.');
+
+	await admin.collection('project_boards').update(board.id, { name });
+	return { ok: true, id: boardId, name };
+};
+
+export const handleWorkspaceBoardDeleteRequest = async (
+	body: WorkspaceBoardMutateRequest,
+	authorization: string | undefined
+) => {
+	const userId = (await resolveAuthenticatedUserId(authorization)).userId;
+	const admin = await createAdminPb();
+	const projectId = requireString(body.projectId, 'projectId');
+	const boardId = requireString(body.boardId, 'boardId');
+
+	await ensureMembership(admin, projectId, userId);
+
+	const projectPbId = await getProjectPbId(admin, projectId);
+	const board = await findProjectChildByClientId(admin, 'project_boards', projectPbId, boardId);
+	if (!board) return { ok: true };
+
+	await admin.collection('project_boards').delete(board.id);
+	return { ok: true };
+};
+
+export const handleWorkspacePageCreateRequest = async (
+	body: WorkspacePageCreateRequest,
+	authorization: string | undefined
+) => {
+	const userId = (await resolveAuthenticatedUserId(authorization)).userId;
+	const admin = await createAdminPb();
+	const projectId = requireString(body.projectId, 'projectId');
+	const name = requireString(body.name, 'name');
+	const position =
+		typeof body.position === 'number' && Number.isFinite(body.position) ? body.position : 0;
+
+	await ensureMembership(admin, projectId, userId);
+
+	const projectPbId = await getProjectPbId(admin, projectId);
+	const clientId = createId();
+	const record = await admin.collection('project_pages').create({
+		project: projectPbId,
+		client_id: clientId,
+		name,
+		content: sanitizeProjectPageContent(body.content ?? ''),
+		position
+	});
+
+	return { ok: true, id: clientId, name: String(record.name || name) };
+};
+
+export const handleWorkspacePageRenameRequest = async (
+	body: WorkspacePageMutateRequest,
+	authorization: string | undefined
+) => {
+	const userId = (await resolveAuthenticatedUserId(authorization)).userId;
+	const admin = await createAdminPb();
+	const projectId = requireString(body.projectId, 'projectId');
+	const pageId = requireString(body.pageId, 'pageId');
+	const name = requireString(body.name, 'name');
+
+	await ensureMembership(admin, projectId, userId);
+
+	const projectPbId = await getProjectPbId(admin, projectId);
+	const page = await findProjectChildByClientId(admin, 'project_pages', projectPbId, pageId);
+	if (!page) throw new WorkspaceApiError(404, 'Page not found.');
+
+	await admin.collection('project_pages').update(page.id, { name });
+	return { ok: true, id: pageId, name };
+};
+
+export const handleWorkspacePageContentRequest = async (
+	body: WorkspacePageMutateRequest,
+	authorization: string | undefined
+) => {
+	const userId = (await resolveAuthenticatedUserId(authorization)).userId;
+	const admin = await createAdminPb();
+	const projectId = requireString(body.projectId, 'projectId');
+	const pageId = requireString(body.pageId, 'pageId');
+	if (typeof body.content !== 'string') {
+		throw new WorkspaceApiError(400, 'content is required.');
+	}
+
+	await ensureMembership(admin, projectId, userId);
+
+	const projectPbId = await getProjectPbId(admin, projectId);
+	const page = await findProjectChildByClientId(admin, 'project_pages', projectPbId, pageId);
+	if (!page) throw new WorkspaceApiError(404, 'Page not found.');
+
+	await admin.collection('project_pages').update(page.id, {
+		content: sanitizeProjectPageContent(body.content)
+	});
+	return { ok: true };
+};
+
+export const handleWorkspacePageDeleteRequest = async (
+	body: WorkspacePageMutateRequest,
+	authorization: string | undefined
+) => {
+	const userId = (await resolveAuthenticatedUserId(authorization)).userId;
+	const admin = await createAdminPb();
+	const projectId = requireString(body.projectId, 'projectId');
+	const pageId = requireString(body.pageId, 'pageId');
+
+	await ensureMembership(admin, projectId, userId);
+
+	const projectPbId = await getProjectPbId(admin, projectId);
+	const page = await findProjectChildByClientId(admin, 'project_pages', projectPbId, pageId);
+	if (!page) return { ok: true };
+
+	await admin.collection('project_pages').delete(page.id);
+	return { ok: true };
+};
+
+export const handleWorkspaceScratchpadGetRequest = async (
+	projectId: string | undefined,
+	authorization: string | undefined
+) => {
+	const userId = (await resolveAuthenticatedUserId(authorization)).userId;
+	const admin = await createAdminPb();
+	const id = requireString(projectId, 'projectId');
+
+	await ensureMembership(admin, id, userId);
+
+	const project = await getProjectOrThrow(admin, id);
+	return {
+		id: project.id,
+		name: project.name,
+		scratchpadData: normalizeScratchpadData(project.scratchpad_data),
+		scratchpadRev: project.scratchpad_rev
+	};
+};
+
+export const handleWorkspaceProjectRenameRequest = async (
+	body: WorkspaceProjectRenameRequest,
+	authorization: string | undefined
+) => {
+	const userId = (await resolveAuthenticatedUserId(authorization)).userId;
+	const admin = await createAdminPb();
+	const projectId = requireString(body.projectId, 'projectId');
+	const name = requireString(body.name, 'name');
+
+	await ensureMembership(admin, projectId, userId);
+
+	const project = await getProjectOrThrow(admin, projectId);
+	await admin.collection('projects').update(project._pbId, { name });
+	return { ok: true, id: projectId, name };
+};
+
+export const handleWorkspaceProjectCreateRequest = async (
+	body: WorkspaceProjectCreateRequest,
+	authorization: string | undefined
+) => {
+	const userId = (await resolveAuthenticatedUserId(authorization)).userId;
+	const admin = await createAdminPb();
+	const name =
+		typeof body.name === 'string' && body.name.trim() ? body.name.trim() : 'New Project';
+
+	// Build the same normalized seed the web app's `createProject` uses, then
+	// persist it with the admin client so an API-key request can create a fully
+	// formed project (membership + board + page + kanban + AI session).
+	const seed = normalizeProjectStructure(EMPTY_PROJECT(userId, name));
+	const now = new Date().toISOString();
+
+	const projectRecord = await admin.collection('projects').create({
+		client_id: seed.id,
+		owner: userId,
+		name: seed.name,
+		background_theme: seed.backgroundTheme,
+		scratchpad_data: serializeScratchpadData(seed.scratchpadData),
+		scratchpad_rev: seed.scratchpadRev,
+		last_opened_at: now
+	});
+
+	try {
+		await admin.collection('project_memberships').create({
+			project: projectRecord.id,
+			user: userId,
+			role: 'owner',
+			joined_at: now,
+			last_opened_at: now
+		});
+	} catch (error) {
+		const message = error instanceof Error ? error.message : String(error);
+		const alreadyExists = /unique|validation_not_unique/i.test(message);
+		if (!alreadyExists) throw error;
+	}
+
+	for (const board of seed.boards) {
+		await admin.collection('project_boards').create({
+			project: projectRecord.id,
+			client_id: board.id,
+			name: board.name,
+			position: board.position,
+			preferences: normalizeBoardPreferences(board.preferences)
+		});
+	}
+
+	for (const page of seed.pages) {
+		await admin.collection('project_pages').create({
+			project: projectRecord.id,
+			client_id: page.id,
+			name: page.name,
+			content: sanitizeProjectPageContent(page.content),
+			position: page.position
+		});
+	}
+
+	for (const board of seed.boards) {
+		await syncBoardWithPb(admin, seed.id, board.id, [], board.kanbanData);
+	}
+
+	const activeSession = seed.aiSessions[0];
+	if (activeSession) {
+		try {
+			await admin.collection('project_ai_sessions').create({
+				project: projectRecord.id,
+				client_id: activeSession.id,
+				user: userId,
+				title: activeSession.title,
+				model_id: activeSession.modelId,
+				history: activeSession.history,
+				last_message_at: new Date(activeSession.lastMessageAt).toISOString()
+			});
+			await admin.collection('project_user_state').create({
+				project: projectRecord.id,
+				user: userId,
+				active_ai_session_id: activeSession.id,
+				chat_history: []
+			});
+		} catch (error) {
+			// AI session is a convenience seed; the project is already usable
+			// without it (the snapshot loader tolerates a missing session).
+			console.error('[workspace] project create AI seed failed', {
+				projectId: seed.id,
+				error: error instanceof Error ? error.message : String(error)
+			});
+		}
+	}
+
+	return { ok: true, id: seed.id, name: seed.name };
 };

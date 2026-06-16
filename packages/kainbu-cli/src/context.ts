@@ -40,6 +40,24 @@ const resolveByIdOrName = <T extends { id: string; name: string }>(
 	});
 };
 
+/**
+ * Finds a board by id (globally unique) or name across every project in the
+ * workspace. This lets `kainbu task list <board>` work with only a project
+ * active — or with nothing active at all when a board id is given — so you
+ * don't have to `use` a board just to read it.
+ */
+const findBoardInWorkspace = (projects: Project[], query: string) => {
+	const trimmed = query.trim();
+	const matches: { project: Project; board: ProjectBoard }[] = [];
+	for (const project of projects) {
+		for (const board of project.boards) {
+			if (board.id === trimmed) return { matches: [{ project, board }], exactId: true };
+			if (matchesName(board.name, trimmed)) matches.push({ project, board });
+		}
+	}
+	return { matches, exactId: false };
+};
+
 export const resolveContext = async (options: {
 	project?: string;
 	board?: string;
@@ -56,18 +74,45 @@ export const resolveContext = async (options: {
 		project = workspace.projects.find((entry) => entry.id === config.activeProjectId);
 	}
 
+	let board: ProjectBoard | undefined;
+
+	// An explicit board target resolves within the active/--project first, then
+	// falls back to a workspace-wide search so a board id (or unique board name)
+	// works even with no active project or board set.
+	if (options.board) {
+		if (project) {
+			board = project.boards.find((entry) => entry.id === options.board!.trim());
+			if (!board) {
+				const named = project.boards.filter((entry) => matchesName(entry.name, options.board!));
+				if (named.length === 1) board = named[0];
+			}
+		}
+		if (!board) {
+			const { matches } = findBoardInWorkspace(workspace.projects, options.board);
+			if (matches.length === 1) {
+				project = matches[0].project;
+				board = matches[0].board;
+			} else if (matches.length > 1) {
+				throw new KainbuError(`Multiple boards match "${options.board}".`, {
+					hint: 'Use the board id, or pass --project to disambiguate.'
+				});
+			}
+		}
+		if (!board) {
+			throw new KainbuError(`Board not found: ${options.board}`, {
+				hint: 'Run: kainbu board list (after kainbu project use <name|id>), or pass a board id.'
+			});
+		}
+	}
+
 	if (!project) {
 		throw new KainbuError('No active project.', {
 			hint: 'Run: kainbu project list — then kainbu project use <name|id>'
 		});
 	}
 
-	let board = options.board
-		? resolveByIdOrName(project.boards, options.board, 'board')
-		: getProjectBoard(project, config.activeBoardId);
-
-	if (!board && project.boards.length) {
-		board = project.boards[0];
+	if (!board) {
+		board = getProjectBoard(project, config.activeBoardId) ?? project.boards[0] ?? undefined;
 	}
 
 	if (options.requireBoard !== false && !board) {

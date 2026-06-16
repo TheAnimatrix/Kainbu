@@ -90,14 +90,27 @@ const mapTaskRow = (row: ProjectTaskRow) => ({
 const buildKanbanData = (columns: ProjectColumnRow[], tasks: ProjectTaskRow[]) => {
 	const tasksByColumn = new Map<string, ReturnType<typeof mapTaskRow>[]>();
 
-	for (const row of [...tasks].sort((left, right) => left.position - right.position)) {
+	// Tiebreak equal positions deterministically so ordering is stable across
+	// fetches — the CLI derives T#/C# refs from this order and uses them as
+	// task/column handles.
+	for (const row of [...tasks].sort(
+		(left, right) =>
+			left.position - right.position ||
+			left.created_at.localeCompare(right.created_at) ||
+			left.id.localeCompare(right.id)
+	)) {
 		const current = tasksByColumn.get(row.column_id) || [];
 		current.push(mapTaskRow(row));
 		tasksByColumn.set(row.column_id, current);
 	}
 
 	return [...columns]
-		.sort((left, right) => left.position - right.position)
+		.sort(
+			(left, right) =>
+				left.position - right.position ||
+				left.created_at.localeCompare(right.created_at) ||
+				left.id.localeCompare(right.id)
+		)
 		.map((row) => ({
 			id: row.id,
 			title: row.title,

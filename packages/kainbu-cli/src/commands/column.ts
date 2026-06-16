@@ -1,10 +1,5 @@
-import {
-	buildBoardRefIndex,
-	createId,
-	fetchProjectBoardKanban,
-	resolveColumnRef,
-	syncProjectBoard
-} from '@kainbu/core';
+import { buildBoardRefIndex, createId, resolveColumnRef } from '@kainbu/core';
+import { syncProjectBoard } from '../writes.js';
 import type { Command } from 'commander';
 import type { KanbanData } from '../../../../src/lib/kainbu/types.js';
 import { resolveContext } from '../context.js';
@@ -16,22 +11,24 @@ import { findColumnByRefOrTitle } from './kanban-utils.js';
 export const registerColumnCommands = (program: Command) => {
 	const column = program.command('column').alias('c').description('Manage board columns');
 
+	// Reads use the board's kanbanData from the workspace snapshot (no direct
+	// PocketBase dependency); writes still sync through the persistence layer.
 	const withContext = async (options: { project?: string; board?: string }) => {
 		const ctx = await resolveContext({ ...options, requireBoard: true });
-		const kanban = await fetchProjectBoardKanban(ctx.project.id, ctx.board.id);
+		const kanban = ctx.board.kanbanData;
 		const refs = buildBoardRefIndex(kanban, ctx.board.name);
 		return { ...ctx, kanban, refs };
 	};
 
 	column
-		.command('list')
-		.description('List columns on the active board')
+		.command('list [board]')
+		.description('List columns. [board] lists any board without making it active.')
 		.option('--project <id|name>', 'Project override')
 		.option('--board <id|name>', 'Board override')
 		.option('--json', 'Print JSON')
-		.action(async (options: { project?: string; board?: string; json?: boolean }) => {
+		.action(async (boardArg: string | undefined, options: { project?: string; board?: string; json?: boolean }) => {
 			await initRuntime();
-			const { kanban, refs } = await withContext(options);
+			const { kanban, refs } = await withContext({ ...options, board: boardArg ?? options.board });
 			const rows = kanban.map((entry) => ({
 				ref: refs.columnIdToRef.get(entry.id) || entry.id,
 				id: entry.id,

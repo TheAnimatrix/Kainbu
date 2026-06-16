@@ -47,12 +47,15 @@ registerPageCommands(program);
 registerScratchpadCommands(program);
 
 program
-	.command('ls')
-	.description('List tasks on the active board')
+	.command('ls [board]')
+	.description('List tasks (alias for `task list`). [board] lists any board without making it active.')
 	.allowUnknownOption()
+	.allowExcessArguments(true)
 	.action(async () => {
 		const args = process.argv.slice(process.argv.indexOf('ls') + 1);
-		await program.parseAsync(['node', 'kainbu', 'task', 'list', ...args], { from: 'user' });
+		// Default ('node') parsing skips the first two argv entries, so keep the
+			// node/kainbu prefix here rather than mixing it with `{ from: 'user' }`.
+			await program.parseAsync(['node', 'kainbu', 'task', 'list', ...args]);
 	});
 
 program

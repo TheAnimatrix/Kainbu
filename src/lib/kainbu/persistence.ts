@@ -15,14 +15,12 @@ import { normalizeScratchpadData, serializeScratchpadData } from '$lib/kainbu/sc
 import { normalizeUserSettings } from '$lib/kainbu/settings';
 import { pbNoAutoCancel } from '$lib/kainbu/pbRequest';
 import { isPocketBaseNotFound, isProjectPagesStrayIdFieldError } from '$lib/pocketbaseErrors';
-import { isPocketBaseRecordId } from '$lib/kainbu/recordIds';
+import { syncBoardWithPb } from '$lib/kainbu/boardSyncCore';
 import { normalizeDueTimestamp } from '$lib/kainbu/timing';
 import { getPb } from '$lib/kainbu/pocketbaseContext';
 import { mapMembershipRow, mapInviteRow, compareProjects, findProjectName } from '$lib/kainbu/workspaceMapping';
 import { fetchSharedMemberProfiles } from '$lib/kainbu/memberProfiles';
 import {
-	deleteByProjectAndClientIds,
-	getBoardPbId,
 	getProjectPbId,
 	listByProjectIds,
 	upsertProjectChild
@@ -521,229 +519,6 @@ const mapAiSessionUpsertRow = (projectId: string, userId: string, session: Proje
 	last_message_at: new Date(session.lastMessageAt).toISOString()
 });
 
-const tagSignature = (tag: Tag) => `${tag.id}|${tag.label}|${tag.color}`;
-const linkSignature = (ids: string[] | undefined) => [...new Set(ids || [])].sort().join('|');
-
-const areTasksEqual = (left: Task, right: Task) => {
-	if (left.title !== right.title) return false;
-	if ((left.description || '') !== (right.description || '')) return false;
-	if ((left.color || '') !== (right.color || '')) return false;
-	if ((left.hasCheckbox || false) !== (right.hasCheckbox || false)) return false;
-	if ((left.checked || false) !== (right.checked || false)) return false;
-	if (left.completedAt !== right.completedAt) return false;
-	if (left.countdownAt !== right.countdownAt) return false;
-	if (left.alarmAt !== right.alarmAt) return false;
-	if ((left.assignedTo || '') !== (right.assignedTo || '')) return false;
-	if (linkSignature(left.linkedTaskIds) !== linkSignature(right.linkedTaskIds)) return false;
-
-	const leftTags = (left.tags || []).map(tagSignature).sort();
-	const rightTags = (right.tags || []).map(tagSignature).sort();
-	if (leftTags.length !== rightTags.length) return false;
-	return leftTags.every((entry, index) => entry === rightTags[index]);
-};
-
-const mapColumnUpsertRow = (
-	projectId: string,
-	boardId: string,
-	column: Project['kanbanData'][number],
-	position: number
-) => ({
-	project_id: projectId,
-	board_id: boardId,
-	id: column.id,
-	title: column.title,
-	color: column.color || null,
-	width: column.width ?? DEFAULT_COLUMN_WIDTH,
-	position
-});
-
-const mapTaskUpsertRow = (
-	projectId: string,
-	boardId: string,
-	columnId: string,
-	task: Task,
-	position: number
-) => ({
-	project_id: projectId,
-	board_id: boardId,
-	id: task.id,
-	column_id: columnId,
-	title: task.title,
-	description: task.description || '',
-	color: task.color || null,
-	tags: task.tags || [],
-	has_checkbox: Boolean(task.hasCheckbox),
-	checked: Boolean(task.checked),
-	completed_at: task.completedAt ?? null,
-	countdown_at: normalizeDueTimestamp(task.countdownAt) ?? null,
-	alarm_at: normalizeDueTimestamp(task.alarmAt) ?? null,
-	assigned_to: isPocketBaseRecordId(task.assignedTo) ? task.assignedTo.trim() : null,
-	linked_task_ids: normalizeLinkedTaskIds(task.linkedTaskIds),
-	position
-});
-
-const upsertProjectTasks = async (
-	projectId: string,
-	rows: ReturnType<typeof mapTaskUpsertRow>[]
-) => {
-	const projectPbId = await getProjectPbId(projectId);
-	const pb = getPb();
-	const boardPbIdCache = new Map<string, string>();
-
-	const resolveBoardPbId = async (boardClientId: string) => {
-		if (!boardClientId) return '';
-		const cached = boardPbIdCache.get(boardClientId);
-		if (cached) return cached;
-		const boardPbId = await getBoardPbId(projectId, boardClientId);
-		boardPbIdCache.set(boardClientId, boardPbId);
-		return boardPbId;
-	};
-
-	for (const row of rows) {
-		const filter = `${projectRelationFilter(projectPbId)} && client_id = "${pbEscapeFilter(row.id)}"`;
-		const boardPbId = row.board_id ? await resolveBoardPbId(row.board_id) : '';
-		const body = {
-			board: boardPbId,
-			column_id: row.column_id,
-			title: row.title,
-			description: row.description,
-			color: row.color,
-			tags: row.tags,
-			has_checkbox: row.has_checkbox,
-			checked: row.checked,
-			completed_at: row.completed_at,
-			countdown_at: row.countdown_at,
-			alarm_at: row.alarm_at,
-			assigned_to: row.assigned_to || '',
-			linked_task_ids: row.linked_task_ids,
-			position: row.position
-		};
-
-		try {
-			const existing = await pb.collection('project_tasks').getFirstListItem(filter);
-			await pb.collection('project_tasks').update(existing.id, body);
-		} catch {
-			await pb.collection('project_tasks').create({
-				...body,
-				project: projectPbId,
-				client_id: row.id
-			});
-		}
-	}
-};
-
-const deriveBoardMutations = (
-	projectId: string,
-	boardId: string,
-	previous: Project['kanbanData'],
-	next: Project['kanbanData']
-) => {
-	const upsertColumns: ReturnType<typeof mapColumnUpsertRow>[] = [];
-	const upsertTasks: ReturnType<typeof mapTaskUpsertRow>[] = [];
-	const deleteColumnIds: string[] = [];
-	const deleteTaskIds: string[] = [];
-	const previousColumns = new Map(previous.map((column, index) => [column.id, { column, index }]));
-	const previousTasks = new Map(
-		previous.flatMap((column) =>
-			column.tasks.map(
-				(task, index) =>
-					[
-						task.id,
-						{
-							task,
-							columnId: column.id,
-							position: index
-						}
-					] as const
-			)
-		)
-	);
-	const nextTaskIds = new Set<string>();
-
-	for (const [index, column] of next.entries()) {
-		const previousColumn = previousColumns.get(column.id);
-		if (
-			!previousColumn ||
-			previousColumn.index !== index ||
-			previousColumn.column.title !== column.title ||
-			(previousColumn.column.color || '') !== (column.color || '') ||
-			(previousColumn.column.width ?? DEFAULT_COLUMN_WIDTH) !==
-				(column.width ?? DEFAULT_COLUMN_WIDTH)
-		) {
-			upsertColumns.push(mapColumnUpsertRow(projectId, boardId, column, index));
-		}
-
-		for (const [taskIndex, task] of column.tasks.entries()) {
-			nextTaskIds.add(task.id);
-			const previousTask = previousTasks.get(task.id);
-			if (
-				!previousTask ||
-				previousTask.columnId !== column.id ||
-				previousTask.position !== taskIndex ||
-				!areTasksEqual(previousTask.task, task)
-			) {
-				upsertTasks.push(mapTaskUpsertRow(projectId, boardId, column.id, task, taskIndex));
-			}
-		}
-	}
-
-	for (const column of previous) {
-		if (!next.some((entry) => entry.id === column.id)) {
-			deleteColumnIds.push(column.id);
-		}
-	}
-
-	for (const [taskId, previousTask] of previousTasks.entries()) {
-		if (!nextTaskIds.has(taskId) && !deleteColumnIds.includes(previousTask.columnId)) {
-			deleteTaskIds.push(taskId);
-		}
-	}
-
-	return { upsertColumns, upsertTasks, deleteColumnIds, deleteTaskIds };
-};
-
-const applyBoardMutations = async (
-	projectId: string,
-	mutations: ReturnType<typeof deriveBoardMutations>
-) => {
-	const projectPbId = await getProjectPbId(projectId);
-	const boardPbIdCache = new Map<string, string>();
-
-	const resolveBoardPbId = async (boardClientId: string) => {
-		if (!boardClientId) return '';
-		const cached = boardPbIdCache.get(boardClientId);
-		if (cached) return cached;
-		const boardPbId = await getBoardPbId(projectId, boardClientId);
-		boardPbIdCache.set(boardClientId, boardPbId);
-		return boardPbId;
-	};
-
-	for (const row of mutations.upsertColumns) {
-		const boardPbId = row.board_id ? await resolveBoardPbId(row.board_id) : '';
-		await upsertProjectChild('project_columns', projectId, row.id, {
-			board: boardPbId,
-			title: row.title,
-			color: row.color,
-			width: row.width,
-			position: row.position
-		});
-	}
-
-	if (mutations.upsertTasks.length) {
-		await upsertProjectTasks(projectId, mutations.upsertTasks);
-	}
-
-	if (mutations.deleteTaskIds.length) {
-		await deleteByProjectAndClientIds('project_tasks', projectId, mutations.deleteTaskIds);
-	}
-
-	if (mutations.deleteColumnIds.length) {
-		await deleteByProjectAndClientIds('project_columns', projectId, mutations.deleteColumnIds);
-	}
-
-	void projectPbId;
-};
-
 const workspaceFetchByUser = new Map<
 	string,
 	Promise<Awaited<ReturnType<typeof fetchWorkspaceFromApi>>>
@@ -865,10 +640,7 @@ export const createProject = async (
 	}
 
 	for (const board of normalizedSeed.boards) {
-		await applyBoardMutations(
-			normalizedSeed.id,
-			deriveBoardMutations(normalizedSeed.id, board.id, [], board.kanbanData)
-		);
+		await syncBoardWithPb(getPb(), normalizedSeed.id, board.id, [], board.kanbanData);
 	}
 	invalidateWorkspaceFetch(userId);
 	await saveProjectAiState(
@@ -943,8 +715,7 @@ export const syncProjectBoard = async (
 	previous: Project['kanbanData'],
 	next: Project['kanbanData']
 ) => {
-	const mutations = deriveBoardMutations(projectId, boardId, previous, next);
-	await applyBoardMutations(projectId, mutations);
+	await syncBoardWithPb(getPb(), projectId, boardId, previous, next);
 };
 
 export const replaceProjectBoard = async (
@@ -952,7 +723,7 @@ export const replaceProjectBoard = async (
 	boardId: string,
 	next: Project['kanbanData']
 ) => {
-	await applyBoardMutations(projectId, deriveBoardMutations(projectId, boardId, [], next));
+	await syncBoardWithPb(getPb(), projectId, boardId, [], next);
 };
 
 export const createProjectBoard = async (projectId: string, name: string, position: number) => {

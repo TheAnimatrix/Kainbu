@@ -54,13 +54,24 @@ import {
 } from './share.js';
 import {
 	handleWorkspaceBoardPresenceRequest,
+	handleWorkspaceBoardCreateRequest,
+	handleWorkspaceBoardDeleteRequest,
+	handleWorkspaceBoardRenameRequest,
+	handleWorkspaceBoardSyncRequest,
 	handleWorkspaceCancelInviteRequest,
 	handleWorkspaceCreateInviteRequest,
 	handleWorkspaceLeaveProjectRequest,
 	handleWorkspaceMemberProfilesRequest,
+	handleWorkspacePageContentRequest,
+	handleWorkspacePageCreateRequest,
+	handleWorkspacePageDeleteRequest,
+	handleWorkspacePageRenameRequest,
 	handleWorkspaceProjectBackgroundRequest,
+	handleWorkspaceProjectCreateRequest,
+	handleWorkspaceProjectRenameRequest,
 	handleWorkspaceRemoveMemberRequest,
 	handleWorkspaceRespondInviteRequest,
+	handleWorkspaceScratchpadGetRequest,
 	handleWorkspaceScratchpadRequest,
 	handleWorkspaceTouchProjectRequest,
 	handleWorkspacePinProjectRequest,
@@ -513,6 +524,18 @@ app.post('/api/workspace/projects/pin', async (c) => {
 	}
 });
 
+app.get('/api/workspace/projects/scratchpad', async (c) => {
+	try {
+		const payload = await handleWorkspaceScratchpadGetRequest(
+			c.req.query('projectId'),
+			c.req.header('Authorization')
+		);
+		return c.json(payload);
+	} catch (error) {
+		return handleWorkspaceMutationError(c, error);
+	}
+});
+
 app.post('/api/workspace/projects/scratchpad', async (c) => {
 	try {
 		const payload = await handleWorkspaceScratchpadRequest(
@@ -521,6 +544,126 @@ app.post('/api/workspace/projects/scratchpad', async (c) => {
 				scratchpadData: string;
 				expectedRevision: number;
 			},
+			c.req.header('Authorization')
+		);
+		return c.json(payload);
+	} catch (error) {
+		return handleWorkspaceMutationError(c, error);
+	}
+});
+
+app.post('/api/workspace/boards/sync', async (c) => {
+	try {
+		const payload = await handleWorkspaceBoardSyncRequest(
+			(await c.req.json()) as Parameters<typeof handleWorkspaceBoardSyncRequest>[0],
+			c.req.header('Authorization')
+		);
+		return c.json(payload);
+	} catch (error) {
+		return handleWorkspaceMutationError(c, error);
+	}
+});
+
+app.post('/api/workspace/boards/create', async (c) => {
+	try {
+		const payload = await handleWorkspaceBoardCreateRequest(
+			(await c.req.json()) as Parameters<typeof handleWorkspaceBoardCreateRequest>[0],
+			c.req.header('Authorization')
+		);
+		return c.json(payload);
+	} catch (error) {
+		return handleWorkspaceMutationError(c, error);
+	}
+});
+
+app.post('/api/workspace/boards/rename', async (c) => {
+	try {
+		const payload = await handleWorkspaceBoardRenameRequest(
+			(await c.req.json()) as Parameters<typeof handleWorkspaceBoardRenameRequest>[0],
+			c.req.header('Authorization')
+		);
+		return c.json(payload);
+	} catch (error) {
+		return handleWorkspaceMutationError(c, error);
+	}
+});
+
+app.post('/api/workspace/boards/delete', async (c) => {
+	try {
+		const payload = await handleWorkspaceBoardDeleteRequest(
+			(await c.req.json()) as Parameters<typeof handleWorkspaceBoardDeleteRequest>[0],
+			c.req.header('Authorization')
+		);
+		return c.json(payload);
+	} catch (error) {
+		return handleWorkspaceMutationError(c, error);
+	}
+});
+
+app.post('/api/workspace/pages/create', async (c) => {
+	try {
+		const payload = await handleWorkspacePageCreateRequest(
+			(await c.req.json()) as Parameters<typeof handleWorkspacePageCreateRequest>[0],
+			c.req.header('Authorization')
+		);
+		return c.json(payload);
+	} catch (error) {
+		return handleWorkspaceMutationError(c, error);
+	}
+});
+
+app.post('/api/workspace/pages/rename', async (c) => {
+	try {
+		const payload = await handleWorkspacePageRenameRequest(
+			(await c.req.json()) as Parameters<typeof handleWorkspacePageRenameRequest>[0],
+			c.req.header('Authorization')
+		);
+		return c.json(payload);
+	} catch (error) {
+		return handleWorkspaceMutationError(c, error);
+	}
+});
+
+app.post('/api/workspace/pages/content', async (c) => {
+	try {
+		const payload = await handleWorkspacePageContentRequest(
+			(await c.req.json()) as Parameters<typeof handleWorkspacePageContentRequest>[0],
+			c.req.header('Authorization')
+		);
+		return c.json(payload);
+	} catch (error) {
+		return handleWorkspaceMutationError(c, error);
+	}
+});
+
+app.post('/api/workspace/pages/delete', async (c) => {
+	try {
+		const payload = await handleWorkspacePageDeleteRequest(
+			(await c.req.json()) as Parameters<typeof handleWorkspacePageDeleteRequest>[0],
+			c.req.header('Authorization')
+		);
+		return c.json(payload);
+	} catch (error) {
+		return handleWorkspaceMutationError(c, error);
+	}
+});
+
+app.post('/api/workspace/projects/create', async (c) => {
+	try {
+		const payload = await handleWorkspaceProjectCreateRequest(
+			(await c.req.json()) as Parameters<typeof handleWorkspaceProjectCreateRequest>[0],
+			c.req.header('Authorization')
+		);
+		return c.json(payload);
+	} catch (error) {
+		return handleWorkspaceMutationError(c, error);
+	}
+});
+
+app.post('/api/workspace/projects/rename', async (c) => {
+	try {
+		const payload = await handleWorkspaceProjectRenameRequest(
+			(await c.req.json()) as Parameters<typeof handleWorkspaceProjectRenameRequest>[0],
 			c.req.header('Authorization')
 		);
 		return c.json(payload);

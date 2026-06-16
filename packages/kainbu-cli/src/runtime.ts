@@ -13,6 +13,36 @@ import {
 } from '@kainbu/core';
 import { getEnvApiKey } from '@kainbu/core/env';
 import { invokeWorkspaceApi } from '../../../src/lib/kainbu/workspaceApi.js';
+import { KainbuError } from './errors.js';
+
+/**
+ * Read commands resolve everything from the workspace HTTP API (snapshot),
+ * which works with an API key. Write commands still go through the PocketBase
+ * SDK, which needs a real PB session — something API-key auth doesn't provide.
+ *
+ * Rather than let those writes fail with PocketBase's opaque "resource wasn't
+ * found" 404, wrap the client so any collection access without a valid session
+ * throws a clear, actionable error. Reads never touch `getPb()`, so this only
+ * gates the write paths.
+ */
+const guardPbWrites = <T extends { authStore: { isValid: boolean } }>(client: T): T =>
+	new Proxy(client, {
+		get(target, prop, receiver) {
+			if (prop === 'collection' && !target.authStore.isValid) {
+				return () => {
+					throw new KainbuError(
+						'This command needs a PocketBase session, which API-key sign-in does not provide.',
+						{
+							hint: 'Read commands (project/board/task/column/page list & get) work with an API key. For writes, run: kainbu login --device'
+						}
+					);
+				};
+			}
+			const value = Reflect.get(target, prop, receiver);
+			// Bind methods to the real client so PocketBase's internal `this` stays intact.
+			return typeof value === 'function' ? value.bind(target) : value;
+		}
+	});
 
 let initialized = false;
 let pocketbase: ReturnType<typeof createCliPocketBaseClient> | null = null;
@@ -57,7 +87,9 @@ export const initRuntime = async (configPatch?: Partial<CliConfig>) => {
 		loadCliEnv();
 		try {
 			pocketbase = createCliPocketBaseClient();
-			setPocketBaseClient(pocketbase);
+			// Core write helpers reach PocketBase via getPb(); hand them a
+			// guarded client so writes under API-key auth fail clearly.
+			setPocketBaseClient(guardPbWrites(pocketbase));
 		} catch (error) {
 			// PB URL not configured — the CLI no longer needs PB for the API path,
 			// so we tolerate this. Direct PB reads will throw the same error.
