@@ -2,7 +2,13 @@
 	"name": "kainbu",
 	"version": "0.1.1",
 	"description": "Kainbu workspace CLI — projects, boards, tasks, pages, and scratchpad from your terminal",
-	"keywords": ["kanban", "cli", "tasks", "kainbu", "pocketbase"],
+	"keywords": [
+		"kanban",
+		"cli",
+		"tasks",
+		"kainbu",
+		"pocketbase"
+	],
 	"homepage": "https://kainbu.avarnic.com/landing",
 	"type": "module",
 	"license": "GPL-3.0-or-later",
@@ -10,7 +16,7 @@
 		"node": ">=22"
 	},
 	"bin": {
-		"kainbu": "./dist/index.js"
+		"kainbu": "dist/index.js"
 	},
 	"files": [
 		"dist"
