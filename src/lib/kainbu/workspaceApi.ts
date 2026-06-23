@@ -1,6 +1,8 @@
 export type WorkspaceApiConfig = {
 	getApiBaseUrl: () => string;
 	getAccessToken: () => Promise<string>;
+	/** Called once after a 401 to obtain a refreshed JWT before retrying the request. */
+	refreshAccessToken?: () => Promise<string>;
 };
 
 let workspaceApiConfig: WorkspaceApiConfig | null = null;
@@ -50,7 +52,8 @@ const getApiErrorMessage = (payload: unknown, responseText: string, path: string
 	}
 
 	const trimmed = responseText.trim();
-	if (trimmed.startsWith('<!DOCTYPE') || trimmed.startsWith('<html')) {
+	const lowerTrimmed = trimmed.toLowerCase();
+	if (lowerTrimmed.startsWith('<!doctype') || lowerTrimmed.startsWith('<html')) {
 		return `Workspace API returned HTML for ${path}. The deployment is missing that API route.`;
 	}
 
@@ -61,13 +64,12 @@ const getApiErrorMessage = (payload: unknown, responseText: string, path: string
 	return 'Workspace request failed.';
 };
 
-export const invokeWorkspaceApi = async <T>(path: string, options: WorkspaceApiOptions = {}) => {
-	if (!workspaceApiConfig) {
-		throw new Error('Workspace API is not configured.');
-	}
-
-	const accessToken = await workspaceApiConfig.getAccessToken();
-	const apiBaseUrl = workspaceApiConfig.getApiBaseUrl().replace(/\/+$/, '');
+const requestWorkspaceApi = async (
+	path: string,
+	options: WorkspaceApiOptions,
+	accessToken: string
+) => {
+	const apiBaseUrl = workspaceApiConfig!.getApiBaseUrl().replace(/\/+$/, '');
 
 	const response = await fetch(`${apiBaseUrl}${path}`, {
 		method: options.method || 'POST',
@@ -80,6 +82,30 @@ export const invokeWorkspaceApi = async <T>(path: string, options: WorkspaceApiO
 
 	const responseText = await response.text();
 	const payload = parseApiPayload(responseText, response.headers.get('content-type'));
+
+	return { response, responseText, payload, path };
+};
+
+export const invokeWorkspaceApi = async <T>(path: string, options: WorkspaceApiOptions = {}) => {
+	if (!workspaceApiConfig) {
+		throw new Error('Workspace API is not configured.');
+	}
+
+	let accessToken = await workspaceApiConfig.getAccessToken();
+	let { response, responseText, payload } = await requestWorkspaceApi(path, options, accessToken);
+
+	if (
+		!response.ok &&
+		response.status === 401 &&
+		workspaceApiConfig.refreshAccessToken
+	) {
+		try {
+			accessToken = await workspaceApiConfig.refreshAccessToken();
+			({ response, responseText, payload } = await requestWorkspaceApi(path, options, accessToken));
+		} catch {
+			// Fall through to the original 401 error below.
+		}
+	}
 
 	if (!response.ok) {
 		const message = getApiErrorMessage(payload, responseText, path);

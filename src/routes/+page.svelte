@@ -203,6 +203,7 @@
 		isOwnUserRecordNotFound,
 		isPocketBaseNotFound
 	} from '$lib/pocketbaseErrors';
+	import { ensureFreshAuthToken, isStaleAuthError } from '$lib/kainbu/authSession';
 	import { shouldIgnorePocketBaseError } from '$lib/kainbu/pbRequest';
 	import { fetchAuthSettings, signupWithAuthSettings } from '$lib/kainbu/adminApi';
 	import {
@@ -1549,6 +1550,9 @@
 			if (shouldIgnorePocketBaseError(error)) {
 				throw error;
 			}
+			if (user && clearStaleAuthSession(user.id, error)) {
+				throw error;
+			}
 			console.error(error);
 			setSyncError(formatPocketBaseError(error, fallbackMessage));
 			throw error;
@@ -2150,6 +2154,7 @@
 				});
 			} catch (error) {
 				if (shouldIgnorePocketBaseError(error)) return;
+				if (clearStaleAuthSession(currentUser.id, error)) return;
 				console.error(error);
 				setSyncError(
 					error instanceof Error ? error.message : 'Unable to refresh workspace changes.'
@@ -2193,14 +2198,22 @@
 
 	const recoverWorkspaceIfNeeded = () => {
 		if (!user || document.visibilityState === 'hidden') return;
-		if (workspaceHydrating || Boolean(workspaceError)) {
-			void bootstrapWorkspace(user);
-			return;
-		}
-		if (!normalizeUsername(profile?.username)) {
-			void refreshUserProfile(user);
-		}
-		void refreshWorkspaceFromRemote(user);
+		void (async () => {
+			try {
+				await ensureFreshAuthToken(pocketbase);
+			} catch (error) {
+				if (clearStaleAuthSession(user.id, error)) return;
+			}
+			if (!user || document.visibilityState === 'hidden') return;
+			if (workspaceHydrating || Boolean(workspaceError)) {
+				await bootstrapWorkspace(user);
+				return;
+			}
+			if (!normalizeUsername(profile?.username)) {
+				void refreshUserProfile(user);
+			}
+			void refreshWorkspaceFromRemote(user);
+		})();
 	};
 
 	const shouldReloadWorkspaceForAuthEvent = (
@@ -4645,14 +4658,15 @@
 	};
 
 	const clearStaleAuthSession = (currentUserId: string, error: unknown) => {
-		if (!isOwnUserRecordNotFound(error, currentUserId)) return false;
+		if (!isStaleAuthError(error, currentUserId)) return false;
+		const staleEmail = user?.email || pocketbase.authStore.model?.email;
 		pocketbase.authStore.clear();
-		user = null;
-		profileLoaded = false;
-		workspaceHydrating = false;
-		workspaceError = '';
-		authErrorMessage =
-			'Your session is no longer valid (account not found or access rules reset). Sign in again.';
+		handleAuthStateChange('SIGNED_OUT', null);
+		authErrorMessage = isOwnUserRecordNotFound(error, currentUserId)
+			? 'Your session is no longer valid (account not found or access rules reset). Sign in again.'
+			: staleEmail
+				? 'Your session expired. Sign in again to continue.'
+				: 'Your session expired. Sign in again.';
 		return true;
 	};
 
@@ -4693,6 +4707,26 @@
 			scheduleWorkspaceReload(nextUser);
 		} else if (!normalizeUsername(profile?.username)) {
 			void refreshUserProfile(nextUser);
+		}
+	};
+
+	const refreshStoredAuthSession = async () => {
+		if (!pocketbase.authStore.token) {
+			handleAuthStateChange('INITIAL_SESSION', null);
+			return;
+		}
+
+		try {
+			await pocketbase.collection('users').authRefresh();
+			handleAuthStateChange('TOKEN_REFRESHED', toAuthUser(pocketbase.authStore.model));
+		} catch (error) {
+			console.error('[auth] stored session refresh failed', error);
+			const staleUser = toAuthUser(pocketbase.authStore.model);
+			pocketbase.authStore.clear();
+			handleAuthStateChange('SIGNED_OUT', null);
+			if (staleUser?.email) {
+				authErrorMessage = 'Your saved session expired. Sign in again to continue.';
+			}
 		}
 	};
 
@@ -4749,7 +4783,7 @@
 			handleAuthStateChange(nextUser ? 'SIGNED_IN' : 'SIGNED_OUT', nextUser);
 		});
 
-		handleAuthStateChange('INITIAL_SESSION', toAuthUser(pocketbase.authStore.model));
+		void refreshStoredAuthSession();
 	});
 
 	onDestroy(() => {
@@ -5008,7 +5042,7 @@
 								</div>
 							{/if}
 
-							{#if showBoardSearchControls}
+							{#if isMobile && showBoardSearchControls}
 								<button
 									type="button"
 									class={`inline-flex h-8 w-8 items-center justify-center rounded-md transition ${

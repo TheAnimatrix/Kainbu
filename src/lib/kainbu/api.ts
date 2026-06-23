@@ -1,4 +1,5 @@
 import { pocketbase } from '$lib/pocketbaseClient';
+import { ensureFreshAuthToken, refreshAuthToken } from '$lib/kainbu/authSession';
 import { invokeWorkspaceApi as invokeSharedWorkspaceApi, setWorkspaceApiConfig } from '$lib/kainbu/workspaceApi';
 
 const normalizeBaseUrl = (value: string) => value.trim().replace(/\/+$/, '');
@@ -21,22 +22,11 @@ const apiBaseUrl = normalizeBaseUrl(
 
 setWorkspaceApiConfig({
 	getApiBaseUrl: () => apiBaseUrl,
-	getAccessToken: async () => {
-		const token = pocketbase.authStore.token;
-		if (!token) {
-			throw new Error('You need to sign in again before using workspace actions.');
-		}
-		return token;
-	}
+	getAccessToken: () => ensureFreshAuthToken(pocketbase),
+	refreshAccessToken: () => refreshAuthToken(pocketbase)
 });
 
-export const getWorkspaceApiAccessToken = async () => {
-	const token = pocketbase.authStore.token;
-	if (!token) {
-		throw new Error('You need to sign in again before using workspace actions.');
-	}
-	return token;
-};
+export const getWorkspaceApiAccessToken = () => ensureFreshAuthToken(pocketbase);
 
 export const invokeWorkspaceApi = invokeSharedWorkspaceApi;
 
