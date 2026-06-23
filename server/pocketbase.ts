@@ -64,8 +64,52 @@ export const createAdminPb = async () => {
 		pb.authStore.save(await resolveAdminToken(), null);
 	}
 
-	return pb;
+	return withAdminAuthRetry(pb);
 };
+
+const isAdminAuthFailure = (error: unknown) =>
+	error instanceof ClientResponseError && (error.status === 401 || error.status === 403);
+
+/**
+ * PocketBase auth tokens can become stale across deploys/restarts while the API
+ * process is still alive. Retry one failed admin SDK call with a fresh login so
+ * CLI/API reads recover without requiring users to log out and back in.
+ */
+const withAdminAuthRetry = <T extends PocketBase>(pb: T): T =>
+	new Proxy(pb, {
+		get(target, prop, receiver) {
+			if (prop !== 'collection') {
+				const value = Reflect.get(target, prop, receiver);
+				return typeof value === 'function' ? value.bind(target) : value;
+			}
+
+			return (name: string) => {
+				const collection = target.collection(name);
+				return new Proxy(collection, {
+					get(collectionTarget, collectionProp, collectionReceiver) {
+						const value = Reflect.get(collectionTarget, collectionProp, collectionReceiver);
+						if (typeof value !== 'function') return value;
+
+						return async (...args: unknown[]) => {
+							try {
+								return await value.apply(collectionTarget, args);
+							} catch (error) {
+								if (!isAdminAuthFailure(error)) throw error;
+
+								invalidateAdminPbAuth();
+								const fresh = new PocketBase(getPocketBaseUrl());
+								fresh.authStore.save(await resolveAdminToken(), null);
+								return await Reflect.get(fresh.collection(name), collectionProp).apply(
+									fresh.collection(name),
+									args
+								);
+							}
+						};
+					}
+				});
+			};
+		}
+	}) as T;
 
 export const mapPocketBaseError = (error: unknown) => {
 	if (error instanceof ClientResponseError) {
