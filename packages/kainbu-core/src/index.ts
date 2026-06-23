@@ -28,7 +28,6 @@ export {
 	getCliConfigDir,
 	getCliConfigPath,
 	getDefaultApiBase,
-	getEnvApiKey,
 	getPocketBaseEnv,
 	loadCliEnv,
 	readCliConfig,
@@ -37,6 +36,7 @@ export {
 	writeCliSession,
 	type CliConfig
 } from './pocketbase.js';
+export { getEnvApiKey } from './env.js';
 export {
 	getActiveAuthProfile,
 	getAuthFileLocation,
