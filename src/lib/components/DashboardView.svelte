@@ -16,6 +16,12 @@
 	import { getProjectMemberDisplayName } from '$lib/kainbu/members';
 	import { getTagToneClasses } from '$lib/kainbu/tags';
 	import { formatDueDateValue } from '$lib/kainbu/timing';
+	import {
+		buildWorkspaceActivitySummary,
+		filterActivityEvents,
+		summarizeActivityDelta,
+		type WorkspaceActivityGroup
+	} from '$lib/kainbu/activity';
 	import type { DashboardTimedTask, Project, ProjectInvite } from '$lib/kainbu/types';
 
 	export let projects: Project[] = [];
@@ -46,6 +52,7 @@
 	let renameValue = '';
 	let now = Date.now();
 	let tickInterval: ReturnType<typeof setInterval>;
+	let activityFilter: WorkspaceActivityGroup | 'all' = 'all';
 
 	const startRename = (project: Project) => {
 		renamingId = project.id;
@@ -107,6 +114,19 @@
 
 	const memberLabel = (project: Project) => `${project.members.length} people`;
 	const getMemberName = (member: Project['members'][number]) => getProjectMemberDisplayName(member);
+	const formatActivityTime = (timestamp: number) =>
+		new Date(timestamp).toLocaleString(undefined, {
+			month: 'short',
+			day: 'numeric',
+			hour: '2-digit',
+			minute: '2-digit'
+		});
+	const formatDeltaTone = (delta: number) =>
+		delta > 0
+			? 'text-emerald-600 dark:text-emerald-400'
+			: delta < 0
+				? 'text-amber-600 dark:text-amber-400'
+				: 'text-app-subtext';
 	const isPinned = (project: Project) => Boolean(project.viewerPinnedAt);
 	const projectCardClass = (project: Project, pinnedHighlight = false) => {
 		const classes = ['kainbu-board-card'];
@@ -129,6 +149,15 @@
 	$: sharedProjects = projects
 		.filter((project) => project.accessRole === 'member' && !isPinned(project))
 		.sort(compareByPinThenName);
+	$: activitySummary = buildWorkspaceActivitySummary(projects, now);
+	$: currentProjectActivity = filterActivityEvents(activitySummary.events, {
+		projectId: currentProjectId,
+		group: activityFilter,
+		limit: 8
+	});
+	$: dailyActivity = filterActivityEvents(activitySummary.events, { limit: 6 }).filter(
+		(event) => now - event.timestamp <= 24 * 60 * 60 * 1000
+	);
 
 </script>
 
@@ -163,10 +192,17 @@
 							</dd>
 						</div>
 						<div class="kainbu-dashboard__stat">
-							<dt class="sr-only">Due items</dt>
+							<dt class="sr-only">Open tasks</dt>
 							<dd>
-								<span class="kainbu-dashboard__stat-value">{timedTasks.length}</span>
-								due
+								<span class="kainbu-dashboard__stat-value">{activitySummary.openTaskCount}</span>
+								open
+							</dd>
+						</div>
+						<div class="kainbu-dashboard__stat">
+							<dt class="sr-only">Completed this week</dt>
+							<dd>
+								<span class="kainbu-dashboard__stat-value">{activitySummary.completedLast7d}</span>
+								done this week
 							</dd>
 						</div>
 					</dl>
@@ -232,6 +268,109 @@
 			{/if}
 
 			<div class="flex flex-col gap-7">
+				<section class="kainbu-dashboard__insights">
+					<div class="kainbu-insight">
+						<p class="kainbu-insight__label">Today</p>
+						<p class="kainbu-insight__value">{activitySummary.activityToday}</p>
+						<p class="kainbu-insight__meta">workspace actions</p>
+					</div>
+					<div class="kainbu-insight">
+						<p class="kainbu-insight__label">This week</p>
+						<p class="kainbu-insight__value">{activitySummary.activityLast7d}</p>
+						<p class={`kainbu-insight__meta ${formatDeltaTone(activitySummary.activityDelta)}`}>
+							{summarizeActivityDelta(activitySummary.activityDelta)}
+						</p>
+					</div>
+					<div class="kainbu-insight">
+						<p class="kainbu-insight__label">Created</p>
+						<p class="kainbu-insight__value">{activitySummary.createdLast7d}</p>
+						<p class="kainbu-insight__meta">new tasks this week</p>
+					</div>
+					<div class="kainbu-insight">
+						<p class="kainbu-insight__label">Completed</p>
+						<p class="kainbu-insight__value">{activitySummary.completedTaskCount}</p>
+						<p class="kainbu-insight__meta">{activitySummary.completedLast7d} this week</p>
+					</div>
+				</section>
+
+				<section class="kainbu-dashboard__activity-band">
+					<div class="min-w-0">
+						<h3 class="kainbu-dashboard__section-label">
+							Daily activity
+							<span class="kainbu-dashboard__section-count">{dailyActivity.length}</span>
+						</h3>
+						<p class="mt-1 text-xs text-app-subtext">Recent workspace changes from the last 24 hours.</p>
+					</div>
+					{#if dailyActivity.length}
+						<div class="kainbu-activity-strip kainbu-scrollbar-hidden">
+							{#each dailyActivity as event (event.id)}
+								<button
+									type="button"
+									class="kainbu-activity-pill"
+									on:click={() => onOpenProject(event.projectId)}
+								>
+									<span class="kainbu-activity-pill__kind">{event.title}</span>
+									<span class="truncate">{event.detail}</span>
+									<span class="kainbu-activity-pill__time">{formatActivityTime(event.timestamp)}</span>
+								</button>
+							{/each}
+						</div>
+					{:else}
+						<p class="text-sm text-app-subtext">No fresh activity yet today.</p>
+					{/if}
+				</section>
+
+				{#if currentProjectId}
+					<section class="kainbu-dashboard__activity-log">
+						<div class="flex flex-wrap items-start justify-between gap-3">
+							<div>
+								<h3 class="kainbu-dashboard__section-label">
+									Current board activity
+									<span class="kainbu-dashboard__section-count">{currentProjectActivity.length}</span>
+								</h3>
+								<p class="mt-1 text-xs text-app-subtext">Task, people, and board updates for the selected board.</p>
+							</div>
+							<div class="kainbu-activity-filter" aria-label="Activity filter">
+								{#each ['all', 'task', 'people', 'project'] as filter}
+									<button
+										type="button"
+										class:kainbu-activity-filter__button--active={activityFilter === filter}
+										class="kainbu-activity-filter__button"
+										on:click={() => (activityFilter = filter as WorkspaceActivityGroup | 'all')}
+									>
+										{filter}
+									</button>
+								{/each}
+							</div>
+						</div>
+						{#if currentProjectActivity.length}
+							<div class="mt-3 divide-y divide-app-border/50">
+								{#each currentProjectActivity as event (event.id)}
+									<button
+										type="button"
+										class="kainbu-activity-row"
+										on:click={() => onOpenProject(event.projectId)}
+									>
+										<span class="kainbu-activity-row__dot" data-group={event.group}></span>
+										<span class="min-w-0 flex-1">
+											<span class="block truncate text-sm font-medium text-app-text">{event.title}</span>
+											<span class="block truncate text-xs text-app-subtext">{event.detail}</span>
+										</span>
+										<span class="shrink-0 text-[11px] text-app-subtext">{formatActivityTime(event.timestamp)}</span>
+									</button>
+								{/each}
+							</div>
+						{:else}
+							<div class="kainbu-dashboard-empty mt-3">
+								<p class="text-sm font-medium text-app-text">No matching activity</p>
+								<p class="max-w-sm text-sm leading-relaxed text-app-subtext">
+									Try another filter or make a change on the current board.
+								</p>
+							</div>
+						{/if}
+					</section>
+				{/if}
+
 				{#if pinnedProjects.length}
 					<section>
 						<h3 class="kainbu-dashboard__section-label mb-3">
@@ -841,6 +980,159 @@
 		content: '·';
 		margin-right: 0.35rem;
 		opacity: 0.45;
+	}
+
+	.kainbu-dashboard__insights {
+		display: grid;
+		grid-template-columns: repeat(auto-fit, minmax(min(100%, 10rem), 1fr));
+		gap: 0.625rem;
+	}
+
+	.kainbu-insight {
+		min-width: 0;
+		padding: 0.875rem 1rem;
+		border: 1px solid color-mix(in oklab, var(--color-app-border) 58%, transparent);
+		border-radius: 0.875rem;
+		background: color-mix(in oklab, var(--color-app-surface) 82%, transparent);
+		box-shadow: inset 0 1px 0 color-mix(in oklab, white 5%, transparent);
+	}
+
+	.kainbu-insight__label {
+		font-size: 0.6875rem;
+		font-weight: 700;
+		text-transform: uppercase;
+		letter-spacing: 0.08em;
+		color: var(--color-app-subtext);
+	}
+
+	.kainbu-insight__value {
+		margin-top: 0.25rem;
+		font-size: 1.6rem;
+		font-weight: 700;
+		font-variant-numeric: tabular-nums;
+		line-height: 1;
+		color: var(--color-app-text);
+	}
+
+	.kainbu-insight__meta {
+		margin-top: 0.35rem;
+		font-size: 0.75rem;
+		color: var(--color-app-subtext);
+	}
+
+	.kainbu-dashboard__activity-band,
+	.kainbu-dashboard__activity-log {
+		padding: 1rem;
+		border: 1px solid color-mix(in oklab, var(--color-app-border) 55%, transparent);
+		border-radius: 0.875rem;
+		background: color-mix(in oklab, var(--color-app-surface) 74%, transparent);
+	}
+
+	.kainbu-dashboard__activity-band {
+		display: grid;
+		grid-template-columns: minmax(10rem, 14rem) minmax(0, 1fr);
+		align-items: center;
+		gap: 1rem;
+	}
+
+	@media (max-width: 720px) {
+		.kainbu-dashboard__activity-band {
+			grid-template-columns: 1fr;
+		}
+	}
+
+	.kainbu-activity-strip {
+		display: flex;
+		gap: 0.5rem;
+		overflow-x: auto;
+		padding-bottom: 0.2rem;
+	}
+
+	.kainbu-activity-pill {
+		display: grid;
+		min-width: min(15rem, 78vw);
+		gap: 0.1rem;
+		padding: 0.65rem 0.75rem;
+		border-radius: 0.75rem;
+		background: color-mix(in oklab, var(--color-app-element) 58%, transparent);
+		text-align: left;
+		color: var(--color-app-text);
+		transition:
+			background 0.16s ease,
+			transform 0.16s ease;
+	}
+
+	.kainbu-activity-pill:hover {
+		background: color-mix(in oklab, var(--color-app-element) 78%, transparent);
+		transform: translateY(-1px);
+	}
+
+	.kainbu-activity-pill__kind,
+	.kainbu-activity-pill__time {
+		font-size: 0.6875rem;
+		font-weight: 600;
+		color: var(--color-app-subtext);
+	}
+
+	.kainbu-activity-filter {
+		display: inline-flex;
+		gap: 0.2rem;
+		padding: 0.2rem;
+		border-radius: 0.65rem;
+		background: color-mix(in oklab, var(--color-app-element) 55%, transparent);
+	}
+
+	.kainbu-activity-filter__button {
+		border-radius: 0.5rem;
+		padding: 0.35rem 0.6rem;
+		font-size: 0.72rem;
+		font-weight: 600;
+		text-transform: capitalize;
+		color: var(--color-app-subtext);
+		transition:
+			background 0.16s ease,
+			color 0.16s ease;
+	}
+
+	.kainbu-activity-filter__button:hover,
+	.kainbu-activity-filter__button--active {
+		background: var(--color-app-surface);
+		color: var(--color-app-text);
+	}
+
+	.kainbu-activity-row {
+		display: flex;
+		width: 100%;
+		align-items: center;
+		gap: 0.7rem;
+		padding: 0.7rem 0;
+		text-align: left;
+	}
+
+	.kainbu-activity-row:first-child {
+		padding-top: 0;
+	}
+
+	.kainbu-activity-row:last-child {
+		padding-bottom: 0;
+	}
+
+	.kainbu-activity-row__dot {
+		width: 0.55rem;
+		height: 0.55rem;
+		border-radius: 999px;
+		background: var(--color-app-primary);
+		box-shadow: 0 0 0 0.22rem color-mix(in oklab, var(--color-app-primary) 12%, transparent);
+	}
+
+	.kainbu-activity-row__dot[data-group='people'] {
+		background: #0f9f8f;
+		box-shadow: 0 0 0 0.22rem color-mix(in oklab, #0f9f8f 13%, transparent);
+	}
+
+	.kainbu-activity-row__dot[data-group='project'] {
+		background: #c8752a;
+		box-shadow: 0 0 0 0.22rem color-mix(in oklab, #c8752a 14%, transparent);
 	}
 
 	.kainbu-dashboard-empty {
