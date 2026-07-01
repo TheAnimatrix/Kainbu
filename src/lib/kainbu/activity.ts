@@ -90,6 +90,8 @@ const pushTaskEvents = (
 	task: Task,
 	seq: number
 ) => {
+	if (task.deletedAt) return;
+
 	if (isFiniteTimestamp(task.completedAt)) {
 		events.push({
 			id: `${project.id}:${task.id}:completed:${task.completedAt}:${seq}`,
@@ -189,7 +191,7 @@ export const buildProjectActivityStats = (
 	now = Date.now(),
 	events?: WorkspaceActivityEvent[]
 ): ProjectActivityStats => {
-	const tasks = project.kanbanData.flatMap((column) => column.tasks);
+	const tasks = project.kanbanData.flatMap((column) => column.tasks).filter((task) => !task.deletedAt);
 	const projectEvents = events ?? buildProjectActivityEvents(project);
 	const last7dStart = now - WEEK_MS;
 	const previous7dStart = now - 2 * WEEK_MS;

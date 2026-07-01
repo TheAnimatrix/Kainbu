@@ -804,6 +804,7 @@ export interface ProjectTaskRow {
 	assigned_to?: string | null;
 	linked_task_ids?: string[] | null;
 	position: number;
+	deleted_at?: number | null;
 	created_at: string;
 	updated_at: string;
 }

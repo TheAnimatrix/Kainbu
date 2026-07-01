@@ -83,6 +83,7 @@ const mapTaskRow = (row: ProjectTaskRow) => ({
 	alarmAt: normalizeDueTimestamp(row.alarm_at),
 	assignedTo: row.assigned_to ?? undefined,
 	linkedTaskIds: normalizeLinkedTaskIds(row.linked_task_ids),
+	deletedAt: row.deleted_at ?? undefined,
 	createdAt: new Date(row.created_at).getTime(),
 	updatedAt: new Date(row.updated_at).getTime()
 });
