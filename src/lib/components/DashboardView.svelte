@@ -57,7 +57,7 @@
 	let activityTimeWindow: string = '7d';
 	let activityProjectFilter = 'all';
 	let activityPageSize = 5;
-	let expandedProjects = new Set<string>();
+	let activityPages: Record<string, number> = {};
 	$: summaryNow = Date.now();
 
 	const startRename = (project: Project) => {
@@ -181,15 +181,18 @@
 				});
 			}
 		}
-		return Array.from(groups.entries()).map(([projectId, group]) => ({
-			projectId,
-			projectName: group.projectName,
-			events: group.events,
-			totalCount: group.events.length,
-			visibleEvents: expandedProjects.has(projectId)
-				? group.events
-				: group.events.slice(0, activityPageSize)
-		}));
+		return Array.from(groups.entries()).map(([projectId, group]) => {
+			const page = activityPages[projectId] ?? 1;
+			const start = (page - 1) * activityPageSize;
+			return {
+				projectId,
+				projectName: group.projectName,
+				totalCount: group.events.length,
+				totalPages: Math.ceil(group.events.length / activityPageSize),
+				currentPage: page,
+				visibleEvents: group.events.slice(start, start + activityPageSize)
+			};
+		});
 	})();
 	$: dailyActivity = filterActivityEvents(
 			activitySummary.events.filter(
@@ -409,15 +412,17 @@
 						<div class="mt-3 space-y-4">
 							{#each groupedWorkspaceActivity as group (group.projectId)}
 								<div>
-									<button
-										type="button"
-										class="mb-1.5 flex items-center gap-1.5 text-xs font-semibold text-app-subtext transition hover:text-app-primary"
-										on:click={() => onOpenProject(group.projectId)}
-									>
+									<div class="kainbu-activity-project-header">
 										<span class="kainbu-activity-row__dot" data-group="project"></span>
-										{group.projectName}
-										<span class="font-normal opacity-60">{group.totalCount}</span>
-									</button>
+										<button
+											type="button"
+											class="text-sm font-semibold text-app-text transition hover:text-app-primary"
+											on:click={() => onOpenProject(group.projectId)}
+										>
+											{group.projectName}
+										</button>
+										<span class="text-xs text-app-subtext">{group.totalCount}</span>
+									</div>
 									<div class="divide-y divide-app-border/50">
 										{#each group.visibleEvents as event (event.id)}
 											<button
@@ -434,23 +439,22 @@
 											</button>
 										{/each}
 									</div>
-									{#if group.totalCount > activityPageSize}
-										<button
-											type="button"
-											class="mt-1 text-xs text-app-primary hover:underline"
-											on:click={() => {
-												if (expandedProjects.has(group.projectId)) {
-													expandedProjects.delete(group.projectId);
-												} else {
-													expandedProjects.add(group.projectId);
-												}
-												expandedProjects = expandedProjects;
-											}}
-										>
-											{expandedProjects.has(group.projectId)
-												? 'Show less'
-												: `Show all ${group.totalCount} events`}
-										</button>
+									{#if group.totalPages > 1}
+										<div class="mt-2 flex items-center gap-1">
+											{#each Array(group.totalPages) as _, i}
+												{@const pageNum = i + 1}
+												<button
+													type="button"
+													class="kainbu-activity-filter__button text-xs"
+													class:kainbu-activity-filter__button--active={group.currentPage === pageNum}
+													on:click={() => {
+														activityPages = { ...activityPages, [group.projectId]: pageNum };
+													}}
+												>
+													{pageNum}
+												</button>
+											{/each}
+										</div>
 									{/if}
 								</div>
 							{/each}
@@ -1257,8 +1261,17 @@
 	}
 
 	.kainbu-activity-row__dot[data-group='project'] {
-		background: #c8752a;
-		box-shadow: 0 0 0 0.22rem color-mix(in oklab, #c8752a 14%, transparent);
+		background: #f0a050;
+		box-shadow: 0 0 0 0.22rem color-mix(in oklab, #f0a050 13%, transparent);
+	}
+
+	.kainbu-activity-project-header {
+		display: flex;
+		align-items: center;
+		gap: 0.5rem;
+		padding: 0.5rem 0;
+		border-bottom: 1px solid color-mix(in oklab, var(--color-app-border) 40%, transparent);
+		margin-bottom: 0;
 	}
 
 	.kainbu-dashboard-empty {
