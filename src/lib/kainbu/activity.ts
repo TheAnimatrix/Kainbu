@@ -119,25 +119,6 @@ const pushTaskEvents = (
 			columnId
 		});
 	}
-
-	if (
-		isFiniteTimestamp(task.updatedAt) &&
-		isFiniteTimestamp(task.createdAt) &&
-		(task.updatedAt as number) > (task.createdAt as number)
-	) {
-		events.push({
-			id: `${project.id}:${task.id}:updated:${task.updatedAt}:${seq}`,
-			kind: 'task_updated',
-			group: 'task',
-			projectId: project.id,
-			projectName: project.name,
-			title: 'Task updated',
-			detail: `${task.title} in ${columnTitle}`,
-			timestamp: task.updatedAt as number,
-			taskId: task.id,
-			columnId
-		});
-	}
 };
 
 const pushPeopleEvents = (events: WorkspaceActivityEvent[], project: Project) => {
