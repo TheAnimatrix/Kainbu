@@ -55,6 +55,9 @@
 	let tickInterval: ReturnType<typeof setInterval>;
 	let activityFilter: WorkspaceActivityGroup | 'all' = 'all';
 	let activityTimeWindow: string = '7d';
+	let activityProjectFilter = 'all';
+	let activityPageSize = 5;
+	let expandedProjects = new Set<string>();
 	$: summaryNow = Date.now();
 
 	const startRename = (project: Project) => {
@@ -163,13 +166,14 @@
 		);
 		const filtered = windowed.filter((event) => {
 			if (activityFilter !== 'all' && event.group !== activityFilter) return false;
+			if (activityProjectFilter !== 'all' && event.projectId !== activityProjectFilter) return false;
 			return true;
 		});
 		const groups = new Map<string, { projectName: string; events: WorkspaceActivityEvent[] }>();
 		for (const event of filtered) {
 			const group = groups.get(event.projectId);
 			if (group) {
-				if (group.events.length < 5) group.events.push(event);
+				group.events.push(event);
 			} else {
 				groups.set(event.projectId, {
 					projectName: event.projectName,
@@ -180,7 +184,11 @@
 		return Array.from(groups.entries()).map(([projectId, group]) => ({
 			projectId,
 			projectName: group.projectName,
-			events: group.events
+			events: group.events,
+			totalCount: group.events.length,
+			visibleEvents: expandedProjects.has(projectId)
+				? group.events
+				: group.events.slice(0, activityPageSize)
 		}));
 	})();
 	$: dailyActivity = filterActivityEvents(
@@ -357,11 +365,21 @@
 							<div>
 								<h3 class="kainbu-dashboard__section-label">
 									Workspace activity
-									<span class="kainbu-dashboard__section-count">{groupedWorkspaceActivity.reduce((n, g) => n + g.events.length, 0)}</span>
+									<span class="kainbu-dashboard__section-count">{groupedWorkspaceActivity.reduce((n, g) => n + g.totalCount, 0)}</span>
 								</h3>
 								<p class="mt-1 text-xs text-app-subtext">Recent changes across all boards.</p>
 							</div>
-							<div class="flex items-center gap-2">
+							<div class="flex flex-wrap items-center gap-2">
+								<select
+									class="kainbu-activity-filter__button text-xs"
+									bind:value={activityProjectFilter}
+									aria-label="Project filter"
+								>
+									<option value="all">All projects</option>
+									{#each projects as project (project.id)}
+										<option value={project.id}>{project.name}</option>
+									{/each}
+								</select>
 								<div class="kainbu-activity-filter" aria-label="Time window">
 									{#each ['7d', '30d', 'all'] as window}
 										<button
@@ -398,10 +416,10 @@
 									>
 										<span class="kainbu-activity-row__dot" data-group="project"></span>
 										{group.projectName}
-										<span class="font-normal opacity-60">{group.events.length}</span>
+										<span class="font-normal opacity-60">{group.totalCount}</span>
 									</button>
 									<div class="divide-y divide-app-border/50">
-										{#each group.events as event (event.id)}
+										{#each group.visibleEvents as event (event.id)}
 											<button
 												type="button"
 												class="kainbu-activity-row"
@@ -416,6 +434,24 @@
 											</button>
 										{/each}
 									</div>
+									{#if group.totalCount > activityPageSize}
+										<button
+											type="button"
+											class="mt-1 text-xs text-app-primary hover:underline"
+											on:click={() => {
+												if (expandedProjects.has(group.projectId)) {
+													expandedProjects.delete(group.projectId);
+												} else {
+													expandedProjects.add(group.projectId);
+												}
+												expandedProjects = expandedProjects;
+											}}
+										>
+											{expandedProjects.has(group.projectId)
+												? 'Show less'
+												: `Show all ${group.totalCount} events`}
+										</button>
+									{/if}
 								</div>
 							{/each}
 						</div>
@@ -427,7 +463,17 @@
 								<h3 class="kainbu-dashboard__section-label">Workspace activity</h3>
 								<p class="mt-1 text-xs text-app-subtext">Recent changes across all boards.</p>
 							</div>
-							<div class="flex items-center gap-2">
+							<div class="flex flex-wrap items-center gap-2">
+								<select
+									class="kainbu-activity-filter__button text-xs"
+									bind:value={activityProjectFilter}
+									aria-label="Project filter"
+								>
+									<option value="all">All projects</option>
+									{#each projects as project (project.id)}
+										<option value={project.id}>{project.name}</option>
+									{/each}
+								</select>
 								<div class="kainbu-activity-filter" aria-label="Time window">
 									{#each ['7d', '30d', 'all'] as window}
 										<button
