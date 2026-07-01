@@ -159,6 +159,7 @@ export const mapTaskRecord = (
 		? (record.linked_task_ids as string[])
 		: null,
 	position: typeof record.position === 'number' ? record.position : 0,
+	deleted_at: typeof record.deleted_at === 'number' ? record.deleted_at : null,
 	created_at: iso(record.created),
 	updated_at: iso(record.updated)
 });
