@@ -67,6 +67,7 @@
 		"vitest": "^4.1.2"
 	},
 	"dependencies": {
+		"@ai-sdk/openai": "^4.0.5",
 		"@capacitor/android": "^7.4.4",
 		"@capacitor/app": "^7.1.0",
 		"@capacitor/browser": "^7.0.2",
@@ -92,6 +93,7 @@
 		"@tiptap/pm": "^3.22.2",
 		"@tiptap/starter-kit": "^3.22.2",
 		"@tiptap/suggestion": "^3.22.2",
+		"ai": "^7.0.10",
 		"dompurify": "^3.3.3",
 		"dotenv": "^17.3.1",
 		"highlight.js": "^11.11.1",

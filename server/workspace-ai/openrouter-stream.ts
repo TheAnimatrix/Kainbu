@@ -79,6 +79,7 @@ export type StreamedCompletion = {
         type: string;
         function: { name: string; arguments: string };
     }>;
+    usage?: OpenRouterUsage;
 };
 
 export type OpenRouterUsage = {
@@ -218,6 +219,7 @@ const buildRequestBody = (
         max_tokens: WORKSPACE_AI_MAX_TOKENS,
         messages: prepareMessagesForOpenRouter(messages, { promptCache: options.promptCache }),
         stream: options.stream,
+        stream_options: options.stream ? { include_usage: true } : undefined,
     };
     const reasoning = buildReasoningBody(modelConfig.thinking, provider);
     if (reasoning) {
@@ -290,6 +292,7 @@ export const fetchCompletionStream = async (
         { id: string; type: string; function: { name: string; arguments: string } }
     >();
     let lastEmitAt = 0;
+    let streamUsage: OpenRouterUsage | undefined;
 
     const maybeEmit = (force: boolean) => {
         const now = Date.now();
@@ -318,12 +321,19 @@ export const fetchCompletionStream = async (
                         toolCalls: [...toolCallsByIndex.entries()]
                             .sort(([a], [b]) => a - b)
                             .map(([, call]) => call),
+                        usage: streamUsage,
                     };
                 }
 
                 if (data) {
                     try {
                         const parsed = JSON.parse(data) as Record<string, unknown>;
+
+                        // Capture usage from the final chunk (OpenRouter sends usage with empty choices)
+                        if (parsed.usage && typeof parsed.usage === "object") {
+                            streamUsage = extractUsageFromResponse(parsed);
+                        }
+
                         const choices = parsed.choices;
                         if (Array.isArray(choices) && choices[0] && typeof choices[0] === "object") {
                             const choice = choices[0] as Record<string, unknown>;
@@ -390,5 +400,6 @@ export const fetchCompletionStream = async (
         toolCalls: [...toolCallsByIndex.entries()]
             .sort(([a], [b]) => a - b)
             .map(([, call]) => call),
+        usage: streamUsage,
     };
 };

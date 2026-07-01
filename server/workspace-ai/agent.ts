@@ -462,6 +462,16 @@ export const handleWorkspaceAiRequest = async (
 					accumulatedReasoning = streamed.reasoning;
 					emitThinking(streamed.reasoning, true);
 				}
+				if (streamed.usage) {
+					void recordAiUsageEvent({
+						userId,
+						projectClientId: req.projectId,
+						model: modelConfig.model,
+						requestId,
+						usage: streamed.usage,
+						source: 'workspace-ai'
+					});
+				}
 				messages.push({ role: 'assistant', content: reply });
 			} catch (streamError) {
 				log('Stream failed, using non-streamed content', { streamError });
@@ -490,6 +500,16 @@ export const handleWorkspaceAiRequest = async (
 			);
 			reply = streamed.content.trim() || 'I reviewed the workspace.';
 			emitDraft(reply, true);
+			if (streamed.usage) {
+				void recordAiUsageEvent({
+					userId,
+					projectClientId: req.projectId,
+					model: modelConfig.model,
+					requestId,
+					usage: streamed.usage,
+					source: 'workspace-ai'
+				});
+			}
 		}
 
 		reply = sanitizeUserFacingReply(reply);
