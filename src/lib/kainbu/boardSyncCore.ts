@@ -252,9 +252,11 @@ const upsertProjectTasks = async (
 			alarm_at: row.alarm_at,
 			assigned_to: row.assigned_to || '',
 			linked_task_ids: row.linked_task_ids,
-			position: row.position,
-			deleted_at: row.deleted_at
+			position: row.position
 		};
+		if (row.deleted_at != null) {
+			(body as Record<string, unknown>).deleted_at = row.deleted_at;
+		}
 
 		try {
 			const existing = await pb.collection('project_tasks').getFirstListItem(filter);

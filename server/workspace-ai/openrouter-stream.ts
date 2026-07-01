@@ -8,6 +8,19 @@ import { getProviderApiKey } from "../openrouter-key.js";
 import { OpenRouterTools } from "./tools.js";
 import type { AiModelProvider } from "../../src/lib/kainbu/types.js";
 
+// ---------------------------------------------------------------------------
+// AI SDK fallback — uses the Vercel AI SDK when the `ai` package is installed.
+// ---------------------------------------------------------------------------
+
+let _aiSdkPromise: Promise<typeof import("./ai-sdk.js") | null> | undefined;
+
+const _getAiSdk = async (): Promise<typeof import("./ai-sdk.js") | null> => {
+    if (_aiSdkPromise === undefined) {
+        _aiSdkPromise = import("./ai-sdk.js").catch(() => null);
+    }
+    return _aiSdkPromise;
+};
+
 export type OpenRouterMessage = Record<string, unknown>;
 
 type ProviderModelConfig = { model: string; thinking: unknown; provider?: AiModelProvider };
@@ -238,6 +251,17 @@ export const fetchCompletionJson = async (
     modelConfig: ProviderModelConfig,
     options: { promptCache?: boolean } = {}
 ): Promise<{ response: unknown; usage: OpenRouterUsage }> => {
+    // Try AI SDK first (fallback-safe via dynamic import)
+    const aiSdk = await _getAiSdk();
+    if (aiSdk) {
+        const result = await aiSdk.aiSdkGenerateText(
+            messages,
+            { model: modelConfig.model, thinking: modelConfig.thinking, provider: modelConfig.provider },
+            { useTools, promptCache: options.promptCache }
+        );
+        return result as { response: unknown; usage: OpenRouterUsage };
+    }
+
     const provider = resolveProvider(modelConfig);
     const target = await resolveProviderTarget(provider);
 
@@ -264,6 +288,17 @@ export const fetchCompletionStream = async (
     handlers: StreamDeltaHandlers = {},
     options: { promptCache?: boolean } = {}
 ): Promise<StreamedCompletion> => {
+    // Try AI SDK first (fallback-safe via dynamic import)
+    const aiSdk = await _getAiSdk();
+    if (aiSdk) {
+        return await aiSdk.aiSdkStreamText(
+            messages,
+            { model: modelConfig.model, thinking: modelConfig.thinking, provider: modelConfig.provider },
+            handlers,
+            { promptCache: options.promptCache }
+        );
+    }
+
     const provider = resolveProvider(modelConfig);
     const target = await resolveProviderTarget(provider);
 
