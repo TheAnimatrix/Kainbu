@@ -473,7 +473,7 @@ $: workspaceFlatActivity = (() => {
 										{/each}
 									</div>
 									{#if group.totalPages > 1}
-										<div class="mt-2 flex items-center gap-1">
+										<div class="mt-2 flex items-center justify-center gap-1 w-full">
 											<button
 												type="button"
 												class="kainbu-activity-filter__button text-xs"
@@ -574,7 +574,7 @@ $: workspaceFlatActivity = (() => {
 							{/each}
 						</div>
 						{#if workspaceFlatActivity.totalPages > 1}
-							<div class="mt-3 flex items-center gap-1">
+							<div class="mt-3 flex items-center justify-center gap-1 w-full">
 								<button
 									type="button"
 									class="kainbu-activity-filter__button text-xs"
