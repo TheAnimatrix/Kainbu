@@ -5,6 +5,7 @@
 		Check,
 		Clock3,
 		FolderPlus,
+		KeyRound,
 		Mail,
 		Pencil,
 		Pin,
@@ -47,6 +48,7 @@
 	export let onToggleProjectPin: (projectId: string, pinned: boolean) => void;
 	export let onClearTimedTaskDue: (projectId: string, columnId: string, taskId: string) => void;
 
+	let shortcutsOpen = false;
 	let inviteDrafts: Record<string, string> = {};
 	let inviteOpenFor: string | null = null;
 	let renamingId: string | null = null;
@@ -301,6 +303,15 @@ $: workspaceFlatActivity = (() => {
 							<ArrowRight size={14} />
 						</button>
 					{/if}
+					<button
+						type="button"
+						class="kainbu-shortcuts-btn"
+						on:click={() => (shortcutsOpen = !shortcutsOpen)}
+						aria-label="Keyboard shortcuts and tips"
+						title="Shortcuts & tips"
+					>
+						<KeyRound size={14} />
+					</button>
 				</div>
 			</header>
 
@@ -1183,6 +1194,92 @@ $: workspaceFlatActivity = (() => {
 		</div>
 	</section>
 
+{#if shortcutsOpen}
+	<div class="kainbu-overlay fixed inset-0 z-[130]">
+		<button
+			type="button"
+			class="absolute inset-0"
+			aria-label="Close shortcuts"
+			on:click={() => (shortcutsOpen = false)}
+		></button>
+		<div
+			role="dialog"
+			aria-modal="true"
+			aria-label="Shortcuts &amp; cheatsheet"
+			class="absolute inset-x-0 bottom-0 z-10 flex max-h-[85vh] flex-col overflow-hidden rounded-t-2xl border border-app-border/60 bg-app-surface lg:inset-auto lg:left-1/2 lg:top-1/2 lg:max-h-[min(85vh,32rem)] lg:w-full lg:max-w-md lg:-translate-x-1/2 lg:-translate-y-1/2 lg:rounded-lg"
+		>
+			<div class="flex shrink-0 items-center justify-between border-b border-app-border/40 px-4 py-3">
+				<div>
+					<p class="text-sm font-semibold text-app-text">Shortcuts &amp; cheatsheet</p>
+					<p class="text-xs text-app-subtext">Tips for using Kainbu boards</p>
+				</div>
+				<button
+					type="button"
+					class="kainbu-btn kainbu-btn--ghost kainbu-btn--compact"
+					on:click={() => (shortcutsOpen = false)}
+				>
+					<X size={16} />
+				</button>
+			</div>
+			<div class="overflow-y-auto px-4 py-3 text-sm text-app-text">
+				<div class="space-y-4">
+					<section>
+						<h4 class="mb-1.5 text-xs font-bold uppercase tracking-wider text-app-subtext">
+							Hashtag auto-tagging
+						</h4>
+						<p class="leading-relaxed text-app-text/85">
+							Type <code class="rounded bg-app-element/60 px-1 py-0.5 font-mono text-[11px]">#tagname</code>
+							at the end of a task title to automatically create or apply a tag.
+						</p>
+						<p class="mt-1 text-xs text-app-subtext">
+							Example: &ldquo;Fix login bug <code class="rounded bg-app-element/60 px-1 py-0.5 font-mono text-[11px]">#urgent</code>
+							<code class="rounded bg-app-element/60 px-1 py-0.5 font-mono text-[11px]">#backend</code>&rdquo;
+							&rarr; title becomes &ldquo;Fix login bug&rdquo; with tags [urgent, backend]
+						</p>
+					</section>
+
+					<section>
+						<h4 class="mb-1.5 text-xs font-bold uppercase tracking-wider text-app-subtext">
+							Markdown formatting
+						</h4>
+						<ul class="space-y-1 text-sm text-app-text/85">
+							<li><code class="rounded bg-app-element/60 px-1 py-0.5 font-mono text-[11px]">**bold**</code> &mdash; bold text</li>
+							<li><code class="rounded bg-app-element/60 px-1 py-0.5 font-mono text-[11px]">*italic*</code> &mdash; italic text</li>
+							<li><code class="rounded bg-app-element/60 px-1 py-0.5 font-mono text-[11px]">`code`</code> &mdash; inline code</li>
+							<li><code class="rounded bg-app-element/60 px-1 py-0.5 font-mono text-[11px]">- [ ] todo</code> &mdash; checkbox</li>
+						</ul>
+					</section>
+
+					<section>
+						<h4 class="mb-1.5 text-xs font-bold uppercase tracking-wider text-app-subtext">
+							Kanban board shortcuts
+						</h4>
+						<ul class="space-y-1 text-sm text-app-text/85">
+							<li><kbd class="rounded bg-app-element/70 px-1.5 py-0.5 font-mono text-[11px] text-app-text">Ctrl+F</kbd> &mdash; Search board tasks</li>
+							<li><kbd class="rounded bg-app-element/70 px-1.5 py-0.5 font-mono text-[11px] text-app-text">Esc</kbd> &mdash; Close menus / search / link view</li>
+							<li><kbd class="rounded bg-app-element/70 px-1.5 py-0.5 font-mono text-[11px] text-app-text">Enter</kbd> &mdash; Save inline-edited title</li>
+							<li><kbd class="rounded bg-app-element/70 px-1.5 py-0.5 font-mono text-[11px] text-app-text">Shift+Enter</kbd> &mdash; New line in title edit</li>
+							<li><kbd class="rounded bg-app-element/70 px-1.5 py-0.5 font-mono text-[11px] text-app-text">Double-click</kbd> &mdash; Edit task title inline</li>
+						</ul>
+					</section>
+
+					<section>
+						<h4 class="mb-1.5 text-xs font-bold uppercase tracking-wider text-app-subtext">
+							Tips
+						</h4>
+						<ul class="space-y-1 text-sm text-app-text/85">
+							<li>Drag tasks between columns to reorganize</li>
+							<li>Click the checkbox icon to toggle task completion</li>
+							<li>Use <code class="rounded bg-app-element/60 px-1 py-0.5 font-mono text-[11px]">#tag</code> in the title to auto-tag</li>
+							<li>Link tasks to show relationships on the board</li>
+						</ul>
+					</section>
+				</div>
+			</div>
+		</div>
+	</div>
+{/if}
+
 <style>
 	.kainbu-dashboard {
 		background:
@@ -1535,5 +1632,26 @@ $: workspaceFlatActivity = (() => {
 
 	:root[data-color-mode='light'] .kainbu-dashboard__stat {
 		box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.65);
+	}
+
+	.kainbu-shortcuts-btn {
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		width: 2rem;
+		height: 2rem;
+		border-radius: 9999px;
+		color: var(--color-app-subtext);
+		background: color-mix(in oklab, var(--color-app-element) 65%, transparent);
+		box-shadow: inset 0 1px 0 color-mix(in oklab, white 5%, transparent);
+		transition:
+			background 0.16s ease,
+			color 0.16s ease;
+		flex-shrink: 0;
+	}
+
+	.kainbu-shortcuts-btn:hover {
+		background: color-mix(in oklab, var(--color-app-element) 85%, transparent);
+		color: var(--color-app-text);
 	}
 </style>
