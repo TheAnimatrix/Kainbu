@@ -227,6 +227,67 @@
 	];
 
 	const TRAILING_BLOCK_HINT = '@ for reference  / for command';
+
+// Maximum image dimension for client-side compression (in pixels, longest edge)
+const MAX_IMAGE_DIMENSION = 1920;
+// Files under this size are uploaded as-is (bytes)
+const MAX_IMAGE_SIZE_BYTES = 5 * 1024 * 1024;
+
+/**
+ * Compress a large image client-side before upload to avoid HTTP 413 Payload
+ * Too Large errors from nginx / reverse proxies that default to a 1 MB body
+ * limit. Resizes images whose longest edge exceeds MAX_IMAGE_DIMENSION and
+ * re-encodes them as JPEG with moderate quality.
+ */
+const compressImageIfNeeded = async (file: File): Promise<File> => {
+	if (!file.type.startsWith('image/')) return file;
+	if (file.size <= MAX_IMAGE_SIZE_BYTES) return file;
+
+	return new Promise((resolve) => {
+		const img = document.createElement('img');
+		const url = URL.createObjectURL(file);
+
+		img.onload = () => {
+			URL.revokeObjectURL(url);
+
+			let { width, height } = img;
+			if (width <= MAX_IMAGE_DIMENSION && height <= MAX_IMAGE_DIMENSION) {
+				resolve(file);
+				return;
+			}
+
+			const ratio = Math.min(MAX_IMAGE_DIMENSION / width, MAX_IMAGE_DIMENSION / height);
+			width = Math.round(width * ratio);
+			height = Math.round(height * ratio);
+
+			const canvas = document.createElement('canvas');
+			canvas.width = width;
+			canvas.height = height;
+			canvas.getContext('2d')!.drawImage(img, 0, 0, width, height);
+
+			canvas.toBlob(
+				(blob) => {
+					if (!blob) {
+						resolve(file);
+						return;
+					}
+					// Rename extension to .jpg since we encode as JPEG
+					const name = file.name.replace(/\.[^.]+$/, '.jpg');
+					resolve(new File([blob], name, { type: 'image/jpeg' }));
+				},
+				'image/jpeg',
+				0.85
+			);
+		};
+
+		img.onerror = () => {
+			URL.revokeObjectURL(url);
+			resolve(file);
+		};
+
+		img.src = url;
+	});
+};
 	const EMPTY_EDITOR_DOC: JSONContent = {
 		type: 'doc',
 		content: [{ type: 'paragraph' }]
@@ -1016,8 +1077,21 @@
 		const imageFiles = files.filter((file) => file.type.startsWith('image/'));
 		if (!editor || !imageFiles.length || disabled) return;
 
+		// Reject files that are unreasonably large (>30 MB) before attempting
+		// compression — compressed or not, we cannot send these through.
+		const TOO_LARGE_BYTES = 30 * 1024 * 1024;
+		const oversized = imageFiles.find((file) => file.size > TOO_LARGE_BYTES);
+		if (oversized) {
+			editorNotice = `"${oversized.name}" is too large (max 30 MB). Please choose a smaller image.`;
+			return;
+		}
+
 		editorNotice = '';
-		const uploadRequests = imageFiles.map((file) => ({
+
+		// Compress large images client-side to avoid HTTP 413 Payload Too Large
+		const compressedFiles = await Promise.all(imageFiles.map(compressImageIfNeeded));
+
+		const uploadRequests = compressedFiles.map((file) => ({
 			tempId: createId(),
 			file,
 			source
