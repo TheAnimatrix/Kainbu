@@ -90,8 +90,6 @@ const pushTaskEvents = (
 	task: Task,
 	seq: number
 ) => {
-	if (task.deletedAt) return;
-
 	if (isFiniteTimestamp(task.completedAt)) {
 		events.push({
 			id: `${project.id}:${task.id}:completed:${task.completedAt}:${seq}`,
