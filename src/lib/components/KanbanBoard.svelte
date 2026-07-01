@@ -1243,20 +1243,21 @@
 
 	const autoTagFromTitle = (title: string): { cleanedTitle: string; tagLabels: string[] } => {
 		// Match trailing hashtags at the end of the title
-		// e.g., "Fix login bug #urgent #backend" -> cleaned: "Fix login bug", tags: ["urgent", "backend"]
-		// Hashtags in the middle are left alone: "fix #bug login" stays as-is
-		const trailingTagPattern = /^(.*?)((?:\s+#[\w-]+)+)$/;
+		// ##tag = escaped: stays as #tag in title, no tag created
+		// #tag = auto-tag: stripped from title, added as tag
+		const trailingTagPattern = /^(.*?)((?:\s+#{1,2}[\w-]+)+)$/;
 		const match = title.match(trailingTagPattern);
 		if (!match) {
 			return { cleanedTitle: title, tagLabels: [] };
 		}
 
-		const cleanedTitle = match[1].trimEnd();
+		const baseTitle = match[1].trimEnd();
 		const tagsPart = match[2];
 		const tagLabels: string[] = [];
+		let escapedPart = tagsPart;
 
-		// Extract each #tag label from the trailing tags portion
-		const tagRegex = /#([\w-]+)/g;
+		// Extract single #tag (not ##) as auto-tags
+		const tagRegex = /(?<!\#)\#([\w-]+)/g;
 		let tagMatch;
 		while ((tagMatch = tagRegex.exec(tagsPart)) !== null) {
 			const label = tagMatch[1].trim();
@@ -1265,7 +1266,14 @@
 			}
 		}
 
-		return { cleanedTitle, tagLabels };
+		// Replace ## with # in the escaped portion (display only)
+		escapedPart = escapedPart.replace(/##([\w-]+)/g, '#$1');
+		// Remove auto-tagged #tags from the escaped portion
+		for (const label of tagLabels) {
+			escapedPart = escapedPart.replace(new RegExp('\\s#' + label + '(?!\\w)'), '');
+		}
+
+		return { cleanedTitle: (baseTitle + escapedPart).trim(), tagLabels };
 	};
 
 	const resolveOrCreateTags = (tagLabels: string[]): Tag[] => {
