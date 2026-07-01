@@ -88,7 +88,8 @@ const mapTaskUpsertRow = (
 	alarm_at: normalizeDueTimestamp(task.alarmAt) ?? null,
 	assigned_to: isPocketBaseRecordId(task.assignedTo) ? task.assignedTo.trim() : null,
 	linked_task_ids: normalizeLinkedTaskIds(task.linkedTaskIds),
-	position
+	position,
+	deleted_at: task.deletedAt ?? null
 });
 
 export type BoardMutations = {
@@ -165,7 +166,11 @@ export const deriveBoardMutations = (
 
 	for (const [taskId, previousTask] of previousTasks.entries()) {
 		if (!nextTaskIds.has(taskId) && !deleteColumnIds.includes(previousTask.columnId)) {
-			deleteTaskIds.push(taskId);
+			upsertTasks.push(mapTaskUpsertRow(
+				projectId, boardId, previousTask.columnId,
+				{ ...previousTask.task, deletedAt: Date.now() },
+				previousTask.position
+			));
 		}
 	}
 
@@ -247,7 +252,8 @@ const upsertProjectTasks = async (
 			alarm_at: row.alarm_at,
 			assigned_to: row.assigned_to || '',
 			linked_task_ids: row.linked_task_ids,
-			position: row.position
+			position: row.position,
+			deleted_at: row.deleted_at
 		};
 
 		try {
@@ -293,10 +299,6 @@ const applyBoardMutations = async (
 
 	if (mutations.upsertTasks.length) {
 		await upsertProjectTasks(pb, projectPbId, mutations.upsertTasks, resolveBoardPbId);
-	}
-
-	if (mutations.deleteTaskIds.length) {
-		await deleteByClientIds(pb, 'project_tasks', projectPbId, mutations.deleteTaskIds);
 	}
 
 	if (mutations.deleteColumnIds.length) {

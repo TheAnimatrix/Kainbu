@@ -60,6 +60,7 @@ export interface Task {
 	linkedTaskIds?: string[];
 	createdAt?: number;
 	updatedAt?: number;
+	deletedAt?: number;
 }
 
 export type TaskAssetKind = 'attachment' | 'embed';
@@ -243,6 +244,7 @@ export interface ProjectMembership {
 	avatarUrl?: string | null;
 	joinedAt: number;
 	lastOpenedAt: number;
+	leftAt?: number;
 	viewingBoardId?: string;
 	presenceAt?: number;
 	isCurrentUser?: boolean;

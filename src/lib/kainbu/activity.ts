@@ -3,6 +3,12 @@ import type { Project, ProjectInvite, ProjectMembership, Task } from '$lib/kainb
 const DAY_MS = 24 * 60 * 60 * 1000;
 const WEEK_MS = 7 * DAY_MS;
 
+const todayStart = (now: number) => {
+	const d = new Date(now);
+	d.setHours(0, 0, 0, 0);
+	return d.getTime();
+};
+
 export type WorkspaceActivityKind =
 	| 'task_created'
 	| 'task_completed'
@@ -81,11 +87,12 @@ const pushTaskEvents = (
 	project: Project,
 	columnId: string,
 	columnTitle: string,
-	task: Task
+	task: Task,
+	seq: number
 ) => {
 	if (isFiniteTimestamp(task.completedAt)) {
 		events.push({
-			id: `${project.id}:${task.id}:completed:${task.completedAt}`,
+			id: `${project.id}:${task.id}:completed:${task.completedAt}:${seq}`,
 			kind: 'task_completed',
 			group: 'task',
 			projectId: project.id,
@@ -100,7 +107,7 @@ const pushTaskEvents = (
 
 	if (isFiniteTimestamp(task.createdAt)) {
 		events.push({
-			id: `${project.id}:${task.id}:created:${task.createdAt}`,
+			id: `${project.id}:${task.id}:created:${task.createdAt}:${seq}`,
 			kind: 'task_created',
 			group: 'task',
 			projectId: project.id,
@@ -115,18 +122,18 @@ const pushTaskEvents = (
 
 	if (
 		isFiniteTimestamp(task.updatedAt) &&
-		task.updatedAt !== task.createdAt &&
-		task.updatedAt !== task.completedAt
+		isFiniteTimestamp(task.createdAt) &&
+		(task.updatedAt as number) > (task.createdAt as number)
 	) {
 		events.push({
-			id: `${project.id}:${task.id}:updated:${task.updatedAt}`,
+			id: `${project.id}:${task.id}:updated:${task.updatedAt}:${seq}`,
 			kind: 'task_updated',
 			group: 'task',
 			projectId: project.id,
 			projectName: project.name,
 			title: 'Task updated',
 			detail: `${task.title} in ${columnTitle}`,
-			timestamp: task.updatedAt,
+			timestamp: task.updatedAt as number,
 			taskId: task.id,
 			columnId
 		});
@@ -168,9 +175,10 @@ const pushPeopleEvents = (events: WorkspaceActivityEvent[], project: Project) =>
 export const buildProjectActivityEvents = (project: Project): WorkspaceActivityEvent[] => {
 	const events: WorkspaceActivityEvent[] = [];
 
+	let taskSeq = 0;
 	for (const column of project.kanbanData) {
 		for (const task of column.tasks) {
-			pushTaskEvents(events, project, column.id, column.title, task);
+			pushTaskEvents(events, project, column.id, column.title, task, taskSeq++);
 		}
 	}
 
@@ -197,14 +205,15 @@ export const buildWorkspaceActivityEvents = (projects: Project[]) =>
 
 export const buildProjectActivityStats = (
 	project: Project,
-	now = Date.now()
+	now = Date.now(),
+	events?: WorkspaceActivityEvent[]
 ): ProjectActivityStats => {
 	const tasks = project.kanbanData.flatMap((column) => column.tasks);
-	const events = buildProjectActivityEvents(project);
+	const projectEvents = events ?? buildProjectActivityEvents(project);
 	const last7dStart = now - WEEK_MS;
 	const previous7dStart = now - 2 * WEEK_MS;
-	const activityLast7d = eventWindowCount(events, last7dStart, now + 1);
-	const activityPrevious7d = eventWindowCount(events, previous7dStart, last7dStart);
+	const activityLast7d = eventWindowCount(projectEvents, last7dStart, now + 1);
+	const activityPrevious7d = eventWindowCount(projectEvents, previous7dStart, last7dStart);
 	const completedLast7d = tasks.filter(
 		(task) => isFiniteTimestamp(task.completedAt) && task.completedAt >= last7dStart && task.completedAt <= now
 	).length;
@@ -232,16 +241,21 @@ export const buildWorkspaceActivitySummary = (
 	projects: Project[],
 	now = Date.now()
 ): WorkspaceActivitySummary => {
-	const events = buildWorkspaceActivityEvents(projects);
+	const allEvents: WorkspaceActivityEvent[] = [];
 	const projectStats = projects
-		.map((project) => buildProjectActivityStats(project, now))
+		.map((project) => {
+			const projectEvents = buildProjectActivityEvents(project);
+			allEvents.push(...projectEvents);
+			return buildProjectActivityStats(project, now, projectEvents);
+		})
 		.sort(
 			(left, right) =>
 				right.activityLast7d - left.activityLast7d ||
 				right.completedLast7d - left.completedLast7d ||
 				left.projectName.localeCompare(right.projectName, undefined, { sensitivity: 'base' })
 		);
-	const todayStart = now - DAY_MS;
+	allEvents.sort(eventTimestampDesc);
+	const todayWindowStart = todayStart(now);
 	const last7dStart = now - WEEK_MS;
 	const previous7dStart = now - 2 * WEEK_MS;
 
@@ -251,15 +265,15 @@ export const buildWorkspaceActivitySummary = (
 		completedTaskCount: projectStats.reduce((total, stat) => total + stat.completedTaskCount, 0),
 		completedLast7d: projectStats.reduce((total, stat) => total + stat.completedLast7d, 0),
 		createdLast7d: projectStats.reduce((total, stat) => total + stat.createdLast7d, 0),
-		activityToday: eventWindowCount(events, todayStart, now + 1),
-		activityLast7d: eventWindowCount(events, last7dStart, now + 1),
-		activityPrevious7d: eventWindowCount(events, previous7dStart, last7dStart),
+		activityToday: eventWindowCount(allEvents, todayWindowStart, now + 1),
+		activityLast7d: eventWindowCount(allEvents, last7dStart, now + 1),
+		activityPrevious7d: eventWindowCount(allEvents, previous7dStart, last7dStart),
 		activityDelta:
-			eventWindowCount(events, last7dStart, now + 1) -
-			eventWindowCount(events, previous7dStart, last7dStart),
+			eventWindowCount(allEvents, last7dStart, now + 1) -
+			eventWindowCount(allEvents, previous7dStart, last7dStart),
 		memberCount: projects.reduce((total, project) => total + project.members.length, 0),
 		projectStats,
-		events
+		events: allEvents
 	};
 };
 

@@ -485,7 +485,11 @@
 		previewProposal?.target === 'kanban'
 			? previewProposal.preview.kanbanData
 			: currentProject?.kanbanData || [];
-	$: kanbanComparisonData =
+	$: displayKanbanData = kanbanData.map(column => ({
+		...column,
+		tasks: column.tasks.filter(task => !task.deletedAt)
+	}));
+$: kanbanComparisonData =
 		previewProposal?.target === 'kanban' ? previewProposal.originalKanbanData : undefined;
 	$: mobileHeaderReviewing =
 		isMobile &&
@@ -5191,7 +5195,7 @@
 													isOwner={currentProject.accessRole === 'owner'}
 													shareSaving={boardShareSaving}
 													shareErrorMessage={boardShareErrorMessage}
-													data={kanbanData}
+													data={displayKanbanData}
 													comparisonData={kanbanComparisonData}
 													{highlightedTaskIds}
 													activeTaskId={activeTaskContext?.taskId}
@@ -5199,7 +5203,7 @@
 													{boardPreferences}
 													colorMode={settings.colorMode}
 													active={mobileTab === 'kanban'}
-													members={currentProject.members}
+													members={currentProject.members.filter(m => !m.leftAt)}
 													bind:boardSearchActive
 													bind:boardSearchQuery
 													onChange={handleKanbanChange}
@@ -5388,7 +5392,7 @@
 													isOwner={currentProject.accessRole === 'owner'}
 													shareSaving={boardShareSaving}
 													shareErrorMessage={boardShareErrorMessage}
-													data={kanbanData}
+													data={displayKanbanData}
 													comparisonData={kanbanComparisonData}
 													{highlightedTaskIds}
 													activeTaskId={activeTaskContext?.taskId}
@@ -5396,7 +5400,7 @@
 													{boardPreferences}
 													colorMode={settings.colorMode}
 													active={desktopWorkspaceTab === 'kanban'}
-													members={currentProject.members}
+													members={currentProject.members.filter(m => !m.leftAt)}
 													bind:boardSearchActive
 													bind:boardSearchQuery
 													onChange={handleKanbanChange}

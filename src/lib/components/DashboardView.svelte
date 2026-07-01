@@ -20,6 +20,7 @@
 		buildWorkspaceActivitySummary,
 		filterActivityEvents,
 		summarizeActivityDelta,
+		type WorkspaceActivityEvent,
 		type WorkspaceActivityGroup
 	} from '$lib/kainbu/activity';
 	import type { DashboardTimedTask, Project, ProjectInvite } from '$lib/kainbu/types';
@@ -50,9 +51,11 @@
 	let inviteOpenFor: string | null = null;
 	let renamingId: string | null = null;
 	let renameValue = '';
-	let now = Date.now();
+	let tickNow = Date.now();
 	let tickInterval: ReturnType<typeof setInterval>;
 	let activityFilter: WorkspaceActivityGroup | 'all' = 'all';
+	let activityTimeWindow: string = '7d';
+	$: summaryNow = Date.now();
 
 	const startRename = (project: Project) => {
 		renamingId = project.id;
@@ -69,7 +72,7 @@
 
 	onMount(() => {
 		tickInterval = setInterval(() => {
-			now = Date.now();
+			tickNow = Date.now();
 		}, 1000);
 	});
 
@@ -112,7 +115,7 @@
 		};
 	};
 
-	const memberLabel = (project: Project) => `${project.members.length} people`;
+	const memberLabel = (project: Project) => `${project.members.filter(m => !m.leftAt).length} people`;
 	const getMemberName = (member: Project['members'][number]) => getProjectMemberDisplayName(member);
 	const formatActivityTime = (timestamp: number) =>
 		new Date(timestamp).toLocaleString(undefined, {
@@ -149,15 +152,43 @@
 	$: sharedProjects = projects
 		.filter((project) => project.accessRole === 'member' && !isPinned(project))
 		.sort(compareByPinThenName);
-	$: activitySummary = buildWorkspaceActivitySummary(projects, now);
-	$: currentProjectActivity = filterActivityEvents(activitySummary.events, {
-		projectId: currentProjectId,
-		group: activityFilter,
-		limit: 8
-	});
-	$: dailyActivity = filterActivityEvents(activitySummary.events, { limit: 6 }).filter(
-		(event) => now - event.timestamp <= 24 * 60 * 60 * 1000
-	);
+	$: activitySummary = buildWorkspaceActivitySummary(projects, summaryNow);
+	$: activityTimeWindowMs =
+			activityTimeWindow === 'all' ? Infinity :
+			activityTimeWindow === '30d' ? 30 * 24 * 60 * 60 * 1000 :
+			7 * 24 * 60 * 60 * 1000;
+	$: groupedWorkspaceActivity = (() => {
+		const windowed = activitySummary.events.filter(
+			(event) => summaryNow - event.timestamp <= activityTimeWindowMs
+		);
+		const filtered = windowed.filter((event) => {
+			if (activityFilter !== 'all' && event.group !== activityFilter) return false;
+			return true;
+		});
+		const groups = new Map<string, { projectName: string; events: WorkspaceActivityEvent[] }>();
+		for (const event of filtered) {
+			const group = groups.get(event.projectId);
+			if (group) {
+				if (group.events.length < 5) group.events.push(event);
+			} else {
+				groups.set(event.projectId, {
+					projectName: event.projectName,
+					events: [event]
+				});
+			}
+		}
+		return Array.from(groups.entries()).map(([projectId, group]) => ({
+			projectId,
+			projectName: group.projectName,
+			events: group.events
+		}));
+	})();
+	$: dailyActivity = filterActivityEvents(
+			activitySummary.events.filter(
+				(event) => summaryNow - event.timestamp <= 24 * 60 * 60 * 1000
+			),
+			{ limit: 6 }
+		);
 
 </script>
 
@@ -288,8 +319,8 @@
 					</div>
 					<div class="kainbu-insight">
 						<p class="kainbu-insight__label">Completed</p>
-						<p class="kainbu-insight__value">{activitySummary.completedTaskCount}</p>
-						<p class="kainbu-insight__meta">{activitySummary.completedLast7d} this week</p>
+						<p class="kainbu-insight__value">{activitySummary.completedLast7d}</p>
+						<p class="kainbu-insight__meta">{activitySummary.completedTaskCount} total</p>
 					</div>
 				</section>
 
@@ -320,54 +351,103 @@
 					{/if}
 				</section>
 
-				{#if currentProjectId}
+				{#if groupedWorkspaceActivity.length}
 					<section class="kainbu-dashboard__activity-log">
 						<div class="flex flex-wrap items-start justify-between gap-3">
 							<div>
 								<h3 class="kainbu-dashboard__section-label">
-									Current board activity
-									<span class="kainbu-dashboard__section-count">{currentProjectActivity.length}</span>
+									Workspace activity
+									<span class="kainbu-dashboard__section-count">{groupedWorkspaceActivity.reduce((n, g) => n + g.events.length, 0)}</span>
 								</h3>
-								<p class="mt-1 text-xs text-app-subtext">Task, people, and board updates for the selected board.</p>
+								<p class="mt-1 text-xs text-app-subtext">Recent changes across all boards.</p>
 							</div>
-							<div class="kainbu-activity-filter" aria-label="Activity filter">
-								{#each ['all', 'task', 'people', 'project'] as filter}
-									<button
-										type="button"
-										class:kainbu-activity-filter__button--active={activityFilter === filter}
-										class="kainbu-activity-filter__button"
-										on:click={() => (activityFilter = filter as WorkspaceActivityGroup | 'all')}
-									>
-										{filter}
-									</button>
-								{/each}
+							<div class="flex items-center gap-2">
+								<div class="kainbu-activity-filter" aria-label="Time window">
+									{#each ['7d', '30d', 'all'] as window}
+										<button
+											type="button"
+											class:kainbu-activity-filter__button--active={activityTimeWindow === window}
+											class="kainbu-activity-filter__button"
+											on:click={() => (activityTimeWindow = window)}
+										>
+											{window}
+										</button>
+									{/each}
+								</div>
+								<div class="kainbu-activity-filter" aria-label="Activity filter">
+									{#each ['all', 'task', 'people', 'project'] as filter}
+										<button
+											type="button"
+											class:kainbu-activity-filter__button--active={activityFilter === filter}
+											class="kainbu-activity-filter__button"
+											on:click={() => (activityFilter = filter as WorkspaceActivityGroup | 'all')}
+										>
+											{filter}
+										</button>
+									{/each}
+								</div>
 							</div>
 						</div>
-						{#if currentProjectActivity.length}
-							<div class="mt-3 divide-y divide-app-border/50">
-								{#each currentProjectActivity as event (event.id)}
+						<div class="mt-3 space-y-4">
+							{#each groupedWorkspaceActivity as group (group.projectId)}
+								<div>
 									<button
 										type="button"
-										class="kainbu-activity-row"
-										on:click={() => onOpenProject(event.projectId)}
+										class="mb-1.5 flex items-center gap-1.5 text-xs font-semibold text-app-subtext transition hover:text-app-primary"
+										on:click={() => onOpenProject(group.projectId)}
 									>
-										<span class="kainbu-activity-row__dot" data-group={event.group}></span>
-										<span class="min-w-0 flex-1">
-											<span class="block truncate text-sm font-medium text-app-text">{event.title}</span>
-											<span class="block truncate text-xs text-app-subtext">{event.detail}</span>
-										</span>
-										<span class="shrink-0 text-[11px] text-app-subtext">{formatActivityTime(event.timestamp)}</span>
+										<span class="kainbu-activity-row__dot" data-group="project"></span>
+										{group.projectName}
+										<span class="font-normal opacity-60">{group.events.length}</span>
 									</button>
-								{/each}
+									<div class="divide-y divide-app-border/50">
+										{#each group.events as event (event.id)}
+											<button
+												type="button"
+												class="kainbu-activity-row"
+												on:click={() => onOpenProject(event.projectId)}
+											>
+												<span class="kainbu-activity-row__dot" data-group={event.group}></span>
+												<span class="min-w-0 flex-1">
+													<span class="block truncate text-sm font-medium text-app-text">{event.title}</span>
+													<span class="block truncate text-xs text-app-subtext">{event.detail}</span>
+												</span>
+												<span class="shrink-0 text-[11px] text-app-subtext">{formatActivityTime(event.timestamp)}</span>
+											</button>
+										{/each}
+									</div>
+								</div>
+							{/each}
+						</div>
+					</section>
+				{:else}
+					<section class="kainbu-dashboard__activity-log">
+						<div class="flex flex-wrap items-start justify-between gap-3">
+							<div>
+								<h3 class="kainbu-dashboard__section-label">Workspace activity</h3>
+								<p class="mt-1 text-xs text-app-subtext">Recent changes across all boards.</p>
 							</div>
-						{:else}
-							<div class="kainbu-dashboard-empty mt-3">
-								<p class="text-sm font-medium text-app-text">No matching activity</p>
-								<p class="max-w-sm text-sm leading-relaxed text-app-subtext">
-									Try another filter or make a change on the current board.
-								</p>
+							<div class="flex items-center gap-2">
+								<div class="kainbu-activity-filter" aria-label="Time window">
+									{#each ['7d', '30d', 'all'] as window}
+										<button
+											type="button"
+											class:kainbu-activity-filter__button--active={activityTimeWindow === window}
+											class="kainbu-activity-filter__button"
+											on:click={() => (activityTimeWindow = window)}
+										>
+											{window}
+										</button>
+									{/each}
+								</div>
 							</div>
-						{/if}
+						</div>
+						<div class="kainbu-dashboard-empty mt-3">
+							<p class="text-sm font-medium text-app-text">No activity yet</p>
+							<p class="max-w-sm text-sm leading-relaxed text-app-subtext">
+								Activity from your boards will appear here as you create and update tasks.
+							</p>
+						</div>
 					</section>
 				{/if}
 
@@ -416,7 +496,7 @@
 											<Users size={11} />
 											<span>{memberLabel(project)}</span>
 											<div class="ml-1 flex flex-wrap gap-1">
-												{#each project.members.slice(0, 4) as member (`pinned-${project.id}-${member.userId}`)}
+												{#each project.members.filter(m => !m.leftAt).slice(0, 4) as member (`pinned-${project.id}-${member.userId}`)}
 													<span class="inline-flex items-center gap-1 rounded-md bg-app-element/40 px-1.5 py-0.5 text-[10px] text-app-text/80">
 														<span class="max-w-24 truncate">{getMemberName(member)}</span>
 														{#if member.role !== 'owner'}
@@ -534,7 +614,7 @@
 											</button>
 										</div>
 										<div class="mt-2 flex flex-wrap gap-1">
-											{#each project.members.slice(0, 5) as member (`pinned-shared-${project.id}-${member.userId}`)}
+											{#each project.members.filter(m => !m.leftAt).slice(0, 5) as member (`pinned-shared-${project.id}-${member.userId}`)}
 												<span class="inline-flex rounded-md bg-app-element/40 px-1.5 py-0.5 text-[10px] text-app-text/80">
 													{getMemberName(member)}
 												</span>
@@ -620,7 +700,7 @@
 										<Users size={11} />
 										<span>{memberLabel(project)}</span>
 										<div class="ml-1 flex flex-wrap gap-1">
-											{#each project.members.slice(0, 4) as member (`${project.id}-${member.userId}`)}
+											{#each project.members.filter(m => !m.leftAt).slice(0, 4) as member (`${project.id}-${member.userId}`)}
 												<span class="inline-flex items-center gap-1 rounded-md bg-app-element/40 px-1.5 py-0.5 text-[10px] text-app-text/80">
 													<span class="max-w-24 truncate">{getMemberName(member)}</span>
 													{#if member.role !== 'owner'}
@@ -774,7 +854,7 @@
 										</button>
 									</div>
 									<div class="mt-2 flex flex-wrap gap-1">
-										{#each project.members.slice(0, 5) as member (`shared-${project.id}-${member.userId}`)}
+										{#each project.members.filter(m => !m.leftAt).slice(0, 5) as member (`shared-${project.id}-${member.userId}`)}
 											<span class="inline-flex rounded-md bg-app-element/40 px-1.5 py-0.5 text-[10px] text-app-text/80">
 												{getMemberName(member)}
 											</span>
@@ -849,8 +929,8 @@
 												{timed.projectName} / {timed.columnTitle}
 											</p>
 										</div>
-										<p class={`shrink-0 font-mono text-xs font-semibold tabular-nums ${timed.dueAt - now <= 0 ? 'text-rose-400' : 'text-app-subtext'}`}>
-											{formatCountdown(timed.dueAt, now)}
+										<p class={`shrink-0 font-mono text-xs font-semibold tabular-nums ${timed.dueAt - tickNow <= 0 ? 'text-rose-400' : 'text-app-subtext'}`}>
+											{formatCountdown(timed.dueAt, tickNow)}
 										</p>
 									</div>
 
@@ -874,7 +954,7 @@
 											Open board
 											<ArrowRight size={11} />
 										</button>
-										{#if timed.dueAt <= now}
+										{#if timed.dueAt <= tickNow}
 											<button
 												type="button"
 												class="text-xs font-semibold text-app-subtext transition hover:text-rose-300"
