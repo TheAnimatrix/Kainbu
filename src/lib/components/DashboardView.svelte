@@ -58,7 +58,21 @@
 	let activityProjectFilter = 'all';
 	let activityPageSize = 5;
 	let activityPages: Record<string, number> = {};
+	let workspaceActivityPage = 1;
 	$: summaryNow = Date.now();
+
+	const pageButtons = (current: number, total: number): (number | '...')[] => {
+		if (total <= 7) return Array.from({ length: total }, (_, i) => i + 1);
+		const pages: (number | '...')[] = [];
+		pages.push(1);
+		if (current > 3) pages.push('...');
+		const start = Math.max(2, current - 1);
+		const end = Math.min(total - 1, current + 1);
+		for (let i = start; i <= end; i++) pages.push(i);
+		if (current < total - 2) pages.push('...');
+		pages.push(total);
+		return pages;
+	};
 
 	const startRename = (project: Project) => {
 		renamingId = project.id;
@@ -193,6 +207,25 @@
 				visibleEvents: group.events.slice(start, start + activityPageSize)
 			};
 		});
+	})();
+$: workspaceFlatActivity = (() => {
+		if (activityProjectFilter !== 'all') return null;
+		const windowed = activitySummary.events.filter(
+			(event) => summaryNow - event.timestamp <= activityTimeWindowMs
+		);
+		const filtered = windowed.filter((event) => {
+			if (activityFilter !== 'all' && event.group !== activityFilter) return false;
+			return true;
+		});
+		const totalCount = filtered.length;
+		const totalPages = Math.ceil(totalCount / activityPageSize);
+		const start = (workspaceActivityPage - 1) * activityPageSize;
+		return {
+			events: filtered.slice(start, start + activityPageSize),
+			totalCount,
+			totalPages,
+			currentPage: workspaceActivityPage
+		};
 	})();
 	$: dailyActivity = filterActivityEvents(
 			activitySummary.events.filter(
@@ -362,7 +395,7 @@
 					{/if}
 				</section>
 
-				{#if groupedWorkspaceActivity.length}
+				{#if activityProjectFilter !== 'all' && groupedWorkspaceActivity.length}
 					<section class="kainbu-dashboard__activity-log">
 						<div class="flex flex-wrap items-start justify-between gap-3">
 							<div>
@@ -370,7 +403,7 @@
 									Workspace activity
 									<span class="kainbu-dashboard__section-count">{groupedWorkspaceActivity.reduce((n, g) => n + g.totalCount, 0)}</span>
 								</h3>
-								<p class="mt-1 text-xs text-app-subtext">Recent changes across all boards.</p>
+								<p class="mt-1 text-xs text-app-subtext">Recent changes for the selected board.</p>
 							</div>
 							<div class="flex flex-wrap items-center gap-2">
 								<select
@@ -416,7 +449,7 @@
 										<span class="kainbu-activity-row__dot" data-group="project"></span>
 										<button
 											type="button"
-											class="text-sm font-semibold text-app-text transition hover:text-app-primary"
+											class="text-base font-bold text-app-text transition hover:text-app-primary"
 											on:click={() => onOpenProject(group.projectId)}
 										>
 											{group.projectName}
@@ -441,24 +474,139 @@
 									</div>
 									{#if group.totalPages > 1}
 										<div class="mt-2 flex items-center gap-1">
-											{#each Array(group.totalPages) as _, i}
-												{@const pageNum = i + 1}
-												<button
-													type="button"
-													class="kainbu-activity-filter__button text-xs"
-													class:kainbu-activity-filter__button--active={group.currentPage === pageNum}
-													on:click={() => {
-														activityPages = { ...activityPages, [group.projectId]: pageNum };
-													}}
-												>
-													{pageNum}
-												</button>
+											<button
+												type="button"
+												class="kainbu-activity-filter__button text-xs"
+												disabled={group.currentPage <= 1}
+												on:click={() => { activityPages = { ...activityPages, [group.projectId]: group.currentPage - 1 }; }}
+											>
+												←
+											</button>
+											{#each pageButtons(group.currentPage, group.totalPages) as btn}
+												{#if btn === '...'}
+													<span class="px-1 text-xs text-app-subtext">…</span>
+												{:else}
+													<button
+														type="button"
+														class="kainbu-activity-filter__button text-xs"
+														class:kainbu-activity-filter__button--active={group.currentPage === btn}
+														on:click={() => { activityPages = { ...activityPages, [group.projectId]: btn }; }}
+													>
+														{btn}
+													</button>
+												{/if}
 											{/each}
+											<button
+												type="button"
+												class="kainbu-activity-filter__button text-xs"
+												disabled={group.currentPage >= group.totalPages}
+												on:click={() => { activityPages = { ...activityPages, [group.projectId]: group.currentPage + 1 }; }}
+											>
+												→
+											</button>
 										</div>
 									{/if}
 								</div>
 							{/each}
 						</div>
+					</section>
+				{:else if workspaceFlatActivity && workspaceFlatActivity.totalCount > 0}
+					<section class="kainbu-dashboard__activity-log">
+						<div class="flex flex-wrap items-start justify-between gap-3">
+							<div>
+								<h3 class="kainbu-dashboard__section-label">
+									Workspace activity
+									<span class="kainbu-dashboard__section-count">{workspaceFlatActivity.totalCount}</span>
+								</h3>
+								<p class="mt-1 text-xs text-app-subtext">Recent changes across all boards.</p>
+							</div>
+							<div class="flex flex-wrap items-center gap-2">
+								<select
+									class="kainbu-activity-filter__button text-xs"
+									bind:value={activityProjectFilter}
+									aria-label="Project filter"
+								>
+									<option value="all">All projects</option>
+									{#each projects as project (project.id)}
+										<option value={project.id}>{project.name}</option>
+									{/each}
+								</select>
+								<div class="kainbu-activity-filter" aria-label="Time window">
+									{#each ['7d', '30d', 'all'] as window}
+										<button
+											type="button"
+											class:kainbu-activity-filter__button--active={activityTimeWindow === window}
+											class="kainbu-activity-filter__button"
+											on:click={() => (activityTimeWindow = window)}
+										>
+											{window}
+										</button>
+									{/each}
+								</div>
+								<div class="kainbu-activity-filter" aria-label="Activity filter">
+									{#each ['all', 'task', 'people', 'project'] as filter}
+										<button
+											type="button"
+											class:kainbu-activity-filter__button--active={activityFilter === filter}
+											class="kainbu-activity-filter__button"
+											on:click={() => (activityFilter = filter as WorkspaceActivityGroup | 'all')}
+										>
+											{filter}
+										</button>
+									{/each}
+								</div>
+							</div>
+						</div>
+						<div class="mt-3 divide-y divide-app-border/50">
+							{#each workspaceFlatActivity.events as event (event.id)}
+								<button
+									type="button"
+									class="kainbu-activity-row"
+									on:click={() => onOpenProject(event.projectId)}
+								>
+									<span class="kainbu-activity-row__dot" data-group={event.group}></span>
+									<span class="min-w-0 flex-1">
+										<span class="block truncate text-sm font-medium text-app-text">{event.title}</span>
+										<span class="block truncate text-xs text-app-subtext">{event.projectName} · {event.detail}</span>
+									</span>
+									<span class="shrink-0 text-[11px] text-app-subtext">{formatActivityTime(event.timestamp)}</span>
+								</button>
+							{/each}
+						</div>
+						{#if workspaceFlatActivity.totalPages > 1}
+							<div class="mt-3 flex items-center gap-1">
+								<button
+									type="button"
+									class="kainbu-activity-filter__button text-xs"
+									disabled={workspaceFlatActivity.currentPage <= 1}
+									on:click={() => { workspaceActivityPage = workspaceFlatActivity.currentPage - 1; }}
+								>
+									←
+								</button>
+								{#each pageButtons(workspaceFlatActivity.currentPage, workspaceFlatActivity.totalPages) as btn}
+									{#if btn === '...'}
+										<span class="px-1 text-xs text-app-subtext">…</span>
+									{:else}
+										<button
+											type="button"
+											class="kainbu-activity-filter__button text-xs"
+											class:kainbu-activity-filter__button--active={workspaceFlatActivity.currentPage === btn}
+											on:click={() => { workspaceActivityPage = btn; }}
+										>
+											{btn}
+										</button>
+									{/if}
+								{/each}
+								<button
+									type="button"
+									class="kainbu-activity-filter__button text-xs"
+									disabled={workspaceFlatActivity.currentPage >= workspaceFlatActivity.totalPages}
+									on:click={() => { workspaceActivityPage = workspaceFlatActivity.currentPage + 1; }}
+								>
+									→
+								</button>
+							</div>
+						{/if}
 					</section>
 				{:else}
 					<section class="kainbu-dashboard__activity-log">
