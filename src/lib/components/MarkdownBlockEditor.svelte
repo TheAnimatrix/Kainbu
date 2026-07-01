@@ -1713,7 +1713,8 @@
 			extensions: [
 				StarterKit.configure({
 					dropcursor: false,
-					codeBlock: false
+					codeBlock: false,
+					link: false
 				}),
 				CodeBlockLowlight.configure({
 					lowlight
