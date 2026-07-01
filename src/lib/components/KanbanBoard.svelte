@@ -51,7 +51,8 @@
 		MAX_COLUMN_WIDTH,
 		MIN_COLUMN_WIDTH,
 		SURFACE_TONE_OPTIONS,
-		TAG_COLORS
+		TAG_COLORS,
+		TAG_COLORS as TAG_COLOR_PRESETS
 	} from '$lib/kainbu/constants';
 	import { filterColumnsForBoardSearch, normalizeBoardSearchQuery } from '$lib/kainbu/boardSearch';
 	import { rewriteTaskTitle } from '$lib/kainbu/ai';
@@ -1240,16 +1241,84 @@
 		input.style.height = `${input.scrollHeight}px`;
 	};
 
+	const autoTagFromTitle = (title: string): { cleanedTitle: string; tagLabels: string[] } => {
+		// Match trailing hashtags at the end of the title
+		// e.g., "Fix login bug #urgent #backend" -> cleaned: "Fix login bug", tags: ["urgent", "backend"]
+		// Hashtags in the middle are left alone: "fix #bug login" stays as-is
+		const trailingTagPattern = /^(.*?)((?:\s+#[\w-]+)+)$/;
+		const match = title.match(trailingTagPattern);
+		if (!match) {
+			return { cleanedTitle: title, tagLabels: [] };
+		}
+
+		const cleanedTitle = match[1].trimEnd();
+		const tagsPart = match[2];
+		const tagLabels: string[] = [];
+
+		// Extract each #tag label from the trailing tags portion
+		const tagRegex = /#([\w-]+)/g;
+		let tagMatch;
+		while ((tagMatch = tagRegex.exec(tagsPart)) !== null) {
+			const label = tagMatch[1].trim();
+			if (label) {
+				tagLabels.push(label);
+			}
+		}
+
+		return { cleanedTitle, tagLabels };
+	};
+
+	const resolveOrCreateTags = (tagLabels: string[]): Tag[] => {
+		const resolved: Tag[] = [];
+		const usedColors = new Set(existingTags.map((t) => t.color));
+		let colorIndex = existingTags.length;
+
+		for (const label of tagLabels) {
+			// Check if tag with this label already exists on the board
+			const existing = existingTags.find(
+				(t) => t.label.trim().toLowerCase() === label.toLowerCase()
+			);
+			if (existing) {
+				// Reuse existing tag
+				resolved.push(existing);
+			} else {
+				// Create a new tag with a deterministic color
+				const colorPreset =
+					TAG_COLOR_PRESETS[colorIndex % TAG_COLOR_PRESETS.length] ?? TAG_COLOR_PRESETS[0];
+				const newTag: Tag = {
+					id: createId(),
+					label,
+					color: colorPreset.value
+				};
+				resolved.push(newTag);
+				colorIndex++;
+			}
+		}
+
+		return resolved;
+	};
+
 	const saveTaskTitleEdit = () => {
 		if (!editingTaskTitle) return;
 
-		const nextTitle = editingTaskTitleValue.trim();
+		const rawTitle = editingTaskTitleValue.trim();
 		const { columnId, taskId } = editingTaskTitle;
 
 		suppressTaskOpenUntil = Date.now() + 250;
 
-		if (nextTitle) {
-			updateTask(columnId, taskId, (task) => ({ ...task, title: nextTitle }));
+		if (rawTitle) {
+			// Extract trailing hashtags and auto-add them as tags
+			const { cleanedTitle, tagLabels } = autoTagFromTitle(rawTitle);
+			const newTags = tagLabels.length > 0 ? resolveOrCreateTags(tagLabels) : [];
+
+			updateTask(columnId, taskId, (task) => ({
+				...task,
+				title: cleanedTitle,
+				tags:
+					newTags.length > 0
+						? [...(task.tags || []), ...newTags]
+						: task.tags
+			}));
 		}
 
 		cancelTaskTitleEdit();
