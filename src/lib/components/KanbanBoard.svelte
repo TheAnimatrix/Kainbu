@@ -1245,7 +1245,7 @@
 		// Match trailing hashtags at the end of the title
 		// ##tag = escaped: stays as #tag in title, no tag created
 		// #tag = auto-tag: stripped from title, added as tag
-		const trailingTagPattern = /^(.*?)((?:\s+#{1,2}[\w-]+)+)$/;
+		const trailingTagPattern = /^([\s\S]*?)((?:\s+#{1,2}[\w-]+)+)$/;
 		const match = title.match(trailingTagPattern);
 		if (!match) {
 			return { cleanedTitle: title, tagLabels: [] };
