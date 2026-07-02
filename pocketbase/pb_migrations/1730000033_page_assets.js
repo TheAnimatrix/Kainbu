@@ -52,8 +52,6 @@ migrate(
 		try {
 			const collection = app.findCollectionByNameOrId('page_assets');
 			app.delete(collection);
-		} catch (_) {
-			// already removed
-		}
+		} catch (_) {}
 	}
 );
