@@ -83,18 +83,22 @@ const taskDraftProperties = {
 };
 
 export const webSearch = async (query: string): Promise<string> => {
-	const apiKey = getEnv('OPENROUTER_API_KEY', '');
+	const apiKey = getEnv('OPENROUTER_API_KEY', '') || getEnv('AI_GATEWAY_API_KEY', '');
 	if (!apiKey)
 		return JSON.stringify({ ok: false, error: 'Web search is not available (missing API key).' });
 
+	const isVercel = !getEnv('OPENROUTER_API_KEY', '');
+	const endpoint = isVercel
+		? 'https://ai-gateway.vercel.sh/v1/chat/completions'
+		: 'https://openrouter.ai/api/v1/chat/completions';
+
 	try {
-		const res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+		const res = await fetch(endpoint, {
 			method: 'POST',
 			headers: {
 				'Content-Type': 'application/json',
 				Authorization: `Bearer ${apiKey}`,
-				'HTTP-Referer': 'https://kainbu.test',
-				'X-Title': 'Kainbu Web Search'
+				...(isVercel ? {} : { 'HTTP-Referer': 'https://kainbu.test', 'X-Title': 'Kainbu Web Search' })
 			},
 			body: JSON.stringify({
 				model: WORKSPACE_AI_WEB_SEARCH_MODEL,
