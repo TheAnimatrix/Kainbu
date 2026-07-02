@@ -251,8 +251,9 @@ export const fetchCompletionJson = async (
     modelConfig: ProviderModelConfig,
     options: { promptCache?: boolean } = {}
 ): Promise<{ response: unknown; usage: OpenRouterUsage }> => {
-    // Try AI SDK first (fallback-safe via dynamic import)
-    const aiSdk = await _getAiSdk();
+    // Use manual fetch when prompt caching is needed (AI SDK doesn't support it yet).
+    // Otherwise try AI SDK first (fallback-safe via dynamic import).
+    const aiSdk = options.promptCache ? null : await _getAiSdk();
     if (aiSdk) {
         const result = await aiSdk.aiSdkGenerateText(
             messages,
