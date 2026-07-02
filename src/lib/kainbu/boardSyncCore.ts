@@ -301,6 +301,25 @@ const applyBoardMutations = async (
 
 	if (mutations.upsertTasks.length) {
 		await upsertProjectTasks(pb, projectPbId, mutations.upsertTasks, resolveBoardPbId);
+
+		// Bump board timestamps for any board that had soft-deleted tasks,
+		// so the merge logic picks the local (more recent) state.
+		const softDeletedBoardIds = new Set<string>();
+		for (const row of mutations.upsertTasks) {
+			if (row.deleted_at != null && row.board_id) {
+				softDeletedBoardIds.add(row.board_id);
+			}
+		}
+		for (const boardClientId of softDeletedBoardIds) {
+			try {
+				const boardPbId = await resolveBoardPbId(boardClientId);
+				if (boardPbId) {
+					await pb.collection('project_boards').update(boardPbId, {});
+				}
+			} catch {
+				// Board may not exist yet — safe to skip
+			}
+		}
 	}
 
 	if (mutations.deleteColumnIds.length) {
