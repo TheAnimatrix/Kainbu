@@ -1005,20 +1005,21 @@ const compressImageIfNeeded = async (file: File): Promise<File> => {
 
 	const handleDeleteAsset = async (assetId: string) => {
 		editorNotice = '';
-		if (onEmbedDelete) {
-			try {
-				await onEmbedDelete(assetId);
-				return;
-			} catch (error) {
-				editorNotice = error instanceof Error ? error.message : 'Unable to remove image block.';
-				return;
-			}
-		}
 
+		// Always remove the node from the editor first
 		removeAssetNodes([assetId], {
 			immediate: true,
 			reason: 'command'
 		});
+
+		// Then call the server-side callback if provided
+		if (onEmbedDelete) {
+			try {
+				await onEmbedDelete(assetId);
+			} catch (error) {
+				editorNotice = error instanceof Error ? error.message : 'Unable to remove image block.';
+			}
+		}
 	};
 
 	const handleAddAssetToChat = async (assetId: string) => {
