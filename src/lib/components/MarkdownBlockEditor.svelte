@@ -577,6 +577,8 @@ const compressImageIfNeeded = async (file: File): Promise<File> => {
 	let editorValue = value;
 	let editorNotice = '';
 	let pendingImageInsertPos: number | null = null;
+	/** Captured synchronously in the paste handler (before the async gap in handleImageFiles). */
+	let pendingInsertPos: number | null = null;
 	let syncingFromValue = false;
 	let pendingChange: {
 		reason?: ChangeReason;
@@ -900,14 +902,35 @@ const compressImageIfNeeded = async (file: File): Promise<File> => {
 		}
 	};
 
-	const getImageInsertPosition = () => {
+	const getImageInsertPosition = (): number | null => {
 		if (!editor) return null;
-		if (typeof pendingImageInsertPos === 'number') {
-			return pendingImageInsertPos;
+		const ed = editor;
+
+		// Helper: given any resolved position, return a block-level position —
+		// after the top-level block (depth >= 1) or the raw position if already
+		// between blocks (depth === 0).
+		const blockLevel = ($pos: import('@tiptap/pm/model').ResolvedPos): number =>
+			$pos.depth >= 1 ? $pos.after(1) : $pos.pos;
+
+		// 1. Use the synchronously-captured paste position first (decouples the
+		//    insertion point from the async gap in handleImageFiles).
+		if (typeof pendingInsertPos === 'number') {
+			const pos = pendingInsertPos;
+			pendingInsertPos = null;
+			return pos;
 		}
-		// Return a block-level position by inserting after the current block
-		const { $from } = editor.state.selection;
-		return $from.after($from.depth >= 1 ? 1 : 0);
+
+		// 2. For slash command: pendingImageInsertPos was set after deleteRange.
+		//    Resolve it to a block-level position so we never try to insert
+		//    block nodes (assetImage) inside an inline context.
+		if (typeof pendingImageInsertPos === 'number') {
+			const $pos = ed.state.doc.resolve(pendingImageInsertPos);
+			return blockLevel($pos);
+		}
+
+		// 3. Fallback: use the current selection — always resolve to block-level.
+		const { $from } = ed.state.selection;
+		return blockLevel($from);
 	};
 
 	const findAssetNodes = (assetId: string) => {
@@ -1101,24 +1124,34 @@ const compressImageIfNeeded = async (file: File): Promise<File> => {
 		}));
 		const insertPosition = getImageInsertPosition();
 		pendingImageInsertPos = null;
+		pendingInsertPos = null;
 		if (insertPosition === null) return;
 
 		queueChange('upload');
-		editor
-			.chain()
-			.focus()
-			.insertContentAt(
-				insertPosition,
-				uploadRequests.map((request) => ({
-					type: 'assetImage',
-					attrs: {
-						assetId: `pending:${request.tempId}`,
-						alt: request.file.name || 'Image',
-						width: IMAGE_BLOCK_DEFAULT_WIDTH
-					}
-				}))
-			)
-			.run();
+		try {
+			editor
+				.chain()
+				.focus()
+				.insertContentAt(
+					insertPosition,
+					uploadRequests.map((request) => ({
+						type: 'assetImage',
+						attrs: {
+							assetId: `pending:${request.tempId}`,
+							alt: request.file.name || 'Image',
+							width: IMAGE_BLOCK_DEFAULT_WIDTH
+						}
+					}))
+				)
+				.run();
+		} catch (insertError) {
+			console.error('[MarkdownBlockEditor] Failed to insert image blocks:', insertError);
+			removeAssetNodes(
+				uploadRequests.map((request) => `pending:${request.tempId}`),
+				{ immediate: true, reason: 'upload' }
+			);
+			return;
+		}
 		normalizeAssetImageEditingSurfaces(editor);
 		const imageBlockIndex = getTopLevelBlocks(editor.state.doc).findIndex(
 			(block) => block.node.type.name === 'assetImage'
@@ -1736,7 +1769,11 @@ const compressImageIfNeeded = async (file: File): Promise<File> => {
 							if (props.id === 'image') {
 								queueChange('command');
 								targetEditor.chain().focus().deleteRange(range).run();
-								pendingImageInsertPos = targetEditor.state.selection.from;
+								// Store a block-level position (after the current block) so we never
+								// attempt to insert block nodes (assetImage) at an inline position.
+								const {$from: cmdFrom} = targetEditor.state.selection;
+								pendingImageInsertPos = cmdFrom.depth >= 1 ? cmdFrom.after(1) : cmdFrom.pos;  
+								pendingInsertPos = null;
 								imageInput?.click();
 								return;
 							}
@@ -1847,6 +1884,12 @@ const compressImageIfNeeded = async (file: File): Promise<File> => {
 					}
 
 					event.preventDefault();
+					// Capture the insertion position synchronously, before the async gap
+					// in handleImageFiles (image compression may yield the event loop).
+					if (editor) {
+						const {$from: pasteFrom} = editor.state.selection;
+						pendingInsertPos = pasteFrom.depth >= 1 ? pasteFrom.after(1) : pasteFrom.pos;
+					}
 					void handleImageFiles(imageFiles, 'paste');
 					return true;
 				}
