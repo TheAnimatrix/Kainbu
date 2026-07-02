@@ -1854,11 +1854,32 @@
 		height: 10rem;
 		align-items: center;
 		justify-content: center;
+		gap: 0.625rem;
 		border: 1px dashed var(--color-app-border);
 		border-radius: 0.5rem;
 		background: rgb(9 9 11 / 0.55);
 		color: var(--color-app-subtext);
 		font-size: 0.875rem;
+		animation: kainbu-loading-pulse 1.6s ease-in-out infinite;
+	}
+
+	.markdown-editor__asset-loading::before {
+		content: '';
+		width: 1rem;
+		height: 1rem;
+		border: 2px solid var(--color-app-border);
+		border-top-color: var(--color-app-text);
+		border-radius: 50%;
+		animation: kainbu-spin 0.8s linear infinite;
+	}
+
+	@keyframes kainbu-loading-pulse {
+		0%, 100% {
+			opacity: 0.6;
+		}
+		50% {
+			opacity: 1;
+		}
 	}
 
 	.markdown-editor__asset-outline {
