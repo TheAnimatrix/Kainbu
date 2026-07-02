@@ -2,6 +2,9 @@
 
 migrate(
 	(app) => {
+		const projects = app.findCollectionByNameOrId('projects');
+		const users = app.findCollectionByNameOrId('users');
+
 		const projectMemberViaProject =
 			'@request.auth.id != "" && (@collection.project_memberships.project ?= project && @collection.project_memberships.user ?= @request.auth.id)';
 
@@ -19,7 +22,7 @@ migrate(
 					type: 'relation',
 					required: true,
 					maxSelect: 1,
-					collectionId: 'projects',
+					collectionId: projects.id,
 					cascadeDelete: true
 				},
 				{ name: 'page_client_id', type: 'text', required: true, max: 64 },
@@ -38,7 +41,7 @@ migrate(
 					type: 'relation',
 					required: true,
 					maxSelect: 1,
-					collectionId: 'users'
+					collectionId: users.id
 				},
 				{ name: 'file', type: 'file', required: true, maxSelect: 1, maxSize: 20971520 }
 			]
