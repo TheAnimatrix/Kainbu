@@ -3,6 +3,17 @@
 	import MarkdownBlockEditor from '$lib/components/MarkdownBlockEditor.svelte';
 	import type { TaskReferenceOption } from '$lib/kainbu/taskMarkdown';
 
+	type ImageUploadRequest = {
+	tempId: string;
+	file: File;
+	source: 'paste' | 'command';
+};
+type ImageUploadResult = {
+	tempId: string;
+	assetId?: string;
+	error?: string;
+};
+
 	type PageDiffPart = {
 		value: string;
 		added?: boolean;
@@ -19,6 +30,10 @@
 		undefined;
 	export let onChange: (value: string) => void;
 	export let hideHeader = false;
+	export let assetUrls: Record<string, string> = {};
+	export let onImageUpload: (
+		requests: ImageUploadRequest[]
+	) => Promise<ImageUploadResult[]> = async () => [];
 
 	const splitIntoBlocks = (value: string) => {
 		const normalized = (value || '').replace(/\r\n/g, '\n').trim();
@@ -105,6 +120,8 @@
 					disabled={isLocked}
 					{referenceOptions}
 					{onReferenceNavigate}
+					{assetUrls}
+					{onImageUpload}
 					onChange={(nextValue) => onChange(nextValue)}
 				/>
 			</div>

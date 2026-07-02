@@ -150,7 +150,8 @@
 		type WorkspaceUrlState
 	} from '$lib/kainbu/workspaceUrl';
 	import { normalizeBoardPreferences, boardPreferencesEqual } from '$lib/kainbu/boardPreferences';
-	import { getProjectMemberDisplayName, getProjectMemberSearchText } from '$lib/kainbu/members';
+	import { deletePageAsset, downloadPageAssetBlob, uploadPageAsset, type PageAsset } from '$lib/kainbu/pageAssets';
+import { getProjectMemberDisplayName, getProjectMemberSearchText } from '$lib/kainbu/members';
 	import {
 		getProjectBoard,
 		getProjectPage,
@@ -325,6 +326,8 @@
 	let projectBackgroundImageUrl: string | null = null;
 	let personalBackgroundUploading = false;
 	let projectBackgroundUploading = false;
+	let pageAssetUrls: Record<string, string> = {};
+	const pageObjectUrls = new Map<string, string>();
 	let avatarUploading = false;
 	let boardSessionHistory: Record<string, BoardHistoryState> = {};
 	let usernameDraft = '';
@@ -3472,6 +3475,81 @@ $: kanbanComparisonData =
 		scheduleChatSync(currentProject.id, 0);
 	};
 
+	const setPageObjectUrl = (key: string, url: string) => {
+		const previousUrl = pageObjectUrls.get(key);
+		if (previousUrl && previousUrl !== url) URL.revokeObjectURL(previousUrl);
+		pageObjectUrls.set(key, url);
+		pageAssetUrls = { ...pageAssetUrls, [key]: url };
+	};
+
+	const promotePageObjectUrl = (fromKey: string, toKey: string) => {
+		const url = pageObjectUrls.get(fromKey);
+		if (!url) return;
+		pageObjectUrls.delete(fromKey);
+		pageObjectUrls.set(toKey, url);
+		const nextUrls = { ...pageAssetUrls };
+		delete nextUrls[fromKey];
+		nextUrls[toKey] = url;
+		pageAssetUrls = nextUrls;
+	};
+
+	const dropPageObjectUrl = (key: string, revoke = true) => {
+		const previousUrl = pageObjectUrls.get(key);
+		if (previousUrl && revoke) URL.revokeObjectURL(previousUrl);
+		pageObjectUrls.delete(key);
+		const { [key]: _discarded, ...remaining } = pageAssetUrls;
+		pageAssetUrls = remaining;
+	};
+
+	const ensurePageAssetPreview = async (asset: PageAsset) => {
+		if (!asset.mimeType.startsWith('image/') || pageAssetUrls[asset.id]) return;
+		try {
+			const blob = await downloadPageAssetBlob(asset);
+			setPageObjectUrl(asset.id, URL.createObjectURL(blob));
+		} catch (error) {
+			console.error(error);
+		}
+	};
+
+	const handlePageEmbedUpload = async (
+		requests: Array<{ tempId: string; file: File; source: 'paste' | 'command' }>
+	) => {
+		const projectId = currentProject?.id;
+		const pageId = currentPage?.id;
+		if (!projectId || !pageId) {
+			return requests.map((request) => ({ tempId: request.tempId, error: 'No active page.' }));
+		}
+
+		// Set blob URLs for immediate preview while uploading
+		for (const request of requests) {
+			if (request.file.type.startsWith('image/')) {
+				setPageObjectUrl(`pending:${request.tempId}`, URL.createObjectURL(request.file));
+			}
+		}
+
+		const results = await Promise.all(
+			requests.map(async (request) => {
+				try {
+					const asset = await uploadPageAsset(projectId, pageId, request.file, 'embed');
+					if (pageAssetUrls[`pending:${request.tempId}`]) {
+						promotePageObjectUrl(`pending:${request.tempId}`, asset.id);
+					} else {
+						void ensurePageAssetPreview(asset);
+					}
+					return { tempId: request.tempId, assetId: asset.id };
+				} catch (error) {
+					dropPageObjectUrl(`pending:${request.tempId}`);
+					return {
+						tempId: request.tempId,
+						error: error instanceof Error ? error.message : 'Unable to upload image.'
+					};
+				}
+			})
+		);
+
+		return results;
+	};
+
 	const handleScratchpadChange = (value: string) => {
 		if (!currentProject || !currentPage || proposalPreviewTarget === 'scratchpad') return;
 		if (currentPage.content === value) return;
@@ -4813,6 +4891,13 @@ $: kanbanComparisonData =
 		boardSyncTimeouts.clear();
 		scratchpadSyncTimeouts.clear();
 		chatSyncTimeouts.clear();
+
+		// Revoke page asset object URLs to prevent memory leaks
+		for (const url of pageObjectUrls.values()) {
+			URL.revokeObjectURL(url);
+		}
+		pageObjectUrls.clear();
+		pageAssetUrls = {};
 	});
 </script>
 
@@ -5234,6 +5319,8 @@ $: kanbanComparisonData =
 													referenceOptions={scratchpadReferenceOptions}
 													onReferenceNavigate={handleScratchpadReferenceNavigate}
 													onChange={handleScratchpadChange}
+													assetUrls={pageAssetUrls}
+													onImageUpload={handlePageEmbedUpload}
 												/>
 											</div>
 										{/key}
@@ -5430,6 +5517,8 @@ $: kanbanComparisonData =
 													referenceOptions={scratchpadReferenceOptions}
 													onReferenceNavigate={handleScratchpadReferenceNavigate}
 													onChange={handleScratchpadChange}
+													assetUrls={pageAssetUrls}
+													onImageUpload={handlePageEmbedUpload}
 												/>
 											</div>
 										{/key}

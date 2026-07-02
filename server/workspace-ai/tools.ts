@@ -408,5 +408,52 @@ export const OpenRouterTools = [
 				required: ['query']
 			}
 		}
+	},
+	{
+		type: 'function',
+		function: {
+			name: 'search_tasks',
+			description:
+				'Search across all board columns for tasks matching a query. Searches task titles, descriptions, and tag labels. Returns matching tasks with refs, column context, and pagination info. Use when the user asks to find a specific task or when board_list_tasks output is too large to scan manually.',
+			parameters: {
+				type: 'object',
+				properties: {
+					query: {
+						type: 'string',
+						description: 'Search string. Case-insensitive substring match against title, description, and tag labels. Empty string matches all tasks.'
+					},
+					columnRef: {
+						type: 'string',
+						description: 'Optional column ref (e.g. C1) to restrict search to one column.'
+					},
+					tag: {
+						type: 'string',
+						description: 'Optional tag label to filter results (case-insensitive exact match).'
+					},
+					color: {
+						type: 'string',
+						enum: TONE_COLOR_ENUM,
+						description: 'Optional card color tone to filter results.'
+					},
+					hasCheckbox: {
+						type: 'boolean',
+						description: 'Filter to tasks with/without checkbox. Omit to include both.'
+					},
+					checked: {
+						type: 'boolean',
+						description: 'Filter to checked/unchecked tasks. Omit to include both.'
+					},
+					offset: {
+						type: 'number',
+						description: 'Skip this many matching tasks (default 0)'
+					},
+					limit: {
+						type: 'number',
+						description: 'Max tasks to return (default 20, max 50)'
+					}
+				},
+				required: ['query']
+			}
+		}
 	}
 ];
