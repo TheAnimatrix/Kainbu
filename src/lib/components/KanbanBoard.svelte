@@ -2278,9 +2278,14 @@
 														use:dragHandle
 														aria-label={`Drag column ${column.title}`}
 														class="flex min-h-0 min-w-0 cursor-grab items-center gap-1.5 text-left active:cursor-grabbing"
-													>
+														>
 														<h3
 															class="min-w-0 flex-1 truncate text-[13px] font-medium leading-snug text-app-text"
+															ondblclick={(event) => {
+																event.stopPropagation();
+																editingColumnId = column.id;
+																editingColumnTitle = column.title;
+															}}
 														>
 															{column.title}
 														</h3>
