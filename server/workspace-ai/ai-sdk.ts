@@ -465,6 +465,8 @@ export const aiSdkStreamText = async (
 		model: client(modelConfig.model),
 		messages: coreMessages,
 		maxOutputTokens: WORKSPACE_AI_MAX_TOKENS,
+		tools: getAiSdkTools(),
+		toolChoice: 'auto',
 		onChunk: ({ chunk }: { chunk: TextStreamPart<ToolSet> }) => {
 			if (chunk.type === 'text-delta') {
 				content += chunk.text;
