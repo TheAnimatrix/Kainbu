@@ -1279,7 +1279,6 @@
 	const resolveOrCreateTags = (tagLabels: string[]): Tag[] => {
 		const resolved: Tag[] = [];
 		const usedColors = new Set(existingTags.map((t) => t.color));
-		let colorIndex = existingTags.length;
 
 		for (const label of tagLabels) {
 			// Check if tag with this label already exists on the board
@@ -1290,16 +1289,18 @@
 				// Reuse existing tag
 				resolved.push(existing);
 			} else {
-				// Create a new tag with a deterministic color
-				const colorPreset =
-					TAG_COLOR_PRESETS[colorIndex % TAG_COLOR_PRESETS.length] ?? TAG_COLOR_PRESETS[0];
+				// Create a new tag with a random unused color
+				const available = TAG_COLOR_PRESETS.filter((c) => !usedColors.has(c.value));
+				const colorPreset = available.length > 0
+					? available[Math.floor(Math.random() * available.length)]
+					: TAG_COLOR_PRESETS[0];
 				const newTag: Tag = {
 					id: createId(),
 					label,
 					color: colorPreset.value
 				};
 				resolved.push(newTag);
-				colorIndex++;
+				usedColors.add(colorPreset.value);
 			}
 		}
 
