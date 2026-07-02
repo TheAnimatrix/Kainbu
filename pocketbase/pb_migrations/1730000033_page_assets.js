@@ -2,13 +2,37 @@
 
 migrate(
 	(app) => {
+		// The collection may already exist from a previously-failed migration attempt.
+		let pageAssets;
+		try {
+			pageAssets = app.findCollectionByNameOrId('page_assets');
+		} catch {
+			pageAssets = null;
+		}
+
+		if (pageAssets) {
+			// Collection exists — just ensure the relation fields use proper IDs.
+			const projects = app.findCollectionByNameOrId('projects');
+			const users = app.findCollectionByNameOrId('users');
+			const projectField = pageAssets.fields.find((f) => f.name === 'project');
+			const uploadedByField = pageAssets.fields.find((f) => f.name === 'uploaded_by');
+			if (projectField && projectField.collectionId !== projects.id) {
+				projectField.collectionId = projects.id;
+			}
+			if (uploadedByField && uploadedByField.collectionId !== users.id) {
+				uploadedByField.collectionId = users.id;
+			}
+			app.save(pageAssets);
+			return;
+		}
+
 		const projects = app.findCollectionByNameOrId('projects');
 		const users = app.findCollectionByNameOrId('users');
 
 		const projectMemberViaProject =
 			'@request.auth.id != "" && (@collection.project_memberships.project ?= project && @collection.project_memberships.user ?= @request.auth.id)';
 
-		const pageAssets = new Collection({
+		pageAssets = new Collection({
 			name: 'page_assets',
 			type: 'base',
 			listRule: projectMemberViaProject,
@@ -48,10 +72,5 @@ migrate(
 		});
 		app.save(pageAssets);
 	},
-	(app) => {
-		try {
-			const collection = app.findCollectionByNameOrId('page_assets');
-			app.delete(collection);
-		} catch (_) {}
-	}
+	() => {}
 );
