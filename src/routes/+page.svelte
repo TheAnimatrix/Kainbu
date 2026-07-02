@@ -150,7 +150,7 @@
 		type WorkspaceUrlState
 	} from '$lib/kainbu/workspaceUrl';
 	import { normalizeBoardPreferences, boardPreferencesEqual } from '$lib/kainbu/boardPreferences';
-	import { deletePageAsset, downloadPageAssetBlob, uploadPageAsset, type PageAsset } from '$lib/kainbu/pageAssets';
+	import { deletePageAsset, downloadPageAssetBlob, fetchPageAssets, uploadPageAsset, type PageAsset } from '$lib/kainbu/pageAssets';
 import { getProjectMemberDisplayName, getProjectMemberSearchText } from '$lib/kainbu/members';
 	import {
 		getProjectBoard,
@@ -3510,6 +3510,17 @@ $: kanbanComparisonData =
 			console.error(error);
 		}
 	};
+
+	// Fetch page assets whenever the current page changes
+	$: if (currentProject && currentPage) {
+		fetchPageAssets(currentProject.id, currentPage.id).then((assets) => {
+			for (const asset of assets) {
+				void ensurePageAssetPreview(asset);
+			}
+		}).catch((error) => {
+			console.error(error);
+		});
+	}
 
 	const handlePageEmbedUpload = async (
 		requests: Array<{ tempId: string; file: File; source: 'paste' | 'command' }>
