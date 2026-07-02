@@ -905,7 +905,9 @@ const compressImageIfNeeded = async (file: File): Promise<File> => {
 		if (typeof pendingImageInsertPos === 'number') {
 			return pendingImageInsertPos;
 		}
-		return editor.state.selection.from;
+		// Return a block-level position by inserting after the current block
+		const { $from } = editor.state.selection;
+		return $from.after($from.depth >= 1 ? 1 : 0);
 	};
 
 	const findAssetNodes = (assetId: string) => {
