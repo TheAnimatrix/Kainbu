@@ -2497,6 +2497,19 @@
 																	{#each task.tags || [] as tag (tag.id)}
 																		<span class={getTagToneClasses(tag.color)}>
 																			{tag.label}
+																			<button
+																				type="button"
+																				class="ml-0.5 hover:opacity-60"
+																				onclick={(event) => {
+																																	event.stopPropagation();
+																																	updateTask(taskColumnId, task.id, (t) => ({
+																																		...t,
+																																		tags: (t.tags || []).filter((entry) => entry.id !== tag.id)
+																																	}));
+																																}}
+																			>
+																				×
+																			</button>
 																		</span>
 																	{/each}
 																</div>
