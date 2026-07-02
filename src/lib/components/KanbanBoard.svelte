@@ -1241,25 +1241,34 @@
 		input.style.height = `${input.scrollHeight}px`;
 	};
 
-	const autoTagFromTitle = (title: string): { cleanedTitle: string; tagLabels: string[] } => {
-		// Match trailing hashtags at the end of the title
+	const autoTagFromTitle = (title: string): { cleanedTitle: string; tagLabels: string[]; dueAt: number | undefined } => {
+		// Match trailing hashtags + optional /due: shorthand at the end of the title
 		// ##tag = escaped: stays as #tag in title, no tag created
 		// #tag = auto-tag: stripped from title, added as tag
-		const trailingTagPattern = /^([\s\S]*?)((?:\s+#{1,2}[\w-]+)+)$/;
-		const match = title.match(trailingTagPattern);
+		// /due:10h or /due:tomorrow or /due:May5 or /due:3-07-2026-11:38pm
+		const trailingPattern = /^([\s\S]*?)((?:\s+(?:#{1,2}[\w-]+|\/due:[\w\-\/:]+))+)$/;
+		const match = title.match(trailingPattern);
 		if (!match) {
-			return { cleanedTitle: title, tagLabels: [] };
+			return { cleanedTitle: title, tagLabels: [], dueAt: undefined };
 		}
 
 		const baseTitle = match[1].trimEnd();
-		const tagsPart = match[2];
+		const partsStr = match[2];
 		const tagLabels: string[] = [];
-		let escapedPart = tagsPart;
+		let dueAt: number | undefined;
+		let escapedPart = partsStr;
+
+		// Extract /due: shorthand
+		const dueMatch = partsStr.match(/\/due:([\w\-\/:]+)/);
+		if (dueMatch) {
+			dueAt = parseDueShorthand(dueMatch[1]);
+			escapedPart = escapedPart.replace(/\s*\/due:[\w\-\/:]+/, '');
+		}
 
 		// Extract single #tag (not ##) as auto-tags
 		const tagRegex = /(?<!\#)\#([\w-]+)/g;
 		let tagMatch;
-		while ((tagMatch = tagRegex.exec(tagsPart)) !== null) {
+		while ((tagMatch = tagRegex.exec(partsStr)) !== null) {
 			const label = tagMatch[1].trim();
 			if (label) {
 				tagLabels.push(label);
@@ -1273,7 +1282,45 @@
 			escapedPart = escapedPart.replace(new RegExp('\\s#' + label + '(?!\\w)'), '');
 		}
 
-		return { cleanedTitle: (baseTitle + escapedPart).trim(), tagLabels };
+		return { cleanedTitle: (baseTitle + escapedPart).trim(), tagLabels, dueAt };
+	};
+
+	const parseDueShorthand = (value: string): number | undefined => {
+		const now = Date.now();
+		// Relative: 10h, 5D, 3d, 2w, 1m
+		const relMatch = value.match(/^(\d+)([hHdDwWmM])$/);
+		if (relMatch) {
+			const n = parseInt(relMatch[1]);
+			const unit = relMatch[2].toLowerCase();
+			const ms = unit === 'h' ? 3600000 : unit === 'd' ? 86400000 : unit === 'w' ? 604800000 : 2592000000;
+			return now + n * ms;
+		}
+		// tomorrow
+		if (value.toLowerCase() === 'tomorrow') {
+			const d = new Date(now);
+			d.setDate(d.getDate() + 1);
+			d.setHours(9, 0, 0, 0);
+			return d.getTime();
+		}
+		// Named month: May5, Jan12
+		const namedMatch = value.match(/^([A-Za-z]+)(\d+)$/);
+		if (namedMatch) {
+			const d = new Date(`${namedMatch[1]} ${namedMatch[2]}, ${new Date().getFullYear()}`);
+			if (!isNaN(d.getTime())) return d.getTime();
+		}
+		// ISO-ish: 3-07-2026 or 3-07-2026-11:38pm
+		const isoMatch = value.match(/^(\d{1,2})[-/](\d{1,2})[-/](\d{2,4})(?:[-/](\d{1,2}):(\d{2})(am|pm)?)?$/i);
+		if (isoMatch) {
+			let [_, m, d, y, hh, mm, ampm] = isoMatch;
+			let year = parseInt(y);
+			if (year < 100) year += 2000;
+			let hour = hh ? parseInt(hh) : 0;
+			if (ampm && ampm.toLowerCase() === 'pm' && hour < 12) hour += 12;
+			if (ampm && ampm.toLowerCase() === 'am' && hour === 12) hour = 0;
+			const date = new Date(year, parseInt(m) - 1, parseInt(d), hour, parseInt(mm || '0'));
+			if (!isNaN(date.getTime())) return date.getTime();
+		}
+		return undefined;
 	};
 
 	const resolveOrCreateTags = (tagLabels: string[]): Tag[] => {
@@ -1316,8 +1363,8 @@
 		suppressTaskOpenUntil = Date.now() + 250;
 
 		if (rawTitle) {
-			// Extract trailing hashtags and auto-add them as tags
-			const { cleanedTitle, tagLabels } = autoTagFromTitle(rawTitle);
+			// Extract trailing hashtags + /due: shorthand
+			const { cleanedTitle, tagLabels, dueAt } = autoTagFromTitle(rawTitle);
 			const newTags = tagLabels.length > 0 ? resolveOrCreateTags(tagLabels) : [];
 
 			updateTask(columnId, taskId, (task) => ({
@@ -1326,7 +1373,8 @@
 				tags:
 					newTags.length > 0
 						? [...(task.tags || []), ...newTags]
-						: task.tags
+						: task.tags,
+				countdownAt: dueAt ?? task.countdownAt
 			}));
 		}
 
