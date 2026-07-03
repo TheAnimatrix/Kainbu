@@ -193,7 +193,7 @@
 	let descriptionActionMessage = '';
 	let descriptionActionTimer: ReturnType<typeof setTimeout> | null = null;
 	let latestDetailsKey = '';
-	let activeTab: 'properties' | 'files' | 'comments' | null = null;
+	let activeTab: 'properties' | 'files' | 'comments' | null = 'properties';
 
 	const normalizeDraftTask = (candidate: Task): Task => ({
 		...candidate,
