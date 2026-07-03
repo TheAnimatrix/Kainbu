@@ -1311,6 +1311,7 @@ export const searchBoardTasks = (
 		if (columnId && column.id !== columnId) continue;
 
 		for (const task of column.tasks) {
+			if (task.deletedAt) continue;
 			const inTitle = task.title.toLowerCase().includes(rawQuery);
 			const inDesc = task.description?.toLowerCase().includes(rawQuery) ?? false;
 			const inTags = task.tags?.some(t => t.label.toLowerCase().includes(rawQuery)) ?? false;
