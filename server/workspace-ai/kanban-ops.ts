@@ -1269,6 +1269,99 @@ export const deleteTasks = async (
     };
 };
 
+export const searchBoardTasks = (
+	kanban: KanbanData,
+	refs: BoardRefMap,
+	options: {
+		query: string;
+		columnRef?: string;
+		tag?: string;
+		color?: string;
+		hasCheckbox?: boolean;
+		checked?: boolean;
+		offset?: number;
+		limit?: number;
+	}
+): ToolResultPayload => {
+	const rawQuery = (options.query || '').trim().toLowerCase();
+	const columnId = options.columnRef ? resolveColumnRef(refs, options.columnRef) : undefined;
+
+	if (options.columnRef && !columnId) {
+		return {
+			ok: false,
+			error: `Unknown column ref "${options.columnRef}".`,
+			columnRefs: [...refs.columnRefToId.keys()],
+			hint: 'Call board_list_columns first.'
+		};
+	}
+
+	const matched: Array<{
+		ref: string;
+		title: string;
+		description?: string;
+		color?: string;
+		hasCheckbox?: boolean;
+		checked?: boolean;
+		tags?: Array<{ label: string; color: string }>;
+		columnRef: string;
+		columnTitle: string;
+	}> = [];
+
+	for (const column of kanban) {
+		if (columnId && column.id !== columnId) continue;
+
+		for (const task of column.tasks) {
+			const inTitle = task.title.toLowerCase().includes(rawQuery);
+			const inDesc = task.description?.toLowerCase().includes(rawQuery) ?? false;
+			const inTags = task.tags?.some(t => t.label.toLowerCase().includes(rawQuery)) ?? false;
+			const matchesQuery = rawQuery === '' || inTitle || inDesc || inTags;
+
+			const matchesTag = options.tag
+				? task.tags?.some(t => t.label.toLowerCase() === options.tag!.toLowerCase()) ?? false
+				: true;
+
+			const matchesColor = options.color ? task.color === options.color : true;
+
+			const matchesCheckbox = options.hasCheckbox !== undefined
+				? (task.hasCheckbox ?? false) === options.hasCheckbox
+				: true;
+
+			const matchesChecked = options.checked !== undefined
+				? (task.checked ?? false) === options.checked
+				: true;
+
+			if (matchesQuery && matchesTag && matchesColor && matchesCheckbox && matchesChecked) {
+				matched.push({
+					ref: refs.taskIdToRef.get(task.id) || task.id,
+					title: task.title,
+					...(task.description ? { description: task.description } : {}),
+					...(task.color ? { color: task.color } : {}),
+					...(task.hasCheckbox ? { hasCheckbox: true } : {}),
+					...(task.checked ? { checked: true } : {}),
+					...(task.tags?.length
+						? { tags: task.tags.map(tag => ({ label: tag.label, color: tag.color })) }
+						: {}),
+					columnRef: refs.columnIdToRef.get(column.id) || column.id,
+					columnTitle: column.title
+				});
+			}
+		}
+	}
+
+	const safeOffset = Math.max(0, Math.floor(options.offset ?? 0));
+	const safeLimit = Math.max(1, Math.min(50, Math.floor(options.limit ?? 20)));
+	const slice = matched.slice(safeOffset, safeOffset + safeLimit);
+	const hasMore = safeOffset + slice.length < matched.length;
+
+	return {
+		ok: true,
+		tasks: slice,
+		hasMore,
+		...(hasMore ? { nextOffset: safeOffset + slice.length } : {}),
+		message: `${matched.length} task(s) matched; showing ${slice.length}${hasMore ? ' (more available)' : ''}.`
+	};
+};
+
 export const formatToolResult = (payload: ToolResultPayload) => JSON.stringify(payload);
 
 export const sanitizeUserFacingReply = sanitizeUserFacingAiReply;

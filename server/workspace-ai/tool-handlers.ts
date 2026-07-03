@@ -22,6 +22,7 @@ import {
     parseTaskDraftsFromArgs,
     parseTaskUpdateFields,
     resolveColumnRef,
+    searchBoardTasks,
     updateColumn,
     updateTask,
 } from "./kanban-ops.js";
@@ -340,6 +341,20 @@ export const executeWorkspaceTool = async (
 
     if (name === "web_search") {
         return await webSearch(String(args.query || ""));
+    }
+
+    if (name === "search_tasks") {
+        const query = String(args.query || "");
+        const columnRef = typeof args.columnRef === "string" ? args.columnRef : undefined;
+        const tag = typeof args.tag === "string" ? args.tag : undefined;
+        const color = typeof args.color === "string" ? args.color : undefined;
+        const hasCheckbox = typeof args.hasCheckbox === "boolean" ? args.hasCheckbox : undefined;
+        const checked = typeof args.checked === "boolean" ? args.checked : undefined;
+        const offset = typeof args.offset === "number" ? args.offset : 0;
+        const limit = typeof args.limit === "number" ? args.limit : 20;
+        return formatToolResult(
+            searchBoardTasks(kanban, refs, { query, columnRef, tag, color, hasCheckbox, checked, offset, limit })
+        );
     }
 
     return formatToolResult({ ok: false, error: `Unknown tool: ${name}` });
