@@ -10,6 +10,10 @@ import typescript from 'highlight.js/lib/languages/typescript';
 import xml from 'highlight.js/lib/languages/xml';
 import sql from 'highlight.js/lib/languages/sql';
 import yaml from 'highlight.js/lib/languages/yaml';
+import c from 'highlight.js/lib/languages/c';
+import cpp from 'highlight.js/lib/languages/cpp';
+import rust from 'highlight.js/lib/languages/rust';
+import go from 'highlight.js/lib/languages/go';
 import type { TaskReferenceKind, TaskReferenceOption } from '$lib/kainbu/taskMarkdown';
 
 hljs.registerLanguage('bash', bash);
@@ -27,6 +31,12 @@ hljs.registerLanguage('html', xml);
 hljs.registerLanguage('sql', sql);
 hljs.registerLanguage('yaml', yaml);
 hljs.registerLanguage('yml', yaml);
+hljs.registerLanguage('c', c);
+hljs.registerLanguage('cpp', cpp);
+hljs.registerLanguage('c++', cpp);
+hljs.registerLanguage('rust', rust);
+hljs.registerLanguage('rs', rust);
+hljs.registerLanguage('go', go);
 
 const markdownRenderer = new Marked();
 /** Inline/block fragment parser for table cell list items (no custom extensions). */
