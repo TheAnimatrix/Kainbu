@@ -297,7 +297,10 @@ import { getProjectMemberDisplayName, getProjectMemberSearchText } from '$lib/ka
 		fallback: (node) => fade(node, { duration: 200 })
 	});
 	let showProjectSheet = false;
-	let desktopChatWidth = DESKTOP_CHAT_WIDTH;
+	let desktopChatWidth = (() => {
+		const saved = localStorage.getItem('kainbu:desktopChatWidth');
+		return saved ? parseFloat(saved) : DESKTOP_CHAT_WIDTH;
+	})();
 	let desktopChatCollapsed = true;
 	let chatOrbExitAnimating = false;
 	let composerDraft = '';
@@ -2474,6 +2477,7 @@ $: kanbanComparisonData =
 		};
 
 		const stopResizing = () => {
+			localStorage.setItem('kainbu:desktopChatWidth', String(desktopChatWidth));
 			window.removeEventListener('pointermove', handlePointerMove);
 			window.removeEventListener('pointerup', stopResizing);
 		};
