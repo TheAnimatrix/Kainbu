@@ -152,12 +152,40 @@ markdownRenderer.use({
 		code(token) {
 			const language = (token.lang || '').trim().toLowerCase();
 			const source = token.text || '';
+			const languageClass = language ? ` language-${escapeHtml(language)}` : '';
 			const highlighted = language && hljs.getLanguage(language)
 				? hljs.highlight(source, { language, ignoreIllegals: true }).value
 				: escapeHtml(source);
-			const languageClass = language ? ` language-${escapeHtml(language)}` : '';
-			const languageAttr = language ? ` data-language="${escapeHtml(language)}"` : '';
-			return `<pre class="kainbu-code-block"${languageAttr}><code class="hljs${languageClass}">${highlighted}</code></pre>`;
+			const langDisplay = language || 'plain';
+			const copyId = `cb-${Math.random().toString(36).slice(2, 9)}`;
+			return `<div class="kainbu-code-block">
+				<div class="kainbu-code-block__header">
+					<span class="kainbu-code-block__lang">${escapeHtml(langDisplay)}</span>
+					<button class="kainbu-code-block__copy" data-copy="${copyId}" type="button" title="Copy code">
+						<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>
+						<span>Copy</span>
+					</button>
+				</div>
+				<pre class="kainbu-code-block__pre"><code id="${copyId}" class="hljs${languageClass}">${highlighted}</code></pre>
+			</div>`;
+
+			// Attach click handler for copy button
+			if (typeof document !== 'undefined') {
+				setTimeout(() => {
+					const btn = document.querySelector(`[data-copy="${copyId}"]`);
+					if (btn) {
+						btn.addEventListener('click', () => {
+							const code = document.getElementById(copyId);
+							if (code) {
+								navigator.clipboard.writeText(code.textContent || '').then(() => {
+									const span = btn.querySelector('span');
+									if (span) { span.textContent = 'Copied!'; setTimeout(() => { span.textContent = 'Copy'; }, 2000); }
+								}).catch(() => {});
+							}
+						});
+					}
+				}, 0);
+			}
 		}
 	}
 });
