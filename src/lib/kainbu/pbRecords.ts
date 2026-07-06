@@ -211,6 +211,10 @@ export const mapProfileRecord = (
 		typeof record.default_show_checkbox === 'boolean' ? record.default_show_checkbox : true,
 	preferred_ai_model_id:
 		typeof record.preferred_ai_model_id === 'string' ? record.preferred_ai_model_id : null,
+	preferred_ai_thinking_level:
+		typeof record.preferred_ai_thinking_level === 'string'
+			? (record.preferred_ai_thinking_level as import('$lib/kainbu/types').AiThinkingLevel)
+			: null,
 	preferred_model_preset:
 		record.preferred_model_preset === 'smart' ? 'smart' : 'fast',
 	background_theme: (record.background_theme as ProfileRow['background_theme']) ?? null,

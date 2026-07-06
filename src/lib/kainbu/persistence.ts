@@ -412,6 +412,7 @@ const mapSettingsRow = (row: ProfileRow | null): UserSettings =>
 			? {
 					defaultShowCheckbox: row.default_show_checkbox,
 					preferredAiModelId: row.preferred_ai_model_id || row.preferred_model_preset,
+					preferredAiThinkingLevel: row.preferred_ai_thinking_level ?? undefined,
 					backgroundTheme: row.background_theme,
 					colorMode: row.color_mode
 				}
@@ -1168,9 +1169,10 @@ export const updateUsername = async (userId: string, username: string) => {
 
 export const upsertUserSettings = async (userId: string, settings: UserSettings) => {
 	const pb = getPb();
-	const payload = {
+	const payload: Record<string, unknown> = {
 		default_show_checkbox: settings.defaultShowCheckbox,
 		preferred_ai_model_id: settings.preferredAiModelId,
+		preferred_ai_thinking_level: settings.preferredAiThinkingLevel ?? null,
 		background_theme: settings.backgroundTheme,
 		color_mode: settings.colorMode
 	};

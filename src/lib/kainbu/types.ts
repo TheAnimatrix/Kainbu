@@ -385,6 +385,7 @@ export interface DashboardTimedTask {
 export interface UserSettings {
 	defaultShowCheckbox: boolean;
 	preferredAiModelId: AiModelId;
+	preferredAiThinkingLevel?: AiThinkingLevel;
 	backgroundTheme: BackgroundTheme;
 	colorMode: ColorMode;
 }
@@ -861,6 +862,7 @@ export interface ProfileRow {
 	avatar_url?: string | null;
 	default_show_checkbox: boolean;
 	preferred_ai_model_id?: AiModelId | null;
+	preferred_ai_thinking_level?: AiThinkingLevel | null;
 	preferred_model_preset?: string | null;
 	background_theme: BackgroundTheme;
 	color_mode?: ColorMode | null;

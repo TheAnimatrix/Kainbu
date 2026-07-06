@@ -6,6 +6,7 @@ import {
 	shouldAdaptBackgroundThemeForColorMode
 } from '$lib/kainbu/backgrounds';
 import { readStoredColorMode } from '$lib/kainbu/colorMode';
+import { isAiThinkingLevel } from '$lib/kainbu/models';
 import type { BackgroundTheme, ColorMode, UserSettings } from '$lib/kainbu/types';
 
 const isObject = (value: unknown): value is Record<string, unknown> =>
@@ -91,6 +92,11 @@ export const normalizeUserSettings = (value: unknown): UserSettings => {
 							  value.preferred_model_preset.trim()
 							? value.preferred_model_preset.trim()
 							: DEFAULT_SETTINGS.preferredAiModelId,
+		preferredAiThinkingLevel: (() => {
+			const raw =
+				value.preferredAiThinkingLevel ?? value.preferred_ai_thinking_level ?? undefined;
+			return isAiThinkingLevel(raw) ? raw : undefined;
+		})(),
 		backgroundTheme,
 		colorMode
 	});

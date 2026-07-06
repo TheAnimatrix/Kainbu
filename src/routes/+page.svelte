@@ -412,7 +412,14 @@ import { getProjectMemberDisplayName, getProjectMemberSearchText } from '$lib/ka
 	$: if (activeAiModelId && activeAiModelId !== lastSyncedAiThinkingModelId) {
 		const model = aiModels.find((entry) => entry.id === activeAiModelId);
 		if (model) {
-			aiThinkingLevel = defaultThinkingLevelForModel(model);
+			const stored = settings.preferredAiThinkingLevel;
+			const allowed = model.allowedThinkingLevels?.length
+				? model.allowedThinkingLevels
+				: (['none'] satisfies import('$lib/kainbu/types').AiThinkingLevel[]);
+			aiThinkingLevel =
+				stored && allowed.includes(stored)
+					? stored
+					: defaultThinkingLevelForModel(model);
 			lastSyncedAiThinkingModelId = activeAiModelId;
 		}
 	}
@@ -3457,7 +3464,14 @@ $: kanbanComparisonData =
 		const nextModelId = normalizePreferredAiModelId(modelId);
 		const nextModel = aiModels.find((entry) => entry.id === nextModelId);
 		if (nextModel) {
-			aiThinkingLevel = defaultThinkingLevelForModel(nextModel);
+			const stored = settings.preferredAiThinkingLevel;
+			const allowed = nextModel.allowedThinkingLevels?.length
+				? nextModel.allowedThinkingLevels
+				: (['none'] satisfies import('$lib/kainbu/types').AiThinkingLevel[]);
+			aiThinkingLevel =
+				stored && allowed.includes(stored)
+					? stored
+					: defaultThinkingLevelForModel(nextModel);
 			lastSyncedAiThinkingModelId = nextModelId;
 		}
 		handleSettingsChange({
@@ -5376,6 +5390,10 @@ $: kanbanComparisonData =
 													thinkingLevel={aiThinkingLevel}
 													onThinkingLevelChange={(level) => {
 														aiThinkingLevel = level;
+														handleSettingsChange({
+															...settings,
+															preferredAiThinkingLevel: level
+														});
 													}}
 													onReviewProposal={activePendingProposals.length
 														? handleReviewProposal
@@ -5688,6 +5706,10 @@ $: kanbanComparisonData =
 									thinkingLevel={aiThinkingLevel}
 									onThinkingLevelChange={(level) => {
 										aiThinkingLevel = level;
+										handleSettingsChange({
+											...settings,
+											preferredAiThinkingLevel: level
+										});
 									}}
 									onReviewProposal={activePendingProposals.length ? handleReviewProposal : null}
 									onAcceptProposal={handleAcceptProposal}
