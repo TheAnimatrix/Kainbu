@@ -210,21 +210,8 @@
 	const boardToolbarPillActiveClass = 'text-app-primary';
 	const boardToolbarPillIdleClass = 'text-app-subtext hover:text-app-text';
 	const dndDropTargetStyle = {};
-	const kanbanOrderFingerprint = (columns: KanbanData) =>
-		columns
-			.map((column) => {
-				const taskIds = column.tasks
-					.filter(
-						(task) =>
-							!(task as Task & Record<string, unknown>)[SHADOW_ITEM_MARKER_PROPERTY_NAME]
-					)
-					.map((task) => task.id);
-				return `${column.id}:${taskIds.join(',')}`;
-			})
-			.join('|');
 	let viewportWidth = 0;
 	let boardData: KanbanData = data;
-	let lastEmittedOrderFingerprint = '';
 
 	let editingColumnId: string | null = null;
 	let editingColumnTitle = '';
@@ -340,13 +327,11 @@
 	);
 	$: isDiffMode = comparisonData !== undefined;
 	$: isCollaborative = members.length > 1;
-	$: {
-		const incomingFingerprint = kanbanOrderFingerprint(data);
-		if (incomingFingerprint === lastEmittedOrderFingerprint) {
-			lastEmittedOrderFingerprint = '';
-		} else if (data !== boardData && !taskDragInProgress) {
-			boardData = data;
-		}
+	$: if (!taskDragInProgress) {
+		boardData = data.map(column => ({
+			...column,
+			tasks: column.tasks.filter(task => !task.deletedAt)
+		}));
 	}
 	$: if (projectId !== lastColumnMoveProjectId) {
 		lastColumnMoveProjectId = projectId;
@@ -398,8 +383,14 @@
 	$: taskLinkGraph = buildTaskLinkGraph(boardData);
 	$: linkGroupLayout = buildLinkGroupLayout(boardData);
 	$: displayColumns = (() => {
+		const stripDeleted = (columns: KanbanData) =>
+			columns.map(column => ({
+				...column,
+				tasks: column.tasks.filter(task => !task.deletedAt)
+			}));
+
 		if (boardLayoutMode !== 'link-groups') {
-			return boardData.map(
+			return stripDeleted(boardData).map(
 				(column): DisplayColumn => ({
 					...column,
 					isLinkGroup: false
@@ -407,7 +398,12 @@
 			);
 		}
 
-		const groupColumns: DisplayColumn[] = linkGroupLayout.linkGroupColumns.map((group) => ({
+		const filteredLinkGroups = linkGroupLayout.linkGroupColumns.map((group) => ({
+			...group,
+			tasks: group.tasks.filter((placement) => !placement.task.deletedAt)
+		}));
+
+		const groupColumns: DisplayColumn[] = filteredLinkGroups.map((group) => ({
 			id: group.id,
 			title: group.title,
 			width: DEFAULT_COLUMN_WIDTH,
@@ -421,6 +417,7 @@
 
 		const residualColumns: DisplayColumn[] = linkGroupLayout.residualColumns.map((column) => ({
 			...column,
+			tasks: column.tasks.filter(task => !task.deletedAt),
 			isLinkGroup: false
 		}));
 
@@ -979,7 +976,6 @@
 
 	const emitBoardChange = (nextData: KanbanData, options: BoardChangeOptions = {}) => {
 		boardData = nextData;
-		lastEmittedOrderFingerprint = kanbanOrderFingerprint(nextData);
 		onChange(nextData, options);
 	};
 
