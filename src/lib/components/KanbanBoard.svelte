@@ -237,6 +237,7 @@
 	let taskTagMenuSearchInput: HTMLInputElement | null = null;
 	let taskTagMenuCreateInput: HTMLInputElement | null = null;
 	let taskInfoMenuOpen: TaskMenuState | null = null;
+	let moveColumnPickerTask: TaskMenuState | null = null;
 	let taskMenuPanel: HTMLDivElement | null = null;
 	let taskMenuTrigger: HTMLElement | null = null;
 	let boardScrollViewport: HTMLDivElement | null = null;
@@ -1533,6 +1534,38 @@
 					return {
 						...column,
 						tasks: [preserveTaskTimestamps(task, task), ...column.tasks]
+					};
+				}
+
+				return column;
+			})
+		);
+		closeMenus();
+	};
+
+	const moveTaskToColumn = (columnId: string, taskId: string, targetColumnId: string) => {
+		if (columnId === targetColumnId) return;
+
+		const sourceColumn = boardData.find((column) => column.id === columnId);
+		const targetColumn = boardData.find((column) => column.id === targetColumnId);
+		if (!sourceColumn || !targetColumn) return;
+
+		const task = sourceColumn.tasks.find((entry) => entry.id === taskId);
+		if (!task) return;
+
+		emitBoardChange(
+			boardData.map((column) => {
+				if (column.id === columnId) {
+					return {
+						...column,
+						tasks: column.tasks.filter((entry) => entry.id !== taskId)
+					};
+				}
+
+				if (column.id === targetColumnId) {
+					return {
+						...column,
+						tasks: [...column.tasks, preserveTaskTimestamps(task, task)]
 					};
 				}
 
@@ -3312,6 +3345,23 @@
 						</button>
 						<button
 							type="button"
+							class="kainbu-menu-item"
+							onclick={(event) => {
+								event.stopPropagation();
+								closeMenus();
+								moveColumnPickerTask = {
+									colId: menuColumn.id,
+									taskId: menuTask.id,
+									position: { top: 0, left: 0 },
+									opensAbove: false
+								};
+							}}
+						>
+							<ArrowRight size={14} />
+							Move to column…
+						</button>
+						<button
+							type="button"
 							class="kainbu-menu-item kainbu-menu-item--danger"
 							onclick={(event) => {
 								event.stopPropagation();
@@ -3390,6 +3440,55 @@
 							</button>
 						</div>
 					{/if}
+				</div>
+			</div>
+		{/if}
+	{/if}
+
+	{#if moveColumnPickerTask}
+		{@const pickerColumn = boardData.find((column) => column.id === moveColumnPickerTask!.colId)}
+		{@const pickerTask = pickerColumn?.tasks.find((task) => task.id === moveColumnPickerTask!.taskId)}
+		{#if pickerColumn && pickerTask}
+			<div class="pointer-events-none fixed inset-0 z-[155]" use:portalToBody>
+				<button
+					type="button"
+					class="pointer-events-auto fixed inset-0 cursor-default bg-transparent"
+					aria-label="Close column picker"
+					onpointerdown={(event) => event.stopPropagation()}
+					onclick={() => (moveColumnPickerTask = null)}
+				></button>
+				<div
+					role="menu"
+					tabindex="-1"
+					class="pointer-events-auto fixed max-h-[min(17.5rem,calc(100vh-1.5rem))] overflow-y-auto kainbu-context-menu rounded-lg"
+					style={`top:${moveColumnPickerTask!.position.top}px; left:${moveColumnPickerTask!.position.left}px;`}
+					onmousedown={(event) => event.stopPropagation()}
+					onclick={(event) => event.stopPropagation()}
+				>
+					{#each boardData as column (column.id)}
+						<button
+							type="button"
+							class="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-[11px] transition {pickerColumn.id ===
+							column.id
+								? 'bg-app-primary/15 font-semibold text-app-primary'
+								: 'text-app-text hover:bg-app-element'}"
+							disabled={pickerColumn.id === column.id}
+							onclick={(event) => {
+								event.stopPropagation();
+								moveTaskToColumn(
+									moveColumnPickerTask!.colId,
+									moveColumnPickerTask!.taskId,
+									column.id
+								);
+								moveColumnPickerTask = null;
+							}}
+						>
+							<span class="truncate">{column.title?.trim() || 'Column'}</span>
+							{#if pickerColumn.id === column.id}
+								<span class="text-[9px] text-app-subtext">(current)</span>
+							{/if}
+						</button>
+					{/each}
 				</div>
 			</div>
 		{/if}
