@@ -3348,13 +3348,13 @@
 							class="kainbu-menu-item"
 							onclick={(event) => {
 								event.stopPropagation();
-								closeMenus();
 								moveColumnPickerTask = {
 									colId: menuColumn.id,
 									taskId: menuTask.id,
 									position: { top: 0, left: 0 },
 									opensAbove: false
 								};
+								closeMenus();
 							}}
 						>
 							<ArrowRight size={14} />
