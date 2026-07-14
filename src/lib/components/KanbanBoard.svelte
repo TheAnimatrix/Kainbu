@@ -3452,43 +3452,64 @@
 			<div class="pointer-events-none fixed inset-0 z-[155]" use:portalToBody>
 				<button
 					type="button"
-					class="pointer-events-auto fixed inset-0 cursor-default bg-transparent"
+					class="pointer-events-auto fixed inset-0 bg-black/50"
 					aria-label="Close column picker"
-					onpointerdown={(event) => event.stopPropagation()}
 					onclick={() => (moveColumnPickerTask = null)}
 				></button>
-				<div
-					role="menu"
-					tabindex="-1"
-					class="pointer-events-auto fixed max-h-[min(17.5rem,calc(100vh-1.5rem))] overflow-y-auto kainbu-context-menu rounded-lg"
-					style={`top:${moveColumnPickerTask!.position.top}px; left:${moveColumnPickerTask!.position.left}px;`}
-					onmousedown={(event) => event.stopPropagation()}
-					onclick={(event) => event.stopPropagation()}
-				>
-					{#each boardData as column (column.id)}
-						<button
-							type="button"
-							class="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-[11px] transition {pickerColumn.id ===
-							column.id
-								? 'bg-app-primary/15 font-semibold text-app-primary'
-								: 'text-app-text hover:bg-app-element'}"
-							disabled={pickerColumn.id === column.id}
-							onclick={(event) => {
-								event.stopPropagation();
-								moveTaskToColumn(
-									moveColumnPickerTask!.colId,
-									moveColumnPickerTask!.taskId,
-									column.id
-								);
-								moveColumnPickerTask = null;
-							}}
-						>
-							<span class="truncate">{column.title?.trim() || 'Column'}</span>
-							{#if pickerColumn.id === column.id}
-								<span class="text-[9px] text-app-subtext">(current)</span>
-							{/if}
-						</button>
-					{/each}
+				<!-- Desktop: centered modal -->
+				<div class="pointer-events-auto fixed left-1/2 top-1/2 hidden -translate-x-1/2 -translate-y-1/2 sm:block">
+					<div
+						role="dialog"
+						class="kainbu-context-menu max-h-[min(20rem,calc(100vh-2rem))] w-60 overflow-y-auto rounded-lg p-1"
+					>
+						<p class="px-2 py-1.5 text-[11px] font-semibold uppercase tracking-wider text-app-subtext">Move to column</p>
+						{#each boardData as column (column.id)}
+							<button
+								type="button"
+								class="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-[13px] transition {pickerColumn.id === column.id
+									? 'bg-app-primary/15 font-semibold text-app-primary'
+									: 'text-app-text hover:bg-app-element'}"
+								disabled={pickerColumn.id === column.id}
+								onclick={() => {
+									moveTaskToColumn(pickerColumn.id, pickerTask.id, column.id);
+									moveColumnPickerTask = null;
+								}}
+							>
+								<span class="truncate">{column.title}</span>
+								{#if pickerColumn.id === column.id}
+									<span class="shrink-0 text-[10px] opacity-60">(current)</span>
+								{/if}
+							</button>
+						{/each}
+					</div>
+				</div>
+				<!-- Mobile: bottom sheet -->
+				<div class="pointer-events-auto fixed inset-x-0 bottom-0 sm:hidden">
+					<div
+						role="dialog"
+						class="kainbu-context-menu max-h-[50vh] overflow-y-auto rounded-t-xl p-1"
+					>
+						<div class="mx-auto mb-2 mt-1 h-1 w-8 rounded-full bg-app-border"></div>
+						<p class="px-2 py-1.5 text-[11px] font-semibold uppercase tracking-wider text-app-subtext">Move to column</p>
+						{#each boardData as column (column.id)}
+							<button
+								type="button"
+								class="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-[13px] transition {pickerColumn.id === column.id
+									? 'bg-app-primary/15 font-semibold text-app-primary'
+									: 'text-app-text hover:bg-app-element'}"
+								disabled={pickerColumn.id === column.id}
+								onclick={() => {
+									moveTaskToColumn(pickerColumn.id, pickerTask.id, column.id);
+									moveColumnPickerTask = null;
+								}}
+							>
+								<span class="truncate">{column.title}</span>
+								{#if pickerColumn.id === column.id}
+									<span class="shrink-0 text-[10px] opacity-60">(current)</span>
+								{/if}
+							</button>
+						{/each}
+					</div>
 				</div>
 			</div>
 		{/if}
