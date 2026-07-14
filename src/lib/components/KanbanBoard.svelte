@@ -1284,8 +1284,9 @@
 
 	const parseDueShorthand = (value: string): number | undefined => {
 		const now = Date.now();
+		const clean = value.replace(/(\d+)(st|nd|rd|th)/gi, '$1');
 		// Relative: 10h, 5D, 3d, 2w, 1m
-		const relMatch = value.match(/^(\d+)([hHdDwWmM])$/);
+		const relMatch = clean.match(/^(\d+)([hHdDwWmM])$/);
 		if (relMatch) {
 			const n = parseInt(relMatch[1]);
 			const unit = relMatch[2].toLowerCase();
@@ -1293,28 +1294,53 @@
 			return now + n * ms;
 		}
 		// tomorrow
-		if (value.toLowerCase() === 'tomorrow') {
+		if (clean.toLowerCase() === 'tomorrow') {
 			const d = new Date(now);
 			d.setDate(d.getDate() + 1);
-			d.setHours(9, 0, 0, 0);
+			d.setHours(17, 0, 0, 0);
 			return d.getTime();
 		}
-		// Named month: May5, Jan12
-		const namedMatch = value.match(/^([A-Za-z]+)(\d+)$/);
+		// Named month with optional day: July-16, 16-July, 16th-July-2026, July-16-2026
+		const namedFull = clean.match(/^([A-Za-z]+)[-/](\d{1,2})[-/](\d{2,4})$/i);
+		if (namedFull) {
+			const d = new Date(`${namedFull[1]} ${namedFull[2]}, ${namedFull[3]}`);
+			if (!isNaN(d.getTime())) return d.getTime();
+		}
+		const namedFullSwapped = clean.match(/^(\d{1,2})[-/]([A-Za-z]+)[-/](\d{2,4})$/i);
+		if (namedFullSwapped) {
+			const d = new Date(`${namedFullSwapped[2]} ${namedFullSwapped[1]}, ${namedFullSwapped[3]}`);
+			if (!isNaN(d.getTime())) return d.getTime();
+		}
+		// Named month + day (no year): July-16, 16-July
+		const namedNoYear = clean.match(/^([A-Za-z]+)[-/](\d{1,2})$/i);
+		if (namedNoYear) {
+			const d = new Date(`${namedNoYear[1]} ${namedNoYear[2]}, ${new Date().getFullYear()}`);
+			if (!isNaN(d.getTime())) return d.getTime();
+		}
+		const namedNoYearSwapped = clean.match(/^(\d{1,2})[-/]([A-Za-z]+)$/i);
+		if (namedNoYearSwapped) {
+			const d = new Date(`${namedNoYearSwapped[2]} ${namedNoYearSwapped[1]}, ${new Date().getFullYear()}`);
+			if (!isNaN(d.getTime())) return d.getTime();
+		}
+		// Named month only: May5, Jan12
+		const namedMatch = clean.match(/^([A-Za-z]+)(\d+)$/i);
 		if (namedMatch) {
 			const d = new Date(`${namedMatch[1]} ${namedMatch[2]}, ${new Date().getFullYear()}`);
 			if (!isNaN(d.getTime())) return d.getTime();
 		}
-		// ISO-ish: 3-07-2026 or 3-07-2026-11:38pm
-		const isoMatch = value.match(/^(\d{1,2})[-/](\d{1,2})[-/](\d{2,4})(?:[-/](\d{1,2}):(\d{2})(am|pm)?)?$/i);
+		// ISO-ish: DD-MM-YYYY (detect if first number > 12 → day first)
+		const isoMatch = clean.match(/^(\d{1,2})[-/](\d{1,2})[-/](\d{2,4})(?:[-/](\d{1,2}):(\d{2})(am|pm)?)?$/i);
 		if (isoMatch) {
-			let [_, m, d, y, hh, mm, ampm] = isoMatch;
+			let [_, a, b, y, hh, mm, ampm] = isoMatch;
+			const isDdMm = parseInt(a) > 12;
+			const month = isDdMm ? parseInt(b) - 1 : parseInt(a) - 1;
+			const day = isDdMm ? parseInt(a) : parseInt(b);
 			let year = parseInt(y);
 			if (year < 100) year += 2000;
 			let hour = hh ? parseInt(hh) : 0;
 			if (ampm && ampm.toLowerCase() === 'pm' && hour < 12) hour += 12;
 			if (ampm && ampm.toLowerCase() === 'am' && hour === 12) hour = 0;
-			const date = new Date(year, parseInt(m) - 1, parseInt(d), hour, parseInt(mm || '0'));
+			const date = new Date(year, month, day, hour, parseInt(mm || '0'));
 			if (!isNaN(date.getTime())) return date.getTime();
 		}
 		return undefined;
