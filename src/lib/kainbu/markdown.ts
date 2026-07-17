@@ -416,8 +416,9 @@ export const collapseNestedTaskListStandaloneCheckboxes = (html: string) =>
 	);
 
 export const renderMarkdown = (value: string, options: RenderMarkdownOptions = {}) => {
-	const escapedValue = (value || '').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-	const normalizedValue = normalizeStandaloneCheckboxBoundaries(escapedValue);
+	// Do not escape < and > — marked handles raw HTML natively and DOMPurify
+	// sanitises the final output. Escaping here would break intentional HTML.
+	const normalizedValue = normalizeStandaloneCheckboxBoundaries(value || '');
 	const withJoinedTableRows = joinContinuedTableRows(normalizedValue);
 	const withTableListCells = convertMarkdownTableListCells(withJoinedTableRows);
 	const raw = markdownRenderer.parse(withTableListCells, { async: false });
