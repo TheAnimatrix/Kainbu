@@ -1207,6 +1207,10 @@ export const createWorkspacePage = async (
     page.editCallCount += 1;
     workspace.pages.push(page);
 
+    // Make the newly created page the active page so proposal previews
+    // show it rather than the previously active existing page.
+    workspace.page = page;
+
     return {
         ok: true as const,
         pageId: id,
