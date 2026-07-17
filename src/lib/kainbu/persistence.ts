@@ -850,7 +850,10 @@ export const updateProjectPageContent = async (
 	pageId: string,
 	content: string
 ) => {
-	await updateProjectChildByClientId('project_pages', projectId, pageId, {
+	// Use upsert so that if a page with the same client_id already exists we
+	// update it, and if it doesn't (e.g. the record was never created or has
+	// a stray‐id schema mismatch) we create it instead of failing.
+	await upsertProjectChild('project_pages', projectId, pageId, {
 		content: sanitizeProjectPageContent(content)
 	});
 };
