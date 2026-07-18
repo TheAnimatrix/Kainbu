@@ -2422,7 +2422,12 @@ $: kanbanComparisonData =
 
 		suppressWorkspaceUrlSync = true;
 		selectProject(parsed.projectId, updater);
-		suppressWorkspaceUrlSync = false;
+		// Keep URL synchronization suppressed through Svelte's state flush. If it
+		// is released synchronously, Back/Forward can briefly observe the previous
+		// tab and push it again, consuming the browser's forward entry.
+		void tick().then(() => {
+			suppressWorkspaceUrlSync = false;
+		});
 	};
 
 	const hydrateWorkspaceFromUrl = () => {
