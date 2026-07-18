@@ -4,6 +4,9 @@ import {
 	buildWorkspaceActivityEvents,
 	buildWorkspaceActivitySummary,
 	filterActivityEvents,
+	getCalendarDayStart,
+	getDailyActivity,
+	paginateActivityEvents,
 	summarizeActivityDelta
 } from '../src/lib/kainbu/activity';
 import type { Project } from '../src/lib/kainbu/types';
@@ -145,5 +148,56 @@ describe('activity summaries', () => {
 		expect(summarizeActivityDelta(3)).toBe('+3 vs previous week');
 		expect(summarizeActivityDelta(-2)).toBe('-2 vs previous week');
 		expect(summarizeActivityDelta(0)).toBe('even with previous week');
+	});
+
+	it('uses the local calendar day instead of a rolling 24-hour window', () => {
+		const dayStart = getCalendarDayStart(now);
+		const project = makeProject({
+			kanbanData: [{ id: 'todo', title: 'To Do', tasks: [
+				{ id: 'before-midnight', title: 'Before', tags: [], createdAt: dayStart - 1 },
+				{ id: 'today', title: 'Today', tags: [], createdAt: dayStart }
+			] }],
+			members: [], invites: [], updatedAt: dayStart - 2 * day
+		});
+		const events = buildWorkspaceActivityEvents([project]);
+		expect(getDailyActivity(events, now, 10).map((event) => event.taskId)).toEqual(['today']);
+	});
+
+	it('keeps deleted task and departed member history without counting them as current state', () => {
+		const project = makeProject({
+			kanbanData: [{ id: 'todo', title: 'To Do', tasks: [{
+				id: 'deleted', title: 'Removed task', tags: [], createdAt: now - day, deletedAt: now - 1
+			}] }],
+			members: [{
+			projectId: 'project-a', userId: 'former', role: 'member', email: 'former@example.test',
+			joinedAt: now - 3 * day, leftAt: now - 1, lastOpenedAt: now - 2 * day
+			}],
+			invites: [], updatedAt: now - 2 * day
+		});
+		const summary = buildWorkspaceActivitySummary([project], now);
+		expect(summary.events.map((event) => event.kind)).toContain('member_left');
+		expect(summary.events.map((event) => event.taskId)).toContain('deleted');
+		expect(summary.taskCount).toBe(0);
+		expect(summary.memberCount).toBe(0);
+	});
+
+	it('deduplicates reconstructed records and clamps pagination after filtering', () => {
+		const task = { id: 'same', title: 'Same', tags: [], createdAt: now - day };
+		const project = makeProject({ kanbanData: [
+			{ id: 'one', title: 'One', tasks: [task] },
+			{ id: 'two', title: 'Two', tasks: [task] }
+		], members: [], invites: [], updatedAt: now - 2 * day });
+		const events = buildWorkspaceActivityEvents([project]);
+		expect(events.filter((event) => event.taskId === 'same')).toHaveLength(1);
+		expect(paginateActivityEvents(events, 99, 2).currentPage).toBe(1);
+		expect(paginateActivityEvents([], 99, 2).items).toEqual([]);
+	});
+
+	it('does not manufacture activity from mutable project or task update timestamps', () => {
+		const project = makeProject({
+			kanbanData: [{ id: 'todo', title: 'To Do', tasks: [{ id: 'quiet', title: 'Quiet', tags: [], updatedAt: now }] }],
+			members: [], invites: [], updatedAt: now
+		});
+		expect(buildWorkspaceActivityEvents([project])).toEqual([]);
 	});
 });

@@ -19,7 +19,9 @@
 	import { formatDueDateValue } from '$lib/kainbu/timing';
 	import {
 		buildWorkspaceActivitySummary,
-		filterActivityEvents,
+		getActivityWindowStart,
+		getDailyActivity,
+		paginateActivityEvents,
 		summarizeActivityDelta,
 		type WorkspaceActivityEvent,
 		type WorkspaceActivityGroup
@@ -61,7 +63,7 @@
 	let activityPageSize = 5;
 	let activityPages: Record<string, number> = {};
 	let workspaceActivityPage = 1;
-	$: summaryNow = Date.now();
+	let summaryNow = Date.now();
 
 	const pageButtons = (current: number, total: number): (number | '...')[] => {
 		if (total <= 7) return Array.from({ length: total }, (_, i) => i + 1);
@@ -171,20 +173,18 @@
 	$: sharedProjects = projects
 		.filter((project) => project.accessRole === 'member' && !isPinned(project))
 		.sort(compareByPinThenName);
+	// Activity is a snapshot of the latest workspace state. Recompute its reference
+	// time only when the input projects change; a wall-clock tick must not fabricate
+	// activity or reorder the history underneath the user.
+	$: if (projects) summaryNow = Date.now();
 	$: activitySummary = buildWorkspaceActivitySummary(projects, summaryNow);
-	$: activityTimeWindowMs =
-			activityTimeWindow === 'all' ? Infinity :
-			activityTimeWindow === '30d' ? 30 * 24 * 60 * 60 * 1000 :
-			7 * 24 * 60 * 60 * 1000;
+	$: activityWindowStart = getActivityWindowStart(activityTimeWindow as '7d' | '30d' | 'all', summaryNow);
 	$: groupedWorkspaceActivity = (() => {
-		const windowed = activitySummary.events.filter(
-			(event) => summaryNow - event.timestamp <= activityTimeWindowMs
+		const filtered = activitySummary.events.filter((event) =>
+			(!activityProjectFilter || activityProjectFilter === 'all' || event.projectId === activityProjectFilter) &&
+			(activityFilter === 'all' || event.group === activityFilter) &&
+			event.timestamp >= activityWindowStart && event.timestamp <= summaryNow
 		);
-		const filtered = windowed.filter((event) => {
-			if (activityFilter !== 'all' && event.group !== activityFilter) return false;
-			if (activityProjectFilter !== 'all' && event.projectId !== activityProjectFilter) return false;
-			return true;
-		});
 		const groups = new Map<string, { projectName: string; events: WorkspaceActivityEvent[] }>();
 		for (const event of filtered) {
 			const group = groups.get(event.projectId);
@@ -198,43 +198,27 @@
 			}
 		}
 		return Array.from(groups.entries()).map(([projectId, group]) => {
-			const page = activityPages[projectId] ?? 1;
-			const start = (page - 1) * activityPageSize;
+			const page = paginateActivityEvents(group.events, activityPages[projectId] ?? 1, activityPageSize);
 			return {
 				projectId,
 				projectName: group.projectName,
-				totalCount: group.events.length,
-				totalPages: Math.ceil(group.events.length / activityPageSize),
-				currentPage: page,
-				visibleEvents: group.events.slice(start, start + activityPageSize)
+				totalCount: page.totalCount,
+				totalPages: page.totalPages,
+				currentPage: page.currentPage,
+				visibleEvents: page.items
 			};
 		});
 	})();
 $: workspaceFlatActivity = (() => {
 		if (activityProjectFilter !== 'all') return null;
-		const windowed = activitySummary.events.filter(
-			(event) => summaryNow - event.timestamp <= activityTimeWindowMs
+		const filtered = activitySummary.events.filter((event) =>
+			(activityFilter === 'all' || event.group === activityFilter) &&
+			event.timestamp >= activityWindowStart && event.timestamp <= summaryNow
 		);
-		const filtered = windowed.filter((event) => {
-			if (activityFilter !== 'all' && event.group !== activityFilter) return false;
-			return true;
-		});
-		const totalCount = filtered.length;
-		const totalPages = Math.ceil(totalCount / activityPageSize);
-		const start = (workspaceActivityPage - 1) * activityPageSize;
-		return {
-			events: filtered.slice(start, start + activityPageSize),
-			totalCount,
-			totalPages,
-			currentPage: workspaceActivityPage
-		};
+		const page = paginateActivityEvents(filtered, workspaceActivityPage, activityPageSize);
+		return { events: page.items, totalCount: page.totalCount, totalPages: page.totalPages, currentPage: page.currentPage };
 	})();
-	$: dailyActivity = filterActivityEvents(
-			activitySummary.events.filter(
-				(event) => summaryNow - event.timestamp <= 24 * 60 * 60 * 1000
-			),
-			{ limit: 6 }
-		);
+	$: dailyActivity = getDailyActivity(activitySummary.events, summaryNow, 6);
 
 </script>
 
@@ -385,7 +369,7 @@ $: workspaceFlatActivity = (() => {
 							Daily activity
 							<span class="kainbu-dashboard__section-count">{dailyActivity.length}</span>
 						</h3>
-						<p class="mt-1 text-xs text-app-subtext">Recent workspace changes from the last 24 hours.</p>
+						<p class="mt-1 text-xs text-app-subtext">Human workspace events from today (local calendar day).</p>
 					</div>
 					{#if dailyActivity.length}
 						<div class="kainbu-activity-strip kainbu-scrollbar-hidden">
@@ -414,7 +398,7 @@ $: workspaceFlatActivity = (() => {
 									Workspace activity
 									<span class="kainbu-dashboard__section-count">{groupedWorkspaceActivity.reduce((n, g) => n + g.totalCount, 0)}</span>
 								</h3>
-								<p class="mt-1 text-xs text-app-subtext">Recent changes for the selected board.</p>
+								<p class="mt-1 text-xs text-app-subtext">Chronological human events for the selected board.</p>
 							</div>
 							<div class="flex flex-wrap items-center gap-2">
 								<select
@@ -440,7 +424,7 @@ $: workspaceFlatActivity = (() => {
 									{/each}
 								</div>
 								<div class="kainbu-activity-filter" aria-label="Activity filter">
-									{#each ['all', 'task', 'people', 'project'] as filter}
+									{#each ['all', 'task', 'people'] as filter}
 										<button
 											type="button"
 											class:kainbu-activity-filter__button--active={activityFilter === filter}
@@ -529,7 +513,7 @@ $: workspaceFlatActivity = (() => {
 									Workspace activity
 									<span class="kainbu-dashboard__section-count">{workspaceFlatActivity.totalCount}</span>
 								</h3>
-								<p class="mt-1 text-xs text-app-subtext">Recent changes across all boards.</p>
+								<p class="mt-1 text-xs text-app-subtext">Chronological human events across your boards.</p>
 							</div>
 							<div class="flex flex-wrap items-center gap-2">
 								<select
@@ -555,7 +539,7 @@ $: workspaceFlatActivity = (() => {
 									{/each}
 								</div>
 								<div class="kainbu-activity-filter" aria-label="Activity filter">
-									{#each ['all', 'task', 'people', 'project'] as filter}
+									{#each ['all', 'task', 'people'] as filter}
 										<button
 											type="button"
 											class:kainbu-activity-filter__button--active={activityFilter === filter}
@@ -624,7 +608,7 @@ $: workspaceFlatActivity = (() => {
 						<div class="flex flex-wrap items-start justify-between gap-3">
 							<div>
 								<h3 class="kainbu-dashboard__section-label">Workspace activity</h3>
-								<p class="mt-1 text-xs text-app-subtext">Recent changes across all boards.</p>
+								<p class="mt-1 text-xs text-app-subtext">Chronological human events across your boards.</p>
 							</div>
 							<div class="flex flex-wrap items-center gap-2">
 								<select
