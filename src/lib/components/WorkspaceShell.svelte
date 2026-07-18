@@ -4879,9 +4879,9 @@ $: kanbanComparisonData =
 		}
 
 		const handlePopState = () => {
-			suppressWorkspaceUrlSync = true;
-			applyWorkspaceUrlState(parseWorkspaceLocation(window.location.pathname, new URLSearchParams(window.location.search)));
-			suppressWorkspaceUrlSync = false;
+			applyWorkspaceUrlState(
+				parseWorkspaceLocation(window.location.pathname, new URLSearchParams(window.location.search))
+			);
 		};
 
 		const handleVisibilityChange = () => {
