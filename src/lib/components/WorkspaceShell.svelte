@@ -144,7 +144,6 @@
 	import { BOARD_PRESENCE_INTERVAL_MS } from '$lib/kainbu/boardPresence';
 	import { updateBoardShareSettings } from '$lib/kainbu/shareApi';
 	import {
-		buildWorkspaceSearchParams,
 		parseWorkspaceLocation,
 		buildWorkspacePath,
 		type WorkspaceUrlState
@@ -2377,8 +2376,7 @@ $: kanbanComparisonData =
 
 		const nextState = getWorkspaceUrlStateFromApp();
 		const nextPath = buildWorkspacePath(nextState);
-		const nextParams = buildWorkspaceSearchParams(nextState);
-		const nextUrl = nextParams.toString() ? `${nextPath}?${nextParams.toString()}` : nextPath;
+		const nextUrl = nextPath;
 		const currentUrl = `${$page.url.pathname}${$page.url.search}`;
 		if (currentUrl === nextUrl) return;
 		if (pendingWorkspaceNavigation === nextUrl) return;

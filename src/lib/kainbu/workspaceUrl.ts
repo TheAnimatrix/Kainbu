@@ -70,10 +70,8 @@ export const buildWorkspaceShareUrl = (
 	state: WorkspaceUrlState,
 	origin = typeof window !== 'undefined' ? window.location.origin : ''
 ): string => {
-	const params = buildWorkspaceSearchParams(state);
-	const query = params.toString();
 	const base = (origin || '').replace(/\/$/, '');
-	return query ? `${base}/?${query}` : `${base}/`;
+	return `${base}${buildWorkspacePath(state)}`;
 };
 
 export const workspaceSearchParamsEqual = (left: URLSearchParams, right: URLSearchParams) =>

@@ -18,7 +18,7 @@ describe('workspaceUrl', () => {
 		const params = buildWorkspaceSearchParams(state);
 		expect(parseWorkspaceUrl(params)).toEqual(state);
 		expect(buildWorkspaceShareUrl(state, 'https://kainbu.example')).toBe(
-			'https://kainbu.example/?project=proj-1&view=kanban&board=board-2'
+			'https://kainbu.example/projects/proj-1/boards/board-2'
 		);
 	});
 
