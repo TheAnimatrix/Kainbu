@@ -32,8 +32,9 @@
 		"test:deploy": "vitest run tests/deploy.test.ts",
 		"test:local-docker": "vitest run tests/local-docker.test.ts",
 		"test:admin-docker": "vitest run tests/admin-docker.test.ts",
+		"test:security-p0-docker": "vitest run tests/security-p0-docker.test.ts",
 		"test:admin-prod": "node scripts/test-admin-prod.mjs",
-		"test:docker": "vitest run tests/local-docker.test.ts tests/admin-docker.test.ts",
+		"test:docker": "vitest run tests/local-docker.test.ts tests/admin-docker.test.ts tests/security-p0-docker.test.ts",
 		"cli:build": "npm run build --workspace=kainbu",
 		"cli:link": "npm run build --workspace=kainbu && npm link --workspace=kainbu",
 		"test:cli": "vitest run tests/cliContext.test.ts tests/cliBoardList.test.ts tests/cliDeviceAuth.test.ts tests/cliAuthProfiles.test.ts tests/apiKeysHash.test.ts"
