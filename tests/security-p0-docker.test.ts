@@ -9,13 +9,18 @@ const password = 'security-p0-pass123456';
 const runId = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
 
 let ownerId = '';
+let ownerEmail = '';
 let attackerId = '';
 let ownerToken = '';
 let attackerToken = '';
+let attackerEmail = '';
 let attackerRecord: RecordModel | null = null;
 let projectId = '';
 let adminProjectId = '';
+let adminProjectClientId = '';
 let membershipId = '';
+let ownerMembershipId = '';
+let rejoinInviteId = '';
 let privateMembershipId = '';
 let appSettingsId = '';
 
@@ -35,7 +40,7 @@ beforeAll(async () => {
 	expect(health.status).toBe(200);
 
 	const ownerClient = pb();
-	const ownerEmail = `security-owner-${runId}@kainbu.test`;
+	ownerEmail = `security-owner-${runId}@kainbu.test`;
 	const owner = await ownerClient.collection('users').create({
 		email: ownerEmail,
 		password,
@@ -45,7 +50,7 @@ beforeAll(async () => {
 	ownerToken = (await ownerClient.collection('users').authWithPassword(ownerEmail, password)).token;
 
 	const attackerClient = pb();
-	const attackerEmail = `security-attacker-${runId}@kainbu.test`;
+	attackerEmail = `security-attacker-${runId}@kainbu.test`;
 	const attacker = await attackerClient.collection('users').create({
 		email: attackerEmail,
 		password,
@@ -70,6 +75,7 @@ beforeAll(async () => {
 		name: 'Security P0 server-admin flow project'
 	});
 	adminProjectId = adminProject.id;
+	adminProjectClientId = adminProject.client_id;
 
 	const superuser = pb();
 	await superuser.collection('_superusers').authWithPassword(SUPERUSER_EMAIL, SUPERUSER_PASSWORD);
@@ -85,6 +91,13 @@ beforeAll(async () => {
 		role: 'member'
 	});
 	membershipId = membership.id;
+	const ownerMembership = await superuser.collection('project_memberships').create({
+		project: adminProjectId,
+		user: ownerId,
+		role: 'owner',
+		left_at: ''
+	});
+	ownerMembershipId = ownerMembership.id;
 
 	const settings = await superuser.collection('app_settings').create({
 		singleton: `p0-${runId}`,
@@ -97,9 +110,10 @@ afterAll(async () => {
 	const superuser = pb();
 	await superuser.collection('_superusers').authWithPassword(SUPERUSER_EMAIL, SUPERUSER_PASSWORD);
 
-	for (const id of [membershipId, privateMembershipId]) {
+	for (const id of [membershipId, ownerMembershipId, privateMembershipId]) {
 		if (id) await superuser.collection('project_memberships').delete(id);
 	}
+	if (rejoinInviteId) await superuser.collection('project_invites').delete(rejoinInviteId);
 	if (appSettingsId) await superuser.collection('app_settings').delete(appSettingsId);
 	for (const id of [adminProjectId, projectId]) {
 		if (id) await superuser.collection('projects').delete(id);
@@ -168,5 +182,53 @@ describe('PocketBase P0 authorization regressions', () => {
 		await superuser.collection('app_settings').update(appSettingsId, {
 			openrouter_api_key: `server-marker-${runId}`
 		});
+	});
+
+	it('reactivates the existing membership on legitimate invite rejoin', async () => {
+		const admin = pb();
+		await admin.collection('_superusers').authWithPassword(SUPERUSER_EMAIL, SUPERUSER_PASSWORD);
+		await admin.collection('project_memberships').update(membershipId, { left_at: new Date().toISOString() });
+		const rejoinInvite = await admin.collection('project_invites').create({
+				project: adminProjectId,
+				invitee: attackerId,
+				invitee_email: attackerEmail,
+				invited_by: ownerId,
+				status: 'pending'
+			});
+		rejoinInviteId = rejoinInvite.id;
+		const response = await fetch(`${process.env.KAINBU_TEST_BASE || 'http://127.0.0.1:8789'}/api/workspace/invites/respond`, {
+			method: 'POST',
+			headers: {
+				Authorization: `Bearer ${attackerToken}`,
+				'Content-Type': 'application/json'
+			},
+			body: JSON.stringify({ inviteId: rejoinInviteId, accept: true })
+		});
+		expect(response.status).toBe(200);
+
+		const superuser = pb();
+		await superuser.collection('_superusers').authWithPassword(SUPERUSER_EMAIL, SUPERUSER_PASSWORD);
+		const memberships = await superuser.collection('project_memberships').getFullList({
+			filter: `project = "${adminProjectId}" && user = "${attackerId}"`
+		});
+		expect(memberships).toHaveLength(1);
+		expect(memberships[0].id).toBe(membershipId);
+		expect(memberships[0].left_at).toBeFalsy();
+
+		await superuser.collection('project_memberships').update(membershipId, { left_at: new Date().toISOString() });
+		const departed = pb();
+		departed.authStore.save(attackerToken, attackerRecord!);
+		await expectPocketBaseStatus(departed.collection('projects').getOne(adminProjectId), 404);
+		await expectPocketBaseStatus(departed.collection('project_memberships').getOne(membershipId), 404);
+
+		const ownerResponse = await fetch(`${process.env.KAINBU_TEST_BASE || 'http://127.0.0.1:8789'}/api/workspace/projects/touch`, {
+			method: 'POST',
+			headers: {
+				Authorization: `Bearer ${ownerToken}`,
+				'Content-Type': 'application/json'
+			},
+			body: JSON.stringify({ projectId: adminProjectClientId })
+		});
+		expect(ownerResponse.status).toBe(200);
 	});
 });

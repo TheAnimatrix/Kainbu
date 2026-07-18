@@ -592,86 +592,23 @@ export const createProject = async (
 	});
 	const normalizedSeed = normalizeProjectStructure(seed as Project);
 
-	const pb = getPb();
-	const projectRecord = await pb.collection('projects').create({
-		client_id: normalizedSeed.id,
-		owner: userId,
-		name: normalizedSeed.name,
-		background_theme: normalizedSeed.backgroundTheme,
-		scratchpad_data: serializeScratchpadData(normalizedSeed.scratchpadData),
-		scratchpad_rev: normalizedSeed.scratchpadRev,
-		last_opened_at: new Date(normalizedSeed.viewerLastOpenedAt).toISOString()
+	const result = await invokeWorkspaceApi<{
+		ok: boolean;
+		id: string;
+		name: string;
+		project?: Project;
+	}>('/api/workspace/projects/create', {
+		body: { name: normalizedSeed.name, seedProject: normalizedSeed }
 	});
-
-	const rollback = async () => {
-		const failures: unknown[] = [];
-		for (const collection of ['project_tasks', 'project_columns', 'project_tags', 'project_pages', 'project_ai_sessions', 'project_user_state', 'project_boards', 'project_memberships']) {
-			try {
-				const records = await pb.collection(collection).getFullList({ filter: `project = "${pbEscapeFilter(projectRecord.id)}"`, ...pbNoAutoCancel });
-				for (const record of records) await pb.collection(collection).delete(record.id);
-			} catch (error) { if (!isPocketBaseNotFound(error)) failures.push(error); }
-		}
-		try { await pb.collection('projects').delete(projectRecord.id); } catch (error) {
-			if (!isPocketBaseNotFound(error)) failures.push(error);
-		}
-		if (failures.length) throw new AggregateError(failures, 'Project rollback failed');
-	};
-
-	const initialize = async () => {
-		try {
-			await pb.collection('project_memberships').create({
-				project: projectRecord.id,
-				user: userId,
-				role: 'owner',
-				joined_at: new Date().toISOString(),
-				last_opened_at: new Date().toISOString()
-			});
-		} catch (error) {
-			const message = error instanceof Error ? error.message : String(error);
-			if (!/unique|validation_not_unique/i.test(message)) throw error;
-		}
-
-	for (const board of normalizedSeed.boards) {
-		await pb.collection('project_boards').create({
-			project: projectRecord.id,
-			client_id: board.id,
-			name: board.name,
-			position: board.position,
-			preferences: normalizeBoardPreferences(board.preferences)
-		});
-	}
-
-	for (const page of normalizedSeed.pages) {
-		await pb.collection('project_pages').create({
-			project: projectRecord.id,
-			client_id: page.id,
-			name: page.name,
-			content: page.content,
-			position: page.position
-		});
-	}
-
-	for (const board of normalizedSeed.boards) {
-		await syncBoardWithPb(getPb(), normalizedSeed.id, board.id, [], board.kanbanData);
-	}
+	const createdProject = result.project ? normalizeProjectStructure(result.project) : normalizedSeed;
 	invalidateWorkspaceFetch(userId);
-	await saveProjectAiState(
-		normalizedSeed.id,
-		userId,
-		normalizedSeed.aiSessions,
-		normalizedSeed.activeAiSessionId
-	);
-	await touchProjectLastOpened(normalizedSeed.id);
-	};
-
-	await runProjectInitialization(initialize, rollback);
 
 	if (options?.skipWorkspaceFetch) {
-		return normalizedSeed;
+		return createdProject;
 	}
 
 	const workspace = await fetchWorkspace(userId, { fresh: true });
-	return workspace.projects.find((project) => project.id === normalizedSeed.id) || normalizedSeed;
+	return workspace.projects.find((project) => project.id === result.id) || createdProject;
 };
 
 export const renameProject = async (projectId: string, nextName: string) => {

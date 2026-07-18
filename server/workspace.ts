@@ -571,6 +571,9 @@ export const handleWorkspaceRespondInviteRequest = async (
 		const now = new Date().toISOString();
 		if (existingMembership) {
 			await admin.collection('project_memberships').update(existingMembership.id, {
+				// A legitimate invite acceptance/rejoin reactivates the historical row;
+				// never create a duplicate membership for the same project/user.
+				left_at: '',
 				last_opened_at: now
 			});
 		} else {
@@ -788,6 +791,8 @@ type WorkspacePageMutateRequest = {
 
 type WorkspaceProjectCreateRequest = {
 	name?: string;
+	/** Browser callers may provide stable client IDs (for restore/import). */
+	seedProject?: Partial<Project>;
 };
 
 type WorkspaceProjectRenameRequest = {
@@ -1091,10 +1096,18 @@ export const handleWorkspaceProjectCreateRequest = async (
 	const name =
 		typeof body.name === 'string' && body.name.trim() ? body.name.trim() : 'New Project';
 
-	// Build the same normalized seed the web app's `createProject` uses, then
-	// persist it with the admin client so an API-key request can create a fully
-	// formed project (membership + board + page + kanban + AI session).
-	const seed = normalizeProjectStructure(EMPTY_PROJECT(userId, name));
+	// The API is the authoritative create transaction. Preserve browser-provided
+	// client IDs so restore/import callers can reconcile their local state with
+	// the records created here, while still forcing ownership to the caller.
+	const requestedSeed = isRecord(body.seedProject) ? body.seedProject : {};
+	const seed = normalizeProjectStructure({
+		...EMPTY_PROJECT(userId, name),
+		...requestedSeed,
+		id: typeof requestedSeed.id === 'string' && requestedSeed.id.trim() ? requestedSeed.id : createId(),
+		name,
+		ownerUserId: userId,
+		accessRole: 'owner' as const
+	} as Project);
 	const now = new Date().toISOString();
 
 	const projectRecord = await admin.collection('projects').create({
@@ -1181,5 +1194,5 @@ export const handleWorkspaceProjectCreateRequest = async (
 
 	await runProjectInitialization(initialize, rollback);
 
-	return { ok: true, id: seed.id, name: seed.name };
+	return { ok: true, id: seed.id, name: seed.name, project: seed };
 };
