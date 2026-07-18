@@ -368,6 +368,7 @@ import { getProjectMemberDisplayName, getProjectMemberSearchText } from '$lib/ka
 	let workspaceUrlReady = false;
 	let suppressWorkspaceUrlSync = false;
 	let pendingWorkspaceNavigation = '';
+	let workspaceUrlSyncKey = '';
 	const boardSyncTimeouts = new Map<string, ReturnType<typeof setTimeout>>();
 	const pendingBoardSyncs = new Map<
 		string,
@@ -513,7 +514,11 @@ $: kanbanComparisonData =
 	$: workspaceUrlState = parseWorkspaceLocation($page.url.pathname, $page.url.searchParams);
 	$: presenceProjectId = workspaceUrlState.projectId || currentProjectId || '';
 	$: presenceBoardId = visibleWorkspaceTab === 'kanban' ? currentBoardId : '';
-	$: if (workspaceUrlReady && user && projects.length) {
+	// Svelte cannot infer dependencies read inside syncWorkspaceUrl(). Track the
+	// canonical route inputs explicitly so every project/tab/board/page change
+	// creates the corresponding history entry.
+	$: workspaceUrlSyncKey = [currentProjectId, currentBoardId, currentPageId, visibleWorkspaceTab].join('|');
+	$: if (workspaceUrlReady && user && projects.length && workspaceUrlSyncKey) {
 		syncWorkspaceUrl();
 	}
 	$: projectRailActiveSurface =
