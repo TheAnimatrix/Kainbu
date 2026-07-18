@@ -414,16 +414,22 @@ const compressImageIfNeeded = async (file: File): Promise<File> => {
 		if (options.emitChange) queueChange('command');
 	};
 
+	const hasRawHtml = (source: string) => /<\/?[a-z][\s\S]*>/i.test(source || '');
+
 	const applyEditorContent = (target: Editor, source: string) => {
 		if (!hasMarkdownContent(source)) {
 			target.commands.setContent(EMPTY_EDITOR_DOC, { emitUpdate: false });
 			return;
 		}
 
-		target.commands.setContent(preprocessMarkdownForEditor(source), {
-			contentType: 'markdown',
-			emitUpdate: false
-		});
+		if (hasRawHtml(source)) {
+			target.commands.setContent(source, { emitUpdate: false });
+		} else {
+			target.commands.setContent(preprocessMarkdownForEditor(source), {
+				contentType: 'markdown',
+				emitUpdate: false
+			});
+		}
 		normalizeAssetImageEditingSurfaces(target, { emitChange: false });
 	};
 
@@ -1821,7 +1827,7 @@ const compressImageIfNeeded = async (file: File): Promise<File> => {
 		return new Editor({
 			element: editorElement,
 			content: hasContent ? initialMarkdown : EMPTY_EDITOR_DOC,
-			...(hasContent ? { contentType: 'markdown' as const } : {}),
+			...(hasContent && !hasRawHtml(initialMarkdown) ? { contentType: 'markdown' as const } : {}),
 			editable: !disabled,
 			injectCSS: false,
 			extensions: [

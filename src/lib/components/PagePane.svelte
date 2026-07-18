@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { FileText } from '$lib/icons';
+	import RichText from '$lib/components/RichText.svelte';
 	import MarkdownBlockEditor from '$lib/components/MarkdownBlockEditor.svelte';
 	import type { TaskReferenceOption } from '$lib/kainbu/taskMarkdown';
 
@@ -102,13 +103,17 @@ type ImageUploadResult = {
 			<div class="h-full overflow-y-auto px-4 py-3 text-sm leading-relaxed">
 				{#each diffParts as part, index (`diff-${index}-${part.added ? 'a' : part.removed ? 'r' : 's'}`)}
 					{#if part.added}
-						<div class="mb-2 whitespace-pre-wrap rounded border-l-2 border-emerald-500/50 bg-emerald-500/5 px-3 py-1.5 text-emerald-100">{part.value}</div>
+						<div class="mb-2 rounded border-l-2 border-emerald-500/50 bg-emerald-500/5 px-3 py-1.5 text-emerald-100">
+							<RichText value={part.value} />
+						</div>
 					{:else if part.removed}
-						<div class="mb-2 whitespace-pre-wrap rounded border-l-2 border-rose-500/50 bg-rose-500/5 px-3 py-1.5 text-rose-100 line-through opacity-70">
-							{part.value}
+						<div class="mb-2 rounded border-l-2 border-rose-500/50 bg-rose-500/5 px-3 py-1.5 text-rose-100 line-through opacity-70">
+							<RichText value={part.value} />
 						</div>
 					{:else}
-						<div class="mb-2 whitespace-pre-wrap px-3 py-1.5 text-app-text">{part.value}</div>
+						<div class="mb-2 px-3 py-1.5 text-app-text">
+							<RichText value={part.value} />
+						</div>
 					{/if}
 				{/each}
 			</div>

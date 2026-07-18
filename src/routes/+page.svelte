@@ -5339,7 +5339,7 @@ $: kanbanComparisonData =
 												out:fade={projectSwitchFadeOut}
 											>
 												<PagePane
-													title={currentPage?.name || 'Page'}
+													title={visibleScratchpadPad?.name || currentPage?.name || 'Page'}
 													content={scratchpadContent}
 													isLocked={proposalPreviewTarget === 'scratchpad'}
 													comparisonContent={scratchpadComparisonContent}
@@ -5542,7 +5542,7 @@ $: kanbanComparisonData =
 												out:fade={projectSwitchFadeOut}
 											>
 												<PagePane
-													title={currentPage?.name || 'Page'}
+													title={visibleScratchpadPad?.name || currentPage?.name || 'Page'}
 													content={scratchpadContent}
 													isLocked={proposalPreviewTarget === 'scratchpad'}
 													comparisonContent={scratchpadComparisonContent}

@@ -1,6 +1,7 @@
 import { getPb } from '$lib/kainbu/pocketbaseContext';
 import { pbNoAutoCancel } from '$lib/kainbu/pbRequest';
 import { pbEscapeFilter, projectClientFilter, projectRelationFilter } from '$lib/kainbu/pbRecords';
+import { isPocketBaseNotFound, isProjectPagesStrayIdFieldError } from '$lib/pocketbaseErrors';
 
 export const getProjectPbId = async (projectClientId: string) => {
 	const pb = getPb();
@@ -67,12 +68,24 @@ export const upsertProjectChild = async (
 		const existing = await pb.collection(collection).getFirstListItem(filter);
 		await pb.collection(collection).update(existing.id, body);
 		return existing.id;
-	} catch {
-		const created = await pb.collection(collection).create({
-			...body,
-			project: projectPbId,
-			client_id: clientId
-		});
-		return created.id;
+	} catch (error) {
+		if (!isPocketBaseNotFound(error)) throw error;
+		try {
+			const created = await pb.collection(collection).create({
+				...body,
+				project: projectPbId,
+				client_id: clientId
+			});
+			return created.id;
+		} catch (createError) {
+			if (!isProjectPagesStrayIdFieldError(createError)) throw createError;
+			const created = await pb.collection(collection).create({
+				...body,
+				project: projectPbId,
+				client_id: clientId,
+				id: clientId
+			});
+			return created.id;
+		}
 	}
 };
