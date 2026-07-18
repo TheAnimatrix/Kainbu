@@ -14,6 +14,11 @@ migrate(
 		try {
 			isAdmin = users.fields.getByName('is_admin');
 		} catch {
+			// Older PocketBase versions may throw for a missing field; current ones
+			// return undefined. Handle both before inspecting the field type.
+		}
+
+		if (!isAdmin) {
 			users.fields.add(new BoolField({ name: 'is_admin', required: false }));
 			app.save(users);
 			return;
