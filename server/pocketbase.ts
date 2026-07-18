@@ -8,6 +8,7 @@ export const getPocketBaseUrl = () =>
 
 let cachedAdminToken: string | null = null;
 let adminAuthInFlight: Promise<string> | null = null;
+let adminRefreshInFlight: Promise<string> | null = null;
 
 export const invalidateAdminPbAuth = () => {
 	cachedAdminToken = null;
@@ -53,6 +54,23 @@ const resolveAdminToken = async (): Promise<string> => {
 	}
 };
 
+const refreshAdminToken = async (): Promise<string> => {
+	if (adminRefreshInFlight) return adminRefreshInFlight;
+
+	adminRefreshInFlight = (async () => {
+		invalidateAdminPbAuth();
+		const token = await loginAdmin();
+		cachedAdminToken = token;
+		return token;
+	})();
+
+	try {
+		return await adminRefreshInFlight;
+	} finally {
+		adminRefreshInFlight = null;
+	}
+};
+
 /** Fresh PocketBase client per call — safe for concurrent admin API requests. */
 export const createAdminPb = async () => {
 	const pb = new PocketBase(getPocketBaseUrl());
@@ -84,7 +102,7 @@ export const isSafeAdminRetryMethod = (method: PropertyKey) =>
 export const withAdminAuthRetry = <T extends PocketBase>(
 	pb: T,
 	createFreshClient: () => PocketBase = () => new PocketBase(getPocketBaseUrl()),
-	resolveFreshToken: () => Promise<string> = resolveAdminToken
+	resolveFreshToken: () => Promise<string> = refreshAdminToken
 ): T =>
 	new Proxy(pb, {
 		get(target, prop, receiver) {
@@ -104,7 +122,8 @@ export const withAdminAuthRetry = <T extends PocketBase>(
 							try {
 								return await value.apply(collectionTarget, args);
 							} catch (error) {
-								if (!isAdminAuthFailure(error) || !isSafeAdminRetryMethod(collectionProp)) throw error;
+								if (!isAdminAuthFailure(error) || !isSafeAdminRetryMethod(collectionProp))
+									throw error;
 
 								invalidateAdminPbAuth();
 								const fresh = createFreshClient();
@@ -190,8 +209,28 @@ export const getAuthenticatedUserId = async (authorization: string | undefined) 
 };
 
 export const getAuthenticatedUser = async (authorization: string | undefined) => {
-	const userId = await getAuthenticatedUserId(authorization);
-	const pb = createUserPb(authorization?.startsWith('Bearer ') ? authorization.slice(7).trim() : undefined);
+	if (!authorization?.startsWith('Bearer ')) {
+		throw new Error('Unauthorized');
+	}
+
+	const token = authorization.slice('Bearer '.length).trim();
+	if (!token) throw new Error('Unauthorized');
+
+	// Keep the refreshed token and the record lookup on the same isolated
+	// client. Previously getAuthenticatedUserId refreshed one client and this
+	// second client still queried with the expired bearer, so parallel admin
+	// overview requests could all become 401s at token expiry.
+	const pb = createUserPb(token);
+	if (!pb.authStore.isValid || !pb.authStore.model?.id) {
+		try {
+			await pb.collection('users').authRefresh();
+		} catch {
+			throw new Error('Unauthorized');
+		}
+	}
+
+	const userId = pb.authStore.model?.id;
+	if (!userId) throw new Error('Unauthorized');
 	const record = await pb.collection('users').getOne(userId);
 	if (record.disabled === true) {
 		throw new Error('Unauthorized');

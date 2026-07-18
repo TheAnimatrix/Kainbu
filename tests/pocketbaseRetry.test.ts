@@ -2,7 +2,8 @@ import { describe, expect, it, vi } from 'vitest';
 import PocketBase, { ClientResponseError } from 'pocketbase';
 import { isSafeAdminRetryMethod, withAdminAuthRetry } from '../server/pocketbase';
 
-const authFailure = () => new ClientResponseError({ status: 401, response: { status: 401 } } as never);
+const authFailure = () =>
+	new ClientResponseError({ status: 401, response: { status: 401 } } as never);
 
 type FakeCollection = Record<string, (...args: unknown[]) => Promise<unknown>>;
 
@@ -39,7 +40,9 @@ describe('server PocketBase auth retry', () => {
 			async () => 'fresh-token'
 		);
 
-		await expect(retriedRead.collection('projects').getFullList()).resolves.toEqual([{ id: 'project-1' }]);
+		await expect(retriedRead.collection('projects').getFullList()).resolves.toEqual([
+			{ id: 'project-1' }
+		]);
 		expect(initialRead).toHaveBeenCalledTimes(1);
 		expect(freshRead).toHaveBeenCalledTimes(1);
 
@@ -56,12 +59,46 @@ describe('server PocketBase auth retry', () => {
 				async () => 'fresh-token'
 			);
 
-			const collection = (retriedMutation as unknown as {
-				collection: (name: string) => Record<string, (...args: unknown[]) => Promise<unknown>>;
-			}).collection('projects');
+			const collection = (
+				retriedMutation as unknown as {
+					collection: (name: string) => Record<string, (...args: unknown[]) => Promise<unknown>>;
+				}
+			).collection('projects');
 			await expect(collection[method]('record-1')).rejects.toBeInstanceOf(ClientResponseError);
 			expect(mutation).toHaveBeenCalledTimes(1);
 			expect(freshMutationFn).not.toHaveBeenCalled();
 		}
+	});
+
+	it('keeps concurrent read retries isolated from each other', async () => {
+		let releaseFreshRead: (() => void) | undefined;
+		const freshReadReady = new Promise<void>((resolve) => {
+			releaseFreshRead = resolve;
+		});
+		const initialRead = vi.fn(async () => {
+			throw authFailure();
+		});
+		const freshRead = vi.fn(async () => {
+			await freshReadReady;
+			return [{ id: 'project-1' }];
+		});
+		const freshClient = fakeClient({ getFullList: freshRead });
+		const retryToken = vi.fn(async () => 'fresh-token');
+		const readClient = fakeClient({ getFullList: initialRead });
+		const retriedRead = withAdminAuthRetry(
+			readClient as unknown as PocketBase,
+			() => freshClient as unknown as PocketBase,
+			retryToken
+		);
+
+		const first = retriedRead.collection('projects').getFullList();
+		const second = retriedRead.collection('projects').getFullList();
+		releaseFreshRead?.();
+		await expect(Promise.all([first, second])).resolves.toEqual([
+			[{ id: 'project-1' }],
+			[{ id: 'project-1' }]
+		]);
+		expect(initialRead).toHaveBeenCalledTimes(2);
+		expect(freshRead).toHaveBeenCalledTimes(2);
 	});
 });
