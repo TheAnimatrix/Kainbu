@@ -2,6 +2,7 @@ import { buildBackgroundStoragePath } from '$lib/kainbu/backgrounds';
 import type { BackgroundTheme } from '$lib/kainbu/types';
 import { pocketbase } from '$lib/pocketbaseClient';
 import { pbEscapeFilter } from '$lib/kainbu/pbRecords';
+import { isPocketBaseNotFound } from '$lib/pocketbaseErrors';
 
 export const uploadBackgroundImage = async (
 	scope: 'user' | 'project',
@@ -21,7 +22,8 @@ export const uploadBackgroundImage = async (
 		await pocketbase.collection('background_files').update(existing.id, {
 			file
 		});
-	} catch {
+	} catch (error) {
+		if (!isPocketBaseNotFound(error)) throw error;
 		await pocketbase.collection('background_files').create({
 			owner: ownerId,
 			path,
@@ -45,7 +47,8 @@ export const deleteBackgroundImage = async (path: string) => {
 			`owner = "${pbEscapeFilter(ownerId)}" && path = "${pbEscapeFilter(path)}"`
 		);
 		await pocketbase.collection('background_files').delete(existing.id);
-	} catch {
+	} catch (error) {
+		if (!isPocketBaseNotFound(error)) throw error;
 		// already deleted
 	}
 };

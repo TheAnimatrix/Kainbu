@@ -902,7 +902,8 @@ export const saveProjectAiState = async (
 		await pb.collection('project_user_state').update(userState.id, {
 			active_ai_session_id: activeAiSessionId
 		});
-	} catch {
+	} catch (error) {
+		if (!isPocketBaseNotFound(error)) throw error;
 		await pb.collection('project_user_state').create({
 			project: projectPbId,
 			user: userId,

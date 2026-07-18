@@ -3968,6 +3968,15 @@ $: kanbanComparisonData =
 			applyingProposalId = null;
 			return;
 		}
+		if (refreshedProposal.stale) {
+			applyingProposalId = null;
+			proposalApplyErrors = {
+				...proposalApplyErrors,
+				[proposalId]:
+					'This proposal is stale because the workspace changed after it was generated. Review it again before applying.'
+			};
+			return;
+		}
 
 		let applied = false;
 		let applyError = '';

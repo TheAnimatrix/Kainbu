@@ -631,7 +631,15 @@ export const handleWorkspaceRemoveMemberRequest = async (
 	await Promise.all([
 		...userStates.map((record) => admin.collection('project_user_state').delete(record.id)),
 		...aiSessions.map((record) => admin.collection('project_ai_sessions').delete(record.id)),
-		membership ? admin.collection('project_memberships').delete(membership.id) : Promise.resolve()
+		membership
+			? admin.collection('project_memberships').update(membership.id, {
+					left_at: new Date().toISOString(),
+					last_opened_at: '',
+					viewing_board_client_id: '',
+					presence_at: '',
+					pinned_at: ''
+				})
+			: Promise.resolve()
 	]);
 
 	return { ok: true };
@@ -661,7 +669,13 @@ export const handleWorkspaceLeaveProjectRequest = async (
 	await Promise.all([
 		...userStates.map((record) => admin.collection('project_user_state').delete(record.id)),
 		...aiSessions.map((record) => admin.collection('project_ai_sessions').delete(record.id)),
-		admin.collection('project_memberships').delete(membership.id)
+		admin.collection('project_memberships').update(membership.id, {
+			left_at: new Date().toISOString(),
+			last_opened_at: '',
+			viewing_board_client_id: '',
+			presence_at: '',
+			pinned_at: ''
+		})
 	]);
 
 	return { ok: true };

@@ -4,6 +4,7 @@ import { pbEscapeFilter, projectClientFilter, projectRelationFilter } from './pb
 import { DEFAULT_COLUMN_WIDTH } from './constants.js';
 import { normalizeDueTimestamp } from './timing.js';
 import { isPocketBaseRecordId } from './recordIds.js';
+import { isPocketBaseNotFound } from '../pocketbaseErrors.js';
 import type { Project, Tag, Task } from './types.js';
 
 /**
@@ -165,7 +166,7 @@ export const deriveBoardMutations = (
 	}
 
 	for (const [taskId, previousTask] of previousTasks.entries()) {
-		if (!nextTaskIds.has(taskId) && !deleteColumnIds.includes(previousTask.columnId)) {
+		if (!nextTaskIds.has(taskId)) {
 			upsertTasks.push(mapTaskUpsertRow(
 				projectId, boardId, previousTask.columnId,
 				{ ...previousTask.task, deletedAt: Date.now() },
@@ -204,7 +205,8 @@ const upsertProjectChild = async (
 	try {
 		const existing = await pb.collection(collection).getFirstListItem(filter);
 		await pb.collection(collection).update(existing.id, body);
-	} catch {
+	} catch (error) {
+		if (!isPocketBaseNotFound(error)) throw error;
 		await pb.collection(collection).create({
 			...body,
 			project: projectPbId,
@@ -261,7 +263,8 @@ const upsertProjectTasks = async (
 		try {
 			const existing = await pb.collection('project_tasks').getFirstListItem(filter);
 			await pb.collection('project_tasks').update(existing.id, body);
-		} catch {
+		} catch (error) {
+			if (!isPocketBaseNotFound(error)) throw error;
 			await pb.collection('project_tasks').create({
 				...body,
 				project: projectPbId,
@@ -313,11 +316,11 @@ const applyBoardMutations = async (
 		for (const boardClientId of softDeletedBoardIds) {
 			try {
 				const boardPbId = await resolveBoardPbId(boardClientId);
-				if (boardPbId) {
-					await pb.collection('project_boards').update(boardPbId, {});
-				}
-			} catch {
-				// Board may not exist yet — safe to skip
+				if (boardPbId) await pb.collection('project_boards').update(boardPbId, {});
+			} catch (error) {
+				// A board can be absent during first sync, but real update failures
+				// must not be hidden after the task soft-delete has been persisted.
+				if (!isPocketBaseNotFound(error)) throw error;
 			}
 		}
 	}

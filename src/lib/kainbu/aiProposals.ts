@@ -1,6 +1,11 @@
 import { getKanbanFingerprint, getProjectPagesFingerprint } from '$lib/kainbu/fingerprint';
 import type { AiProposal, ChatMessage, PendingProposal, Project, ProposalTarget } from '$lib/kainbu/types';
 
+export const isProposalStaleForProject = (proposal: AiProposal, project: Project): boolean =>
+	proposal.target === 'kanban'
+		? getKanbanFingerprint(project.kanbanData) !== proposal.baseFingerprint
+		: getProjectPagesFingerprint(project.pages) !== proposal.baseFingerprint;
+
 export const collectStagedProposalsFromHistory = (history: ChatMessage[]): AiProposal[] => {
 	const byTarget = new Map<ProposalTarget, AiProposal>();
 
@@ -49,13 +54,13 @@ export const toPendingProposals = (project: Project, proposals: AiProposal[]): P
 			? {
 					...proposal,
 					projectId: project.id,
-					stale: getKanbanFingerprint(project.kanbanData) !== proposal.baseFingerprint,
+					stale: isProposalStaleForProject(proposal, project),
 					originalKanbanData: structuredClone(proposal.originalKanbanData)
 				}
 			: {
 					...proposal,
 					projectId: project.id,
-					stale: getProjectPagesFingerprint(project.pages) !== proposal.baseFingerprint,
+					stale: isProposalStaleForProject(proposal, project),
 					originalScratchpadState: structuredClone(project.scratchpadData)
 				}
 	);
