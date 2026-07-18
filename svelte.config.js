@@ -15,7 +15,12 @@ const config = {
 		},
 		adapter: adapter({
 			fallback: 'index.html'
-		})
+		}),
+		prerender: {
+			// Workspace IDs are user data and cannot be crawled at build time.
+			// The static fallback serves these client-rendered native routes.
+			handleUnseenRoutes: 'ignore'
+		}
 	}
 };
 
