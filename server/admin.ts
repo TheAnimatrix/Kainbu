@@ -278,10 +278,13 @@ export const handleAuthSignup = async (c: Context) => {
 		}
 
 		const body = (await c.req.json()) as { email?: string; password?: string };
-		const email = typeof body.email === 'string' ? body.email.trim().toLowerCase() : '';
-		const password = typeof body.password === 'string' ? body.password : '';
-		if (!email || !password) {
+		if (!body || typeof body !== 'object' || typeof body.email !== 'string' || typeof body.password !== 'string') {
 			return c.json({ error: 'Email and password are required.' }, 400);
+		}
+		const email = body.email.trim().toLowerCase();
+		const password = body.password;
+		if (!email || !password || email.length > 320 || password.length < 8 || password.length > 256 || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) {
+			return c.json({ error: 'Provide a valid email and a password between 8 and 256 characters.' }, 400);
 		}
 
 		if (settings.emailVerificationEnabled) {

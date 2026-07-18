@@ -797,10 +797,52 @@ type WorkspaceProjectRenameRequest = {
 const isKanbanColumn = (value: unknown): value is KanbanData[number] =>
 	isRecord(value) && typeof value.id === 'string' && Array.isArray((value as { tasks?: unknown }).tasks);
 
+const isFiniteOptionalNumber = (value: unknown) => value === undefined || (typeof value === 'number' && Number.isFinite(value));
+const isOptionalString = (value: unknown, max: number) => value === undefined || (typeof value === 'string' && value.length <= max);
+
 const requireKanbanData = (value: unknown, field: string): KanbanData => {
-	if (!Array.isArray(value) || !value.every(isKanbanColumn)) {
-		throw new WorkspaceApiError(400, `${field} must be an array of board columns.`);
+	if (!Array.isArray(value) || value.length > 100 || !value.every(isKanbanColumn)) {
+		throw new WorkspaceApiError(400, `${field} must be an array of at most 100 board columns.`);
 	}
+	let taskCount = 0;
+	for (const [columnIndex, column] of value.entries()) {
+		if (
+			column.id.length === 0 || column.id.length > 128 ||
+			typeof column.title !== 'string' || column.title.length > 500 ||
+			!isOptionalString(column.color, 128) ||
+			(column.width !== undefined && (typeof column.width !== 'number' || !Number.isFinite(column.width) || column.width < 0))
+		) {
+			throw new WorkspaceApiError(400, `${field}[${columnIndex}] has invalid fields.`);
+		}
+		if (column.tasks.length > 1000) throw new WorkspaceApiError(413, `${field}[${columnIndex}] has too many tasks.`);
+		taskCount += column.tasks.length;
+		for (const [taskIndex, task] of column.tasks.entries()) {
+			if (!isRecord(task) || typeof task.id !== 'string' || task.id.length === 0 || task.id.length > 128 || typeof task.title !== 'string' || task.title.length > 1000) {
+				throw new WorkspaceApiError(400, `${field}[${columnIndex}].tasks[${taskIndex}] is malformed.`);
+			}
+			if (typeof task.description === 'string' && task.description.length > 100_000) {
+				throw new WorkspaceApiError(413, `${field}[${columnIndex}].tasks[${taskIndex}].description is too large.`);
+			}
+			if (!isOptionalString(task.color, 128) || !isOptionalString(task.assignedTo, 128) ||
+				(task.hasCheckbox !== undefined && typeof task.hasCheckbox !== 'boolean') ||
+				(task.checked !== undefined && typeof task.checked !== 'boolean') ||
+				!isFiniteOptionalNumber(task.createdAt) || !isFiniteOptionalNumber(task.updatedAt) ||
+				!isFiniteOptionalNumber(task.completedAt) || !isFiniteOptionalNumber(task.countdownAt) ||
+				!isFiniteOptionalNumber(task.alarmAt)) {
+				throw new WorkspaceApiError(400, `${field}[${columnIndex}].tasks[${taskIndex}] has invalid fields.`);
+			}
+			if (!Array.isArray(task.tags) || task.tags.length > 50 || task.tags.some((tag) =>
+				!isRecord(tag) || typeof tag.id !== 'string' || tag.id.length === 0 || tag.id.length > 128 ||
+				typeof tag.label !== 'string' || tag.label.length > 200 || typeof tag.color !== 'string' || tag.color.length > 128
+			)) {
+				throw new WorkspaceApiError(400, `${field}[${columnIndex}].tasks[${taskIndex}].tags is invalid.`);
+			}
+			if (task.linkedTaskIds !== undefined && (!Array.isArray(task.linkedTaskIds) || task.linkedTaskIds.length > 100 || task.linkedTaskIds.some((id) => typeof id !== 'string' || id.length === 0 || id.length > 128))) {
+				throw new WorkspaceApiError(400, `${field}[${columnIndex}].tasks[${taskIndex}].linkedTaskIds is invalid.`);
+			}
+		}
+	}
+	if (taskCount > 10_000) throw new WorkspaceApiError(413, `${field} contains too many tasks.`);
 	return value as KanbanData;
 };
 

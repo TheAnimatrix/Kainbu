@@ -5,6 +5,7 @@ import type { AiWorkspaceRequest, AiWorkspaceStreamEvent } from '../src/lib/kain
 import type { BackgroundTheme } from '../src/lib/kainbu/types.js';
 import { DEFAULT_AI_MODEL_CONFIGS } from '../src/lib/kainbu/models.js';
 import { getEnv } from './env.js';
+import { invalidJsonAs400, rateLimit, requestBodyLimit, securityLimits } from './security.js';
 import { getOpenRouterApiKey } from './openrouter-key.js';
 import { extractUsageFromResponse } from './workspace-ai/openrouter-stream.js';
 import { recordAiUsageEvent } from './ai-usage.js';
@@ -125,23 +126,41 @@ const normalizeUtilityModelText = (value: string) =>
 app.use(
 	'*',
 	cors({
-		origin: '*',
+		origin: (origin) => {
+			const allowed = getEnv('KAINBU_CORS_ORIGINS', getEnv('KAINBU_PUBLIC_URL', 'http://localhost:3000'))
+				.split(',')
+				.map((value) => value.trim().replace(/\/$/, ''))
+				.filter(Boolean);
+			return origin && allowed.includes(origin.replace(/\/$/, '')) ? origin : undefined;
+		},
 		allowHeaders: ['Authorization', 'Content-Type'],
-		allowMethods: ['GET', 'POST', 'PUT', 'PATCH', 'OPTIONS']
+		allowMethods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+		credentials: true
 	})
 );
+app.use('*', invalidJsonAs400);
+app.use('*', async (c, next) => {
+	const path = c.req.path;
+	const limit = path === '/api/workspace-ai/transcribe-images'
+		? securityLimits.maxTranscriptionJsonBytes
+		: path.startsWith('/api/workspace-ai')
+			? securityLimits.maxAiJsonBytes
+			: securityLimits.maxJsonBytes;
+	return requestBodyLimit(limit)(c, next);
+});
+app.use('*', rateLimit());
 
 app.get('/health', (c) => c.json(healthPayload));
 app.get('/api', (c) => c.json(apiRootPayload));
 app.get('/api/', (c) => c.json(apiRootPayload));
 app.get('/api/health', (c) => c.json(healthPayload));
-app.get('/api/models', async (c) => {
+app.get('/api/models', async (c: Context) => {
 	await loadAiModelCatalog({ fresh: true });
 	c.header('Cache-Control', 'no-store');
 	return c.json(getWorkspaceAiModelsResponse());
 });
 app.get('/api/auth/settings', handleGetAuthSettings);
-app.post('/api/auth/signup', handleAuthSignup);
+app.post('/api/auth/signup', requestBodyLimit(64 * 1024), rateLimit({ limit: 10 }), handleAuthSignup);
 
 const handleWorkspaceMutationError = (c: Context, error: unknown) => {
 	const { status, message } = toWorkspaceApiError(error);
@@ -252,7 +271,7 @@ const generateTaskTitle = async (
 	return normalizeUtilityModelText(parsed.choices?.[0]?.message?.content || '');
 };
 
-app.post('/api/workspace-ai', async (c) => {
+app.post('/api/workspace-ai', requestBodyLimit(securityLimits.maxAiJsonBytes), rateLimit({ limit: 20 }), async (c: Context) => {
 	try {
 		await loadAiModelCatalog();
 		const body = (await c.req.json()) as AiWorkspaceRequest;
@@ -275,7 +294,7 @@ app.get('/api/workspace-ai/session-title', methodNotAllowed);
 app.get('/api/workspace-ai/task-title', methodNotAllowed);
 app.get('/api/workspace-ai/transcribe-images', methodNotAllowed);
 
-app.post('/api/workspace-ai/stream', async (c) => {
+app.post('/api/workspace-ai/stream', requestBodyLimit(securityLimits.maxAiJsonBytes), rateLimit({ limit: 20 }), async (c: Context) => {
 	try {
 		await loadAiModelCatalog();
 		await resolveAuthenticatedUserId(c.req.header('Authorization'));
@@ -338,7 +357,7 @@ app.post('/api/workspace-ai/stream', async (c) => {
 	});
 });
 
-app.post('/api/workspace-ai/session-title', async (c) => {
+app.post('/api/workspace-ai/session-title', requestBodyLimit(256 * 1024), rateLimit({ limit: 20 }), async (c: Context) => {
 	if (!c.req.header('Authorization')) {
 		return c.json({ error: 'Unauthorized' }, 401);
 	}
@@ -372,7 +391,7 @@ app.post('/api/workspace-ai/session-title', async (c) => {
 	}
 });
 
-app.post('/api/workspace-ai/task-title', async (c) => {
+app.post('/api/workspace-ai/task-title', requestBodyLimit(256 * 1024), rateLimit({ limit: 20 }), async (c: Context) => {
 	if (!c.req.header('Authorization')) {
 		return c.json({ error: 'Unauthorized' }, 401);
 	}
@@ -412,24 +431,27 @@ app.post('/api/workspace-ai/task-title', async (c) => {
 	}
 });
 
-app.post('/api/workspace-ai/transcribe-images', async (c) => {
+app.post('/api/workspace-ai/transcribe-images', requestBodyLimit(securityLimits.maxTranscriptionJsonBytes), rateLimit({ limit: 10 }), async (c: Context) => {
 	if (!c.req.header('Authorization')) {
 		return c.json({ error: 'Unauthorized' }, 401);
 	}
 
 	try {
-		const body = (await c.req.json()) as {
-			images?: Array<{ id?: string; name?: string; content?: string }>;
-		};
-		const images = Array.isArray(body.images)
-			? body.images
-					.map((image, index) => ({
-						id: typeof image.id === 'string' && image.id.trim() ? image.id.trim() : `image-${index}`,
-						name: typeof image.name === 'string' ? image.name.trim() : 'image',
-						content: typeof image.content === 'string' ? image.content.trim() : ''
-					}))
-					.filter((image) => image.content)
-			: [];
+		const body = (await c.req.json()) as { images?: Array<{ id?: string; name?: string; content?: string }> };
+		const rawImages = body.images;
+		if (!Array.isArray(rawImages) || rawImages.length === 0) {
+			return c.json({ error: 'images is required' }, 400);
+		}
+		if (rawImages.length > 8 || rawImages.some((image) => !image || typeof image !== 'object' || typeof image?.content !== 'string' || (typeof image.content === 'string' && image.content.length > 8_000_000) || (image.name !== undefined && typeof image.name !== 'string'))) {
+			return c.json({ error: 'images contains malformed or oversized entries.' }, rawImages.length > 8 || rawImages.some((image) => typeof image?.content === 'string' && image.content.length > 8_000_000) ? 413 : 400);
+		}
+		const images: Array<{ id: string; name: string; content: string }> = rawImages
+			.map((image, index) => ({
+				id: typeof image.id === 'string' && image.id.trim() ? image.id.trim() : `image-${index}`,
+				name: typeof image.name === 'string' ? image.name.trim().slice(0, 256) : 'image',
+				content: typeof image.content === 'string' ? image.content.trim() : ''
+			}))
+			.filter((image): image is { id: string; name: string; content: string } => image.content.length > 0);
 
 		if (!images.length) {
 			return c.json({ error: 'images is required' }, 400);
@@ -449,7 +471,7 @@ app.post('/api/workspace-ai/transcribe-images', async (c) => {
 	}
 });
 
-app.post('/api/workspace/projects/touch', async (c) => {
+app.post('/api/workspace/projects/touch', async (c: Context) => {
 	try {
 		const payload = await handleWorkspaceTouchProjectRequest(
 			(await c.req.json()) as { projectId: string },
@@ -461,10 +483,10 @@ app.post('/api/workspace/projects/touch', async (c) => {
 	}
 });
 
-app.get('/api/share/:slug', async (c) => {
+app.get('/api/share/:slug', async (c: Context) => {
 	try {
 		const payload = await handlePublicBoardShareRequest(
-			c.req.param('slug'),
+			c.req.param('slug') || '',
 			c.req.header('Authorization')
 		);
 		return c.json(payload);
@@ -478,7 +500,7 @@ app.get('/api/share/:slug', async (c) => {
 	}
 });
 
-app.post('/api/workspace/boards/share', async (c) => {
+app.post('/api/workspace/boards/share', async (c: Context) => {
 	try {
 		const origin = c.req.header('Origin') || c.req.header('Referer')?.replace(/\/[^/]*$/, '');
 		const payload = await handleWorkspaceBoardShareRequest(
@@ -500,7 +522,7 @@ app.post('/api/workspace/boards/share', async (c) => {
 	}
 });
 
-app.post('/api/workspace/boards/presence', async (c) => {
+app.post('/api/workspace/boards/presence', async (c: Context) => {
 	try {
 		const payload = await handleWorkspaceBoardPresenceRequest(
 			(await c.req.json()) as { projectId: string; boardId: string | null },
@@ -512,7 +534,7 @@ app.post('/api/workspace/boards/presence', async (c) => {
 	}
 });
 
-app.post('/api/workspace/projects/pin', async (c) => {
+app.post('/api/workspace/projects/pin', async (c: Context) => {
 	try {
 		const payload = await handleWorkspacePinProjectRequest(
 			(await c.req.json()) as { projectId: string; pinned?: boolean },
@@ -524,7 +546,7 @@ app.post('/api/workspace/projects/pin', async (c) => {
 	}
 });
 
-app.get('/api/workspace/projects/scratchpad', async (c) => {
+app.get('/api/workspace/projects/scratchpad', async (c: Context) => {
 	try {
 		const payload = await handleWorkspaceScratchpadGetRequest(
 			c.req.query('projectId'),
@@ -536,7 +558,7 @@ app.get('/api/workspace/projects/scratchpad', async (c) => {
 	}
 });
 
-app.post('/api/workspace/projects/scratchpad', async (c) => {
+app.post('/api/workspace/projects/scratchpad', async (c: Context) => {
 	try {
 		const payload = await handleWorkspaceScratchpadRequest(
 			(await c.req.json()) as {
@@ -552,7 +574,7 @@ app.post('/api/workspace/projects/scratchpad', async (c) => {
 	}
 });
 
-app.post('/api/workspace/boards/sync', async (c) => {
+app.post('/api/workspace/boards/sync', async (c: Context) => {
 	try {
 		const payload = await handleWorkspaceBoardSyncRequest(
 			(await c.req.json()) as Parameters<typeof handleWorkspaceBoardSyncRequest>[0],
@@ -564,7 +586,7 @@ app.post('/api/workspace/boards/sync', async (c) => {
 	}
 });
 
-app.post('/api/workspace/boards/create', async (c) => {
+app.post('/api/workspace/boards/create', async (c: Context) => {
 	try {
 		const payload = await handleWorkspaceBoardCreateRequest(
 			(await c.req.json()) as Parameters<typeof handleWorkspaceBoardCreateRequest>[0],
@@ -576,7 +598,7 @@ app.post('/api/workspace/boards/create', async (c) => {
 	}
 });
 
-app.post('/api/workspace/boards/rename', async (c) => {
+app.post('/api/workspace/boards/rename', async (c: Context) => {
 	try {
 		const payload = await handleWorkspaceBoardRenameRequest(
 			(await c.req.json()) as Parameters<typeof handleWorkspaceBoardRenameRequest>[0],
@@ -588,7 +610,7 @@ app.post('/api/workspace/boards/rename', async (c) => {
 	}
 });
 
-app.post('/api/workspace/boards/delete', async (c) => {
+app.post('/api/workspace/boards/delete', async (c: Context) => {
 	try {
 		const payload = await handleWorkspaceBoardDeleteRequest(
 			(await c.req.json()) as Parameters<typeof handleWorkspaceBoardDeleteRequest>[0],
@@ -600,7 +622,7 @@ app.post('/api/workspace/boards/delete', async (c) => {
 	}
 });
 
-app.post('/api/workspace/pages/create', async (c) => {
+app.post('/api/workspace/pages/create', async (c: Context) => {
 	try {
 		const payload = await handleWorkspacePageCreateRequest(
 			(await c.req.json()) as Parameters<typeof handleWorkspacePageCreateRequest>[0],
@@ -612,7 +634,7 @@ app.post('/api/workspace/pages/create', async (c) => {
 	}
 });
 
-app.post('/api/workspace/pages/rename', async (c) => {
+app.post('/api/workspace/pages/rename', async (c: Context) => {
 	try {
 		const payload = await handleWorkspacePageRenameRequest(
 			(await c.req.json()) as Parameters<typeof handleWorkspacePageRenameRequest>[0],
@@ -624,7 +646,7 @@ app.post('/api/workspace/pages/rename', async (c) => {
 	}
 });
 
-app.post('/api/workspace/pages/content', async (c) => {
+app.post('/api/workspace/pages/content', async (c: Context) => {
 	try {
 		const payload = await handleWorkspacePageContentRequest(
 			(await c.req.json()) as Parameters<typeof handleWorkspacePageContentRequest>[0],
@@ -636,7 +658,7 @@ app.post('/api/workspace/pages/content', async (c) => {
 	}
 });
 
-app.post('/api/workspace/pages/delete', async (c) => {
+app.post('/api/workspace/pages/delete', async (c: Context) => {
 	try {
 		const payload = await handleWorkspacePageDeleteRequest(
 			(await c.req.json()) as Parameters<typeof handleWorkspacePageDeleteRequest>[0],
@@ -648,7 +670,7 @@ app.post('/api/workspace/pages/delete', async (c) => {
 	}
 });
 
-app.post('/api/workspace/projects/create', async (c) => {
+app.post('/api/workspace/projects/create', async (c: Context) => {
 	try {
 		const payload = await handleWorkspaceProjectCreateRequest(
 			(await c.req.json()) as Parameters<typeof handleWorkspaceProjectCreateRequest>[0],
@@ -660,7 +682,7 @@ app.post('/api/workspace/projects/create', async (c) => {
 	}
 });
 
-app.post('/api/workspace/projects/rename', async (c) => {
+app.post('/api/workspace/projects/rename', async (c: Context) => {
 	try {
 		const payload = await handleWorkspaceProjectRenameRequest(
 			(await c.req.json()) as Parameters<typeof handleWorkspaceProjectRenameRequest>[0],
@@ -672,7 +694,7 @@ app.post('/api/workspace/projects/rename', async (c) => {
 	}
 });
 
-app.post('/api/workspace/projects/background', async (c) => {
+app.post('/api/workspace/projects/background', async (c: Context) => {
 	try {
 		const payload = await handleWorkspaceProjectBackgroundRequest(
 			(await c.req.json()) as {
@@ -687,7 +709,7 @@ app.post('/api/workspace/projects/background', async (c) => {
 	}
 });
 
-app.post('/api/workspace/invites/create', async (c) => {
+app.post('/api/workspace/invites/create', rateLimit({ limit: 20 }), async (c: Context) => {
 	try {
 		const payload = await handleWorkspaceCreateInviteRequest(
 			(await c.req.json()) as {
@@ -702,7 +724,7 @@ app.post('/api/workspace/invites/create', async (c) => {
 	}
 });
 
-app.post('/api/workspace/invites/respond', async (c) => {
+app.post('/api/workspace/invites/respond', async (c: Context) => {
 	try {
 		const payload = await handleWorkspaceRespondInviteRequest(
 			(await c.req.json()) as {
@@ -717,7 +739,7 @@ app.post('/api/workspace/invites/respond', async (c) => {
 	}
 });
 
-app.post('/api/workspace/invites/cancel', async (c) => {
+app.post('/api/workspace/invites/cancel', async (c: Context) => {
 	try {
 		const payload = await handleWorkspaceCancelInviteRequest(
 			(await c.req.json()) as { inviteId: string },
@@ -729,7 +751,7 @@ app.post('/api/workspace/invites/cancel', async (c) => {
 	}
 });
 
-app.post('/api/workspace/members/remove', async (c) => {
+app.post('/api/workspace/members/remove', async (c: Context) => {
 	try {
 		const payload = await handleWorkspaceRemoveMemberRequest(
 			(await c.req.json()) as {
@@ -744,7 +766,7 @@ app.post('/api/workspace/members/remove', async (c) => {
 	}
 });
 
-app.post('/api/workspace/members/leave', async (c) => {
+app.post('/api/workspace/members/leave', async (c: Context) => {
 	try {
 		const payload = await handleWorkspaceLeaveProjectRequest(
 			(await c.req.json()) as { projectId: string },
@@ -756,7 +778,7 @@ app.post('/api/workspace/members/leave', async (c) => {
 	}
 });
 
-app.post('/api/workspace/members/profiles', async (c) => {
+app.post('/api/workspace/members/profiles', async (c: Context) => {
 	try {
 		const payload = await handleWorkspaceMemberProfilesRequest(
 			(await c.req.json()) as { userIds: string[] },
@@ -790,10 +812,10 @@ app.onError((error, c) => {
 	return c.json({ error: message }, status as 400 | 401 | 403 | 404 | 409 | 500);
 });
 
-app.post('/api/cli/device/start', handleCliDeviceStart);
-app.post('/api/cli/device/poll', handleCliDevicePoll);
-app.post('/api/cli/device/exchange', handleCliDeviceExchange);
-app.post('/api/cli/device/approve', async (c) => {
+app.post('/api/cli/device/start', requestBodyLimit(32 * 1024), rateLimit({ limit: 10 }), handleCliDeviceStart);
+app.post('/api/cli/device/poll', requestBodyLimit(32 * 1024), rateLimit({ limit: 30 }), handleCliDevicePoll);
+app.post('/api/cli/device/exchange', requestBodyLimit(32 * 1024), rateLimit({ limit: 10 }), handleCliDeviceExchange);
+app.post('/api/cli/device/approve', async (c: Context) => {
 	try {
 		return await handleCliDeviceApprove(c);
 	} catch (error) {
