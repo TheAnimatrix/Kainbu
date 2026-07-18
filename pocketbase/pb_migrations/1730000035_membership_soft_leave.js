@@ -5,7 +5,12 @@ migrate(
 		const memberships = app.findCollectionByNameOrId('project_memberships');
 		if (!memberships.fields.getByName('left_at')) {
 			memberships.fields.add(new DateField({ name: 'left_at', required: false }));
+			// Persist the schema before saving rules that reference the new field.
+			app.save(memberships);
 		}
+
+		// Refresh the collection so rule validation resolves the persisted field schema.
+		const refreshedMemberships = app.findCollectionByNameOrId('project_memberships');
 
 		const activeMember =
 			'@request.auth.id != "" && (@collection.project_memberships.project ?= project && @collection.project_memberships.user ?= @request.auth.id && @collection.project_memberships.left_at = "")';
@@ -13,10 +18,10 @@ migrate(
 			'@request.auth.id != "" && (@collection.project_memberships.project ?= id && @collection.project_memberships.user ?= @request.auth.id && @collection.project_memberships.left_at = "")';
 		const membershipParticipant =
 			'@request.auth.id != "" && left_at = "" && (user.id = @request.auth.id || project.owner.id = @request.auth.id)';
-		memberships.listRule = membershipParticipant;
-		memberships.viewRule = membershipParticipant;
-		memberships.updateRule = membershipParticipant;
-		memberships.deleteRule = membershipParticipant;
+		refreshedMemberships.listRule = membershipParticipant;
+		refreshedMemberships.viewRule = membershipParticipant;
+		refreshedMemberships.updateRule = membershipParticipant;
+		refreshedMemberships.deleteRule = membershipParticipant;
 
 		for (const name of [
 			'project_boards',
@@ -30,29 +35,30 @@ migrate(
 			'project_user_state',
 			'project_ai_sessions'
 		]) {
+			let collection;
 			try {
-				const collection = app.findCollectionByNameOrId(name);
-				collection.listRule = activeMember;
-				collection.viewRule = activeMember;
-				collection.createRule = activeMember;
-				collection.updateRule = activeMember;
-				collection.deleteRule = activeMember;
-				app.save(collection);
+				collection = app.findCollectionByNameOrId(name);
 			} catch {
 				// Optional collections may not exist in older installations.
+				continue;
 			}
+			collection.listRule = activeMember;
+			collection.viewRule = activeMember;
+			collection.createRule = activeMember;
+			collection.updateRule = activeMember;
+			collection.deleteRule = activeMember;
+			app.save(collection);
 		}
 
 		const projects = app.findCollectionByNameOrId('projects');
 		projects.listRule = activeProjectMember;
 		projects.viewRule = activeProjectMember;
 		app.save(projects);
-		app.save(memberships);
+		app.save(refreshedMemberships);
 	},
 	(app) => {
-		const memberships = app.findCollectionByNameOrId('project_memberships');
-		const leftAt = memberships.fields.getByName('left_at');
-		if (leftAt) memberships.fields.removeByName('left_at');
-		app.save(memberships);
+		// Intentionally leave the field and restrictive rules in place on downgrade.
+		// Removing left_at while rules reference it would make the database unsafe or
+		// cause the downgrade itself to fail. A forward migration can repair this state.
 	}
 );
