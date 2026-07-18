@@ -20,8 +20,10 @@ migrate(
 			'@request.auth.id != "" && left_at = "" && (user.id = @request.auth.id || project.owner.id = @request.auth.id)';
 		refreshedMemberships.listRule = membershipParticipant;
 		refreshedMemberships.viewRule = membershipParticipant;
-		refreshedMemberships.updateRule = membershipParticipant;
-		refreshedMemberships.deleteRule = membershipParticipant;
+		// Membership identity, role, and lifecycle are server-managed. Allowing a
+		// participant to write this row would let them promote or reassign it.
+		refreshedMemberships.updateRule = null;
+		refreshedMemberships.deleteRule = null;
 
 		for (const name of [
 			'project_boards',

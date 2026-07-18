@@ -140,6 +140,33 @@ describe('PocketBase P0 authorization regressions', () => {
 		expect(member.user).toBe(attackerId);
 	});
 
+	it('blocks ordinary users from mutating or deleting membership rows directly', async () => {
+		const attacker = pb();
+		attacker.authStore.save(attackerToken, attackerRecord!);
+
+		for (const mutation of [
+			{ role: 'owner' },
+			{ project: projectId },
+			{ user: ownerId },
+			{ left_at: new Date().toISOString() }
+		]) {
+			await expectPocketBaseStatus(
+				attacker.collection('project_memberships').update(membershipId, mutation),
+				403
+			);
+		}
+		await expectPocketBaseStatus(
+			attacker.collection('project_memberships').delete(membershipId),
+			403
+		);
+
+		const unchanged = await attacker.collection('project_memberships').getOne(membershipId);
+		expect(unchanged.project).toBe(adminProjectId);
+		expect(unchanged.user).toBe(attackerId);
+		expect(unchanged.role).toBe('member');
+		expect(unchanged.left_at).toBeFalsy();
+	});
+
 	it('does not let an ordinary user read another private project', async () => {
 		const attacker = pb();
 		attacker.authStore.save(attackerToken, attackerRecord!);

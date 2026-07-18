@@ -897,76 +897,22 @@ export const touchProjectLastOpened = async (projectId: string) => {
 };
 
 export const reportBoardPresence = async (projectId: string, boardId: string | null) => {
-	const now = new Date().toISOString();
 	const normalizedBoardId = boardId?.trim() || '';
-
-	try {
-		await invokeWorkspaceApi('/api/workspace/boards/presence', {
-			body: {
-				projectId,
-				boardId: normalizedBoardId || null
-			}
-		});
-		return;
-	} catch (apiError) {
-		const pb = getPb();
-		const userId = pb.authStore.model?.id;
-		if (!userId) throw apiError;
-
-		try {
-			const membership = await pb
-				.collection('project_memberships')
-				.getFirstListItem(
-					`user = "${pbEscapeFilter(userId)}" && project.client_id = "${pbEscapeFilter(projectId)}"`
-				);
-			await pb.collection('project_memberships').update(membership.id, {
-				last_opened_at: now,
-				viewing_board_client_id: normalizedBoardId,
-				presence_at: normalizedBoardId ? now : ''
-			});
-		} catch (directError) {
-			console.error('[kainbu] board presence API and direct PocketBase update failed', {
-				apiError,
-				directError
-			});
-			throw apiError;
+	await invokeWorkspaceApi('/api/workspace/boards/presence', {
+		body: {
+			projectId,
+			boardId: normalizedBoardId || null
 		}
-	}
+	});
 };
 
 export const setProjectPinned = async (projectId: string, pinned: boolean) => {
-	const pinnedAt = pinned ? new Date().toISOString() : '';
-
-	try {
-		await invokeWorkspaceApi('/api/workspace/projects/pin', {
-			body: {
-				projectId,
-				pinned
-			}
-		});
-		return;
-	} catch (apiError) {
-		const pb = getPb();
-		const userId = pb.authStore.model?.id;
-		if (!userId) throw apiError;
-
-		try {
-			const membership = await pb
-				.collection('project_memberships')
-				.getFirstListItem(
-					`user = "${pbEscapeFilter(userId)}" && project.client_id = "${pbEscapeFilter(projectId)}"`
-				);
-			await pb.collection('project_memberships').update(membership.id, {
-				pinned_at: pinnedAt
-			});
-		} catch (directError) {
-			console.error('[kainbu] project pin API and direct PocketBase update failed', {
-				apiError,
-				directError
-			});
-			throw apiError;
+	await invokeWorkspaceApi('/api/workspace/projects/pin', {
+		body: {
+			projectId,
+			pinned
 		}
-	}
+	});
 };
 
 export const updateProjectBackground = async (
