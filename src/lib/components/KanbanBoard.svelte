@@ -2641,7 +2641,6 @@
 																<div
 																	class="group/task-actions flex items-center touch-manipulation"
 																	onpointerdown={(event) => event.stopPropagation()}
-																	onclick={(event) => event.stopPropagation()}
 																>
 																	<div
 																		class={`flex items-center ${
@@ -3422,7 +3421,6 @@
 					class="pointer-events-auto fixed max-h-[min(17.5rem,calc(100vh-1.5rem))] overflow-y-auto kainbu-context-menu rounded-lg"
 					style={`top:${assignMenuOpen!.position.top}px; left:${assignMenuOpen!.position.left}px; width:${ASSIGN_MENU_WIDTH}px;`}
 					onmousedown={(event) => event.stopPropagation()}
-					onclick={(event) => event.stopPropagation()}
 				>
 					{#each members as member (member.userId)}
 						<button
@@ -3555,12 +3553,12 @@
 				></button>
 				<div
 					role="dialog"
+					tabindex="-1"
 					aria-label="Card info"
 					data-task-info-menu
 					class="pointer-events-auto fixed kainbu-context-menu rounded-lg p-2.5"
 					style={`top:${taskInfoMenuOpen!.position.top}px; left:${taskInfoMenuOpen!.position.left}px; width:${TASK_INFO_MENU_WIDTH}px;`}
 					onmousedown={(event) => event.stopPropagation()}
-					onclick={(event) => event.stopPropagation()}
 				>
 					<p class="kainbu-menu-section-label mb-1.5">Card info</p>
 					<dl class="space-y-1.5 px-0.5 text-[11px]">

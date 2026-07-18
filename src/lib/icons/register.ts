@@ -1,10 +1,10 @@
 import { addCollection } from '@iconify/svelte';
-import { icons as fluentIcons } from '@iconify-json/fluent';
+import { FLUENT_ICON_COLLECTION } from './fluent-icons';
 
 let registered = false;
 
 export function registerFluentIcons() {
 	if (registered) return;
-	addCollection(fluentIcons);
+	addCollection(FLUENT_ICON_COLLECTION);
 	registered = true;
 }

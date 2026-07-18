@@ -53,12 +53,12 @@
 		></button>
 		<div
 			role="dialog"
+			tabindex="-1"
 			aria-label="Link to task"
 			data-task-link-picker
 			class="pointer-events-auto fixed w-64 max-h-[min(24rem,calc(100vh-1.5rem))] overflow-hidden kainbu-context-menu rounded-lg p-0"
 			style={`top:${position.top}px; left:${position.left}px;`}
 			onmousedown={(event) => event.stopPropagation()}
-			onclick={(event) => event.stopPropagation()}
 		>
 			<div class="flex items-center justify-between gap-2 border-b border-app-border/60 px-2 py-1.5">
 				<p class="text-[13px] font-medium text-app-text">Link to task</p>

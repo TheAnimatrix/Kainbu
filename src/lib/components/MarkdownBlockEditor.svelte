@@ -2101,6 +2101,7 @@ const compressImageIfNeeded = async (file: File): Promise<File> => {
 		>
 			<div
 				class="markdown-editor__block-menu"
+				role="presentation"
 				style={`top:${refMenuOpen.y}px; left:${refMenuOpen.x}px;`}
 				on:mousedown|stopPropagation
 				on:click|stopPropagation

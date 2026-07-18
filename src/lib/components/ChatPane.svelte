@@ -67,7 +67,7 @@
 	export let onAddAttachments: (attachments: ChatAttachment[]) => void;
 	export let onRemoveAttachment: (attachmentId: string) => void;
 	export let onRemoveTaskCard: (taskCardId: string) => void;
-	export let onClearHistory: (() => void) | null = null;
+
 	export let onSessionChange: (sessionId: string) => void;
 	export let onCreateSession: () => void;
 	export let onRenameSession: (sessionId: string, title: string) => void;
@@ -834,6 +834,11 @@
 		return parts.filter(Boolean).join(' · ');
 	};
 
+	let responseDetailsMessageId: string | null = null;
+	const toggleResponseDetails = (messageId: string) => {
+		responseDetailsMessageId = responseDetailsMessageId === messageId ? null : messageId;
+	};
+
 	const isCompactStatusMessage = (message: ChatMessage) =>
 		message.role === 'assistant' &&
 		(message.progressEvents?.length || 0) > 0 &&
@@ -1530,10 +1535,18 @@
 											class="kainbu-chat-actions__button"
 											aria-label="Response details"
 											title={messageActionDetails(message) || 'Response details'}
+											aria-expanded={responseDetailsMessageId === message.id}
+											aria-controls={`response-details-${message.id}`}
+											on:click={() => toggleResponseDetails(message.id)}
 										>
 											<Ellipsis size={15} strokeWidth={1.75} />
 										</button>
-									</div>
+										</div>
+										{#if responseDetailsMessageId === message.id}
+										<p id={`response-details-${message.id}`} class="mt-1 text-[10px] text-app-subtext">
+											{messageActionDetails(message)}
+										</p>
+										{/if}
 								{/if}
 
 								{#if uniqueCitations(message).length}
@@ -2051,6 +2064,7 @@
 		></button>
 		<div
 			role="listbox"
+			tabindex="-1"
 			aria-label={composerMenu === 'model'
 				? 'AI models'
 				: composerMenu === 'thinking'
@@ -2170,6 +2184,7 @@
 		></button>
 		<div
 			role="listbox"
+			tabindex="-1"
 			aria-label="Chat sessions"
 			class="pointer-events-auto fixed overflow-hidden rounded-lg border border-app-border bg-app-surface shadow-kainbu-xl"
 			style={`top:${switcherPosition.top}px; left:${switcherPosition.left}px; width:${switcherPosition.width}px;`}

@@ -3400,26 +3400,6 @@ $: kanbanComparisonData =
 		queuedTaskCards = queuedTaskCards.filter((taskCard) => taskCard.id !== taskCardId);
 	};
 
-	const handleClearHistory = () => {
-		if (!currentProject) return;
-		if (!window.confirm(`Clear your private AI chat for "${currentProject.name}"?`)) return;
-
-		updateProjectLocal(currentProject.id, (project) =>
-			updateActiveProjectAiSession(project, (session) => ({
-				...session,
-				history: structuredClone(DEFAULT_CHAT_HISTORY),
-				updatedAt: Date.now(),
-				lastMessageAt: DEFAULT_CHAT_HISTORY.at(-1)?.timestamp || Date.now()
-			}))
-		);
-		pendingProposals = pendingProposals.filter(
-			(proposal) => proposal.projectId !== currentProject.id
-		);
-		proposalPreviewTarget = null;
-		highlightedTaskIds = [];
-		scheduleChatSync(currentProject.id, 0);
-	};
-
 	const handleCreateAiSession = () => {
 		if (!currentProject || isAiProcessing) return;
 
@@ -5406,8 +5386,7 @@ $: kanbanComparisonData =
 													onAddAttachments={handleAddAttachments}
 													onRemoveAttachment={handleRemoveAttachment}
 													onRemoveTaskCard={handleRemoveTaskCard}
-													onClearHistory={handleClearHistory}
-													onSessionChange={handleActiveAiSessionChange}
+												onSessionChange={handleActiveAiSessionChange}
 													onCreateSession={handleCreateAiSession}
 													onRenameSession={handleRenameAiSession}
 													onDeleteSession={handleDeleteAiSession}
@@ -5722,7 +5701,6 @@ $: kanbanComparisonData =
 									onAddAttachments={handleAddAttachments}
 									onRemoveAttachment={handleRemoveAttachment}
 									onRemoveTaskCard={handleRemoveTaskCard}
-									onClearHistory={handleClearHistory}
 									onSessionChange={handleActiveAiSessionChange}
 									onCreateSession={handleCreateAiSession}
 									onRenameSession={handleRenameAiSession}

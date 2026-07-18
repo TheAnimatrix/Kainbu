@@ -1438,7 +1438,7 @@
 						type="button"
 						role="tab"
 						aria-selected={activeTab === 'properties'}
-						aria-pressed={activeTab === 'properties'}
+
 						title="Properties"
 						aria-label="Properties"
 						class={`kainbu-mobile-tab-bar__item relative${
@@ -1460,7 +1460,7 @@
 						type="button"
 						role="tab"
 						aria-selected={activeTab === 'files'}
-						aria-pressed={activeTab === 'files'}
+
 						title="Files"
 						aria-label="Files"
 						class={`kainbu-mobile-tab-bar__item relative${
@@ -1482,7 +1482,7 @@
 						type="button"
 						role="tab"
 						aria-selected={activeTab === 'comments'}
-						aria-pressed={activeTab === 'comments'}
+
 						title="Comments"
 						aria-label="Comments"
 						class={`kainbu-mobile-tab-bar__item relative${

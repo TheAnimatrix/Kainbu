@@ -211,9 +211,6 @@
 		color: var(--color-app-text);
 	}
 
-	.kainbu-bg-picker__chevron {
-		transition: transform 0.16s ease;
-	}
 
 	.kainbu-bg-picker__spinner {
 		display: block;

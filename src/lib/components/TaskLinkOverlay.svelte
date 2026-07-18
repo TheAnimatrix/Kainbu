@@ -9,8 +9,9 @@
 
 	let paths: LinkCurvePath[] = [];
 	let resizeObserver: ResizeObserver | null = null;
-	let measureLoopId: number | null = null;
+	let mutationObserver: MutationObserver | null = null;
 	let retryTimer: ReturnType<typeof setTimeout> | null = null;
+	let measureFrameId: number | null = null;
 
 	const escapeTaskId = (taskId: string) =>
 		typeof CSS !== 'undefined' && typeof CSS.escape === 'function'
@@ -74,12 +75,10 @@
 
 		if (nextPaths.length === 0 && paths.length > 0 && expectedCount > 0) {
 			scheduleRetry();
-			return;
 		}
 
-		if (nextPaths.length > 0 || expectedCount === 0) {
-			paths = nextPaths;
-		}
+		// Never retain paths for cards removed or hidden during DnD.
+		paths = nextPaths;
 	};
 
 	const scheduleRetry = () => {
@@ -90,54 +89,56 @@
 		}, 48);
 	};
 
-	const stopMeasureLoop = () => {
-		if (measureLoopId !== null) {
-			cancelAnimationFrame(measureLoopId);
-			measureLoopId = null;
+	const scheduleMeasure = () => {
+		if (measureFrameId !== null) return;
+		measureFrameId = requestAnimationFrame(() => {
+			measureFrameId = null;
+			measurePaths();
+		});
+	};
+
+	const stopScheduledMeasure = () => {
+		if (measureFrameId !== null) {
+			cancelAnimationFrame(measureFrameId);
+			measureFrameId = null;
 		}
 	};
 
-	const startMeasureLoop = () => {
-		stopMeasureLoop();
-
-		const loop = () => {
-			if (!active) {
-				stopMeasureLoop();
-				return;
-			}
-			measurePaths();
-			measureLoopId = requestAnimationFrame(loop);
-		};
-
-		measureLoopId = requestAnimationFrame(loop);
-	};
-
 	const attachObservers = () => {
-		window.addEventListener('scroll', measurePaths, true);
-		window.addEventListener('resize', measurePaths);
+		window.addEventListener('scroll', scheduleMeasure, true);
+		window.addEventListener('resize', scheduleMeasure);
 		resizeObserver?.disconnect();
-		resizeObserver = new ResizeObserver(measurePaths);
+		resizeObserver = new ResizeObserver(scheduleMeasure);
 		const board = document.querySelector('[data-kanban-board-root]');
-		if (board) resizeObserver.observe(board);
+		if (!board) return;
+		resizeObserver.observe(board);
+		board.querySelectorAll<HTMLElement>('[data-task-id]').forEach((card) => {
+			resizeObserver?.observe(card);
+		});
+		mutationObserver?.disconnect();
+		mutationObserver = new MutationObserver(scheduleMeasure);
+		mutationObserver.observe(board, { childList: true, subtree: true, attributes: true });
 	};
 
 	const detachObservers = () => {
-		window.removeEventListener('scroll', measurePaths, true);
-		window.removeEventListener('resize', measurePaths);
+		window.removeEventListener('scroll', scheduleMeasure, true);
+		window.removeEventListener('resize', scheduleMeasure);
 		resizeObserver?.disconnect();
 		resizeObserver = null;
+		mutationObserver?.disconnect();
+		mutationObserver = null;
 	};
 
 	$: if (active) {
 		redrawToken;
 		edges;
 		void tick().then(() => {
+			if (!active) return;
 			measurePaths();
-			startMeasureLoop();
 			attachObservers();
 		});
 	} else {
-		stopMeasureLoop();
+		stopScheduledMeasure();
 		detachObservers();
 		if (retryTimer) {
 			clearTimeout(retryTimer);
@@ -147,7 +148,7 @@
 	}
 
 	onDestroy(() => {
-		stopMeasureLoop();
+		stopScheduledMeasure();
 		detachObservers();
 		if (retryTimer) clearTimeout(retryTimer);
 	});
