@@ -12,6 +12,7 @@ import { invokeWorkspaceApi } from '$lib/kainbu/workspaceApi';
 import { createId } from '$lib/kainbu/id';
 import { normalizeProjectStructure } from '$lib/kainbu/projectStructure';
 import { normalizeScratchpadData, serializeScratchpadData } from '$lib/kainbu/scratchpad';
+import { runProjectInitialization } from '$lib/kainbu/projectCreationTransaction';
 import { normalizeUserSettings } from '$lib/kainbu/settings';
 import { pbNoAutoCancel } from '$lib/kainbu/pbRequest';
 import { isPocketBaseNotFound, isProjectPagesStrayIdFieldError } from '$lib/pocketbaseErrors';
@@ -602,24 +603,33 @@ export const createProject = async (
 		last_opened_at: new Date(normalizedSeed.viewerLastOpenedAt).toISOString()
 	});
 
-	try {
-		await pb.collection('project_memberships').create({
-			project: projectRecord.id,
-			user: userId,
-			role: 'owner',
-			joined_at: new Date().toISOString(),
-			last_opened_at: new Date().toISOString()
-		});
-	} catch (error) {
-		const message = error instanceof Error ? error.message : String(error);
-		const alreadyExists =
-			message.includes('UNIQUE') ||
-			message.includes('unique') ||
-			message.includes('validation_not_unique');
-		if (!alreadyExists) {
-			throw error;
+	const rollback = async () => {
+		const failures: unknown[] = [];
+		for (const collection of ['project_tasks', 'project_columns', 'project_tags', 'project_pages', 'project_ai_sessions', 'project_user_state', 'project_boards', 'project_memberships']) {
+			try {
+				const records = await pb.collection(collection).getFullList({ filter: `project = "${pbEscapeFilter(projectRecord.id)}"`, ...pbNoAutoCancel });
+				for (const record of records) await pb.collection(collection).delete(record.id);
+			} catch (error) { if (!isPocketBaseNotFound(error)) failures.push(error); }
 		}
-	}
+		try { await pb.collection('projects').delete(projectRecord.id); } catch (error) {
+			if (!isPocketBaseNotFound(error)) failures.push(error);
+		}
+		if (failures.length) throw new AggregateError(failures, 'Project rollback failed');
+	};
+
+	const initialize = async () => {
+		try {
+			await pb.collection('project_memberships').create({
+				project: projectRecord.id,
+				user: userId,
+				role: 'owner',
+				joined_at: new Date().toISOString(),
+				last_opened_at: new Date().toISOString()
+			});
+		} catch (error) {
+			const message = error instanceof Error ? error.message : String(error);
+			if (!/unique|validation_not_unique/i.test(message)) throw error;
+		}
 
 	for (const board of normalizedSeed.boards) {
 		await pb.collection('project_boards').create({
@@ -651,14 +661,10 @@ export const createProject = async (
 		normalizedSeed.aiSessions,
 		normalizedSeed.activeAiSessionId
 	);
-	try {
-		await touchProjectLastOpened(normalizedSeed.id);
-	} catch (error) {
-		console.error('[kainbu] touchProjectLastOpened failed after createProject', {
-			projectId: normalizedSeed.id,
-			error
-		});
-	}
+	await touchProjectLastOpened(normalizedSeed.id);
+	};
+
+	await runProjectInitialization(initialize, rollback);
 
 	if (options?.skipWorkspaceFetch) {
 		return normalizedSeed;

@@ -81,36 +81,19 @@ describe('Local Docker — workspace data', () => {
 		await client.collection('users').authWithPassword(email, password);
 		projectClientId = crypto.randomUUID();
 
-		const project = await client.collection('projects').create({
-			client_id: projectClientId,
-			owner: userId,
-			name: 'E2E Board',
-			scratchpad_data: '{}',
-			scratchpad_rev: 0
+		const createResponse = await fetch(`${API}/api/workspace/projects/create`, {
+			method: 'POST',
+			headers: { Authorization: `Bearer ${client.authStore.token}`, 'Content-Type': 'application/json' },
+			body: JSON.stringify({ name: 'E2E Board' })
 		});
-
-		await client.collection('project_memberships').create({
-			project: project.id,
-			user: userId,
-			role: 'owner'
-		});
-
-		const board = await client.collection('project_boards').create({
-			project: project.id,
-			client_id: crypto.randomUUID(),
-			name: 'Main',
-			position: 0
-		});
-
-		const column = await client.collection('project_columns').create({
-			project: project.id,
-			client_id: 'todo',
-			board: board.id,
-			title: 'To Do',
-			position: 0
-		});
-
-		expect(column.id).toBeTruthy();
+		expect(createResponse.status).toBe(200);
+		const created = await createResponse.json();
+		projectClientId = created.id;
+		const project = await client.collection('projects').getFirstListItem(`client_id = "${projectClientId}"`);
+		const boards = await client.collection('project_boards').getFullList({ filter: `project = "${project.id}"` });
+		const columns = await client.collection('project_columns').getFullList({ filter: `project = "${project.id}"` });
+		expect(boards.length).toBeGreaterThan(0);
+		expect(columns.length).toBeGreaterThan(0);
 	});
 
 	it('lists workspace collections for the user', async () => {

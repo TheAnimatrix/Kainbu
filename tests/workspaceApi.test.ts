@@ -59,4 +59,24 @@ describe('workspace API client', () => {
 		expect(refreshAccessToken).toHaveBeenCalledTimes(1);
 		expect(fetchMock).toHaveBeenCalledTimes(2);
 	});
+
+	it('does not replay a non-idempotent mutation after 401 or 403', async () => {
+		const fetchMock = vi.fn(async () =>
+			new Response(JSON.stringify({ error: 'Unauthorized' }), {
+				status: 401,
+				headers: { 'content-type': 'application/json' }
+			})
+		);
+		vi.stubGlobal('fetch', fetchMock);
+		const refreshAccessToken = vi.fn(async () => 'refreshed-token');
+		setWorkspaceApiConfig({
+			getApiBaseUrl: () => 'https://kainbu.example.test',
+			getAccessToken: async () => 'stale-token',
+			refreshAccessToken
+		});
+
+		await expect(invokeWorkspaceApi('/api/workspace/projects/create', { method: 'POST', body: { name: 'x' } })).rejects.toMatchObject({ status: 401 });
+		expect(fetchMock).toHaveBeenCalledTimes(1);
+		expect(refreshAccessToken).not.toHaveBeenCalled();
+	});
 });

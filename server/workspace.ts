@@ -10,6 +10,7 @@ import { EMPTY_PROJECT } from '../src/lib/kainbu/constants.js';
 import { normalizeBoardPreferences } from '../src/lib/kainbu/boardPreferences.js';
 import { normalizeProjectStructure } from '../src/lib/kainbu/projectStructure.js';
 import { normalizeScratchpadData, serializeScratchpadData } from '../src/lib/kainbu/scratchpad.js';
+import { runProjectInitialization } from '../src/lib/kainbu/projectCreationTransaction.js';
 import {
 	getProjectPbId,
 	getProjectRecord,
@@ -1106,19 +1107,33 @@ export const handleWorkspaceProjectCreateRequest = async (
 		last_opened_at: now
 	});
 
-	try {
-		await admin.collection('project_memberships').create({
-			project: projectRecord.id,
-			user: userId,
-			role: 'owner',
-			joined_at: now,
-			last_opened_at: now
-		});
-	} catch (error) {
-		const message = error instanceof Error ? error.message : String(error);
-		const alreadyExists = /unique|validation_not_unique/i.test(message);
-		if (!alreadyExists) throw error;
-	}
+	const rollback = async () => {
+		const failures: unknown[] = [];
+		for (const collection of ['project_tasks', 'project_columns', 'project_tags', 'project_pages', 'project_ai_sessions', 'project_user_state', 'project_boards', 'project_memberships']) {
+			try {
+				const records = await admin.collection(collection).getFullList({ filter: `project = "${pbEscapeFilter(projectRecord.id)}"` });
+				for (const record of records) await admin.collection(collection).delete(record.id);
+			} catch (error) { if (!(error instanceof ClientResponseError && error.status === 404)) failures.push(error); }
+		}
+		try { await admin.collection('projects').delete(projectRecord.id); } catch (error) {
+			if (!(error instanceof ClientResponseError && error.status === 404)) failures.push(error);
+		}
+		if (failures.length) throw new AggregateError(failures, 'Project rollback failed');
+	};
+
+	const initialize = async () => {
+		try {
+			await admin.collection('project_memberships').create({
+				project: projectRecord.id,
+				user: userId,
+				role: 'owner',
+				joined_at: now,
+				last_opened_at: now
+			});
+		} catch (error) {
+			const message = error instanceof Error ? error.message : String(error);
+			if (!/unique|validation_not_unique/i.test(message)) throw error;
+		}
 
 	for (const board of seed.boards) {
 		await admin.collection('project_boards').create({
@@ -1146,31 +1161,25 @@ export const handleWorkspaceProjectCreateRequest = async (
 
 	const activeSession = seed.aiSessions[0];
 	if (activeSession) {
-		try {
-			await admin.collection('project_ai_sessions').create({
-				project: projectRecord.id,
-				client_id: activeSession.id,
-				user: userId,
-				title: activeSession.title,
-				model_id: activeSession.modelId,
-				history: activeSession.history,
-				last_message_at: new Date(activeSession.lastMessageAt).toISOString()
-			});
-			await admin.collection('project_user_state').create({
-				project: projectRecord.id,
-				user: userId,
-				active_ai_session_id: activeSession.id,
-				chat_history: []
-			});
-		} catch (error) {
-			// AI session is a convenience seed; the project is already usable
-			// without it (the snapshot loader tolerates a missing session).
-			console.error('[workspace] project create AI seed failed', {
-				projectId: seed.id,
-				error: error instanceof Error ? error.message : String(error)
-			});
-		}
+		await admin.collection('project_ai_sessions').create({
+			project: projectRecord.id,
+			client_id: activeSession.id,
+			user: userId,
+			title: activeSession.title,
+			model_id: activeSession.modelId,
+			history: activeSession.history,
+			last_message_at: new Date(activeSession.lastMessageAt).toISOString()
+		});
+		await admin.collection('project_user_state').create({
+			project: projectRecord.id,
+			user: userId,
+			active_ai_session_id: activeSession.id,
+			chat_history: []
+		});
 	}
+	};
+
+	await runProjectInitialization(initialize, rollback);
 
 	return { ok: true, id: seed.id, name: seed.name };
 };

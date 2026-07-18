@@ -40,6 +40,9 @@ const parseApiPayload = (responseText: string, contentType: string | null) => {
 	}
 };
 
+const isReadOnlyWorkspaceRequest = (options: WorkspaceApiOptions) =>
+	(options.method || 'POST') === 'GET';
+
 const getApiErrorMessage = (payload: unknown, responseText: string, path: string) => {
 	if (
 		payload &&
@@ -95,6 +98,7 @@ export const invokeWorkspaceApi = async <T>(path: string, options: WorkspaceApiO
 	let { response, responseText, payload } = await requestWorkspaceApi(path, options, accessToken);
 
 	if (
+		isReadOnlyWorkspaceRequest(options) &&
 		!response.ok &&
 		response.status === 401 &&
 		workspaceApiConfig.refreshAccessToken

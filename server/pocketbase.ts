@@ -70,12 +70,22 @@ export const createAdminPb = async () => {
 const isAdminAuthFailure = (error: unknown) =>
 	error instanceof ClientResponseError && (error.status === 401 || error.status === 403);
 
+// A failed mutation may already have reached PocketBase. Never replay it after
+// an auth error, or a create/update/delete can be applied twice.
+export const isSafeAdminRetryMethod = (method: PropertyKey) =>
+	typeof method === 'string' &&
+	(method.startsWith('get') || method === 'authRefresh' || method === 'authWithPassword');
+
 /**
  * PocketBase auth tokens can become stale across deploys/restarts while the API
  * process is still alive. Retry one failed admin SDK call with a fresh login so
  * CLI/API reads recover without requiring users to log out and back in.
  */
-const withAdminAuthRetry = <T extends PocketBase>(pb: T): T =>
+export const withAdminAuthRetry = <T extends PocketBase>(
+	pb: T,
+	createFreshClient: () => PocketBase = () => new PocketBase(getPocketBaseUrl()),
+	resolveFreshToken: () => Promise<string> = resolveAdminToken
+): T =>
 	new Proxy(pb, {
 		get(target, prop, receiver) {
 			if (prop !== 'collection') {
@@ -94,11 +104,11 @@ const withAdminAuthRetry = <T extends PocketBase>(pb: T): T =>
 							try {
 								return await value.apply(collectionTarget, args);
 							} catch (error) {
-								if (!isAdminAuthFailure(error)) throw error;
+								if (!isAdminAuthFailure(error) || !isSafeAdminRetryMethod(collectionProp)) throw error;
 
 								invalidateAdminPbAuth();
-								const fresh = new PocketBase(getPocketBaseUrl());
-								fresh.authStore.save(await resolveAdminToken(), null);
+								const fresh = createFreshClient();
+								fresh.authStore.save(await resolveFreshToken(), null);
 								return await Reflect.get(fresh.collection(name), collectionProp).apply(
 									fresh.collection(name),
 									args

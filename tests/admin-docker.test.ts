@@ -270,44 +270,19 @@ describe.skipIf(!hasOpenRouter)('Local Docker — admin usage with AI', () => {
 		const adminClient = pb();
 		await adminClient.collection('users').authWithPassword(ADMIN_EMAIL, adminPassword);
 
-		const projectClientId = crypto.randomUUID();
-		const project = await adminClient.collection('projects').create({
-			client_id: projectClientId,
-			owner: adminUserId,
-			name: 'Admin AI E2E',
-			scratchpad_data: '{}',
-			scratchpad_rev: 0
+		const createResponse = await fetch(`${API}/api/workspace/projects/create`, {
+			method: 'POST',
+			headers: { Authorization: `Bearer ${adminToken}`, 'Content-Type': 'application/json' },
+			body: JSON.stringify({ name: 'Admin AI E2E' })
 		});
-
-		await adminClient.collection('project_memberships').create({
-			project: project.id,
-			user: adminUserId,
-			role: 'owner'
-		});
-
-		const boardClientId = crypto.randomUUID();
-		const board = await adminClient.collection('project_boards').create({
-			project: project.id,
-			client_id: boardClientId,
-			name: 'Main',
-			position: 0
-		});
-
-		await adminClient.collection('project_columns').create({
-			project: project.id,
-			client_id: 'todo',
-			board: board.id,
-			title: 'To Do',
-			position: 0
-		});
-
-		await adminClient.collection('project_pages').create({
-			project: project.id,
-			client_id: crypto.randomUUID(),
-			name: 'Notes',
-			content: '# Notes',
-			position: 0
-		});
+		expect(createResponse.status).toBe(200);
+		const createdProject = await createResponse.json();
+		const projectClientId = createdProject.id;
+		const project = await adminClient.collection('projects').getFirstListItem(`client_id = "${projectClientId}"`);
+		const boards = await adminClient.collection('project_boards').getFullList({ filter: `project = "${project.id}"` });
+		const board = boards[0];
+		expect(board?.id).toBeTruthy();
+		const boardClientId = board.client_id;
 
 		const modelsPayload = await fetch(`${API}/api/models`).then((res) => res.json());
 		const modelId = modelsPayload.models?.[0]?.id;
