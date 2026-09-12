@@ -34,8 +34,11 @@ const readConfigFileSync = () => {
 	try {
 		const raw = readFileSync(getCliConfigPath(), 'utf8');
 		return parseJsonFile<Record<string, unknown>>(raw, getCliConfigPath()) || {};
-	} catch {
-		return {};
+	} catch (error) {
+		if (error && typeof error === 'object' && 'code' in error && error.code === 'ENOENT') return {};
+		throw Object.assign(error instanceof Error ? error : new Error(String(error)), {
+			code: 'invalid_config'
+		});
 	}
 };
 
@@ -45,6 +48,7 @@ let envLoaded = false;
 export const loadCliEnv = () => {
 	if (envLoaded) return;
 	envLoaded = true;
+	const inherited = { ...process.env };
 
 	const globalEnv = join(getCliConfigDir(), '.env');
 	if (existsSync(globalEnv)) {
@@ -54,6 +58,8 @@ export const loadCliEnv = () => {
 	for (const path of collectEnvFilesUpward(process.cwd())) {
 		loadDotenv({ path, override: true, quiet: true });
 	}
+	// A checked-out .env must never replace credentials explicitly supplied by a runner.
+	Object.assign(process.env, inherited);
 };
 
 export const getPocketBaseEnv = () => {

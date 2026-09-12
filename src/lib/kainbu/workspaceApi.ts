@@ -1,4 +1,6 @@
 export type WorkspaceApiConfig = {
+	/** CLI requests are bounded; browser callers may omit this. */
+	requestTimeoutMs?: number;
 	getApiBaseUrl: () => string;
 	getAccessToken: () => Promise<string>;
 	/** Called once after a 401 to obtain a refreshed JWT before retrying the request. */
@@ -75,6 +77,9 @@ const requestWorkspaceApi = async (
 	const apiBaseUrl = workspaceApiConfig!.getApiBaseUrl().replace(/\/+$/, '');
 
 	const response = await fetch(`${apiBaseUrl}${path}`, {
+		...(workspaceApiConfig!.requestTimeoutMs
+			? { signal: AbortSignal.timeout(workspaceApiConfig!.requestTimeoutMs) }
+			: {}),
 		method: options.method || 'POST',
 		headers: {
 			'Content-Type': 'application/json',

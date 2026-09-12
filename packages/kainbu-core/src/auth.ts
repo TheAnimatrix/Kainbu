@@ -1,8 +1,8 @@
-import { chmod, mkdir, readFile, unlink, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, readFile, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { getCliConfigDir } from './pocketbase.js';
-import { parseJsonFile, quarantineCorruptFile } from './jsonFile.js';
+import { parseJsonFile } from './jsonFile.js';
 
 export type AuthProfile = {
 	name: string;
@@ -69,12 +69,15 @@ export const readAuthFile = async (): Promise<AuthFile> => {
 		const raw = await readFile(path, 'utf8');
 		const parsed = parseJsonFile<unknown>(raw, path);
 		if (!isAuthFile(parsed)) {
-			await quarantineCorruptFile(path, 'auth.json was not a valid AuthFile');
-			return emptyAuthFile();
+			throw new Error(`${path} is not a valid auth file.`);
 		}
 		return parsed;
-	} catch {
-		return emptyAuthFile();
+	} catch (error) {
+		if (error && typeof error === 'object' && 'code' in error && error.code === 'ENOENT')
+			return emptyAuthFile();
+		throw Object.assign(error instanceof Error ? error : new Error(String(error)), {
+			code: 'invalid_config'
+		});
 	}
 };
 
@@ -116,7 +119,9 @@ const validateProfileName = (name: string) => {
 	if (!trimmed) throw new Error('Profile name is required.');
 	if (trimmed.length > 64) throw new Error('Profile name is too long (max 64 chars).');
 	if (!/^[A-Za-z0-9._\- ]+$/.test(trimmed)) {
-		throw new Error('Profile name can only contain letters, numbers, spaces, dots, underscores and dashes.');
+		throw new Error(
+			'Profile name can only contain letters, numbers, spaces, dots, underscores and dashes.'
+		);
 	}
 	return trimmed;
 };

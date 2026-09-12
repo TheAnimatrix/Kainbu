@@ -15,6 +15,7 @@ export type CliConfig = {
 };
 
 export const getCliConfigDir = () => {
+	if (process.env.KAINBU_CONFIG_DIR?.trim()) return process.env.KAINBU_CONFIG_DIR.trim();
 	if (process.platform === 'win32') {
 		const appData = process.env.APPDATA || join(homedir(), 'AppData', 'Roaming');
 		return join(appData, 'kainbu');
@@ -38,21 +39,28 @@ type StoredSession = {
 };
 
 const isStoredSession = (value: unknown): value is StoredSession =>
-	value !== null &&
-	typeof value === 'object' &&
-	typeof (value as StoredSession).token === 'string';
+	value !== null && typeof value === 'object' && typeof (value as StoredSession).token === 'string';
 
 export const readCliConfig = async (): Promise<CliConfig> => {
 	const path = getCliConfigPath();
 	try {
 		const raw = await readFile(path, 'utf8');
-		return parseJsonFile<CliConfig>(raw, path) || {};
+		const config = parseJsonFile<CliConfig>(raw, path);
+		if (
+			!config ||
+			typeof config !== 'object' ||
+			Array.isArray(config) ||
+			['activeProjectId', 'activeBoardId', 'apiBase', 'pocketbaseUrl'].some(
+				(key) => key in config && typeof config[key as keyof CliConfig] !== 'string'
+			)
+		)
+			throw new Error(`${path} is not a valid CLI config.`);
+		return config;
 	} catch (error) {
-		if (error instanceof Error && error.message.includes('not valid JSON')) {
-			await quarantineCorruptFile(path, 'config.json parse error');
-			return {};
-		}
-		return {};
+		if (error && typeof error === 'object' && 'code' in error && error.code === 'ENOENT') return {};
+		throw Object.assign(error instanceof Error ? error : new Error(String(error)), {
+			code: 'invalid_config'
+		});
 	}
 };
 
@@ -66,7 +74,10 @@ export const readCliSession = async (): Promise<StoredSession | null> => {
 		const raw = await readFile(getCliSessionPath(), 'utf8');
 		const parsed = parseJsonFile<unknown>(raw, getCliSessionPath());
 		if (!isStoredSession(parsed)) {
-			await quarantineCorruptFile(getCliSessionPath(), 'session.json was not a valid PocketBase session');
+			await quarantineCorruptFile(
+				getCliSessionPath(),
+				'session.json was not a valid PocketBase session'
+			);
 			return null;
 		}
 		return parsed;
@@ -88,7 +99,12 @@ export const deleteCliSession = async () => {
 	}
 };
 
-export { formatMissingPocketBaseConfigHelp, getDefaultApiBase, getPocketBaseEnv, loadCliEnv } from './env.js';
+export {
+	formatMissingPocketBaseConfigHelp,
+	getDefaultApiBase,
+	getPocketBaseEnv,
+	loadCliEnv
+} from './env.js';
 
 export const createCliPocketBaseClient = () => {
 	const { url } = getPocketBaseEnv();

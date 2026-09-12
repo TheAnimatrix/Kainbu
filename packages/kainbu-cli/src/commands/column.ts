@@ -1,9 +1,10 @@
-import { buildBoardRefIndex, createId, resolveColumnRef } from '@kainbu/core';
+import { buildBoardRefIndex, createId } from '@kainbu/core';
 import { syncProjectBoard } from '../writes.js';
 import type { Command } from 'commander';
 import type { KanbanData } from '../../../../src/lib/kainbu/types.js';
 import { resolveContext } from '../context.js';
-import { printResult } from '../output.js';
+import { printSuccess, printResult } from '../output.js';
+import { integerOption } from '../invocation.js';
 import { ui } from '../color.js';
 import { initRuntime } from '../runtime.js';
 import { findColumnByRefOrTitle } from './kanban-utils.js';
@@ -16,7 +17,14 @@ export const registerColumnCommands = (program: Command) => {
 	const withContext = async (options: { project?: string; board?: string }) => {
 		const ctx = await resolveContext({ ...options, requireBoard: true });
 		const kanban = ctx.board.kanbanData;
-		const refs = buildBoardRefIndex(kanban, ctx.board.name);
+		const refs = buildBoardRefIndex(
+			kanban.map((column) => ({
+				...column,
+				tasks: column.tasks.filter((task) => !task.deletedAt)
+			})),
+			ctx.board.name,
+			Infinity
+		);
 		return { ...ctx, kanban, refs };
 	};
 
@@ -26,30 +34,38 @@ export const registerColumnCommands = (program: Command) => {
 		.option('--project <id|name>', 'Project override')
 		.option('--board <id|name>', 'Board override')
 		.option('--json', 'Print JSON')
-		.action(async (boardArg: string | undefined, options: { project?: string; board?: string; json?: boolean }) => {
-			await initRuntime();
-			const { kanban, refs } = await withContext({ ...options, board: boardArg ?? options.board });
-			const rows = kanban.map((entry) => ({
-				ref: refs.columnIdToRef.get(entry.id) || entry.id,
-				id: entry.id,
-				title: entry.title,
-				taskCount: entry.tasks.length
-			}));
-			printResult(
-				{ json: Boolean(options.json), quiet: false },
-				rows,
-				rows.map(
-					(row) =>
-						`${ui.ref(row.ref)}  ${ui.name(row.title)}  ${ui.meta(`(${row.taskCount} tasks)`)}  ${ui.id(row.id)}`
-				)
-			);
-		});
+		.action(
+			async (
+				boardArg: string | undefined,
+				options: { project?: string; board?: string; json?: boolean }
+			) => {
+				await initRuntime();
+				const { kanban, refs } = await withContext({
+					...options,
+					board: boardArg ?? options.board
+				});
+				const rows = kanban.map((entry) => ({
+					ref: refs.columnIdToRef.get(entry.id) || entry.id,
+					id: entry.id,
+					title: entry.title,
+					taskCount: entry.tasks.filter((task) => !task.deletedAt).length
+				}));
+				printResult(
+					{ json: Boolean(options.json), quiet: false },
+					rows,
+					rows.map(
+						(row) =>
+							`${ui.ref(row.ref)}  ${ui.name(row.title)}  ${ui.meta(`(${row.taskCount} tasks)`)}  ${ui.id(row.id)}`
+					)
+				);
+			}
+		);
 
 	column
 		.command('add <title>')
 		.description('Add a column')
 		.option('--color <color>', 'Column color')
-		.option('--width <width>', 'Column width', (value) => Number(value))
+		.option('--width <width>', 'Column width', integerOption(1))
 		.option('--project <id|name>', 'Project override')
 		.option('--board <id|name>', 'Board override')
 		.action(
@@ -70,7 +86,10 @@ export const registerColumnCommands = (program: Command) => {
 					}
 				];
 				await syncProjectBoard(project.id, board.id, kanban, next);
-				console.log(`${ui.success('Added column')} ${ui.name(title)}`);
+				printSuccess(
+					{ id: next[next.length - 1].id, projectId: project.id, boardId: board.id, title },
+					`${ui.success('Added column')} ${ui.name(title)}`
+				);
 			}
 		);
 
@@ -79,7 +98,7 @@ export const registerColumnCommands = (program: Command) => {
 		.description('Update a column')
 		.requiredOption('--title <title>', 'New title')
 		.option('--color <color>', 'Column color')
-		.option('--width <width>', 'Column width', (value) => Number(value))
+		.option('--width <width>', 'Column width', integerOption(1))
 		.option('--project <id|name>', 'Project override')
 		.option('--board <id|name>', 'Board override')
 		.action(
@@ -95,10 +114,7 @@ export const registerColumnCommands = (program: Command) => {
 			) => {
 				await initRuntime();
 				const { project, board, kanban, refs } = await withContext(options);
-				const columnId =
-					resolveColumnRef(refs, target) ||
-					findColumnByRefOrTitle(kanban, refs, target)?.id ||
-					target;
+				const columnId = findColumnByRefOrTitle(kanban, refs, target).id;
 				const next = kanban.map((entry) =>
 					entry.id === columnId
 						? {
@@ -110,7 +126,10 @@ export const registerColumnCommands = (program: Command) => {
 						: entry
 				);
 				await syncProjectBoard(project.id, board.id, kanban, next);
-				console.log(`${ui.success('Updated column')} ${ui.name(options.title)}`);
+				printSuccess(
+					{ id: columnId, projectId: project.id, boardId: board.id, title: options.title },
+					`${ui.success('Updated column')} ${ui.name(options.title)}`
+				);
 			}
 		);
 
@@ -122,15 +141,15 @@ export const registerColumnCommands = (program: Command) => {
 		.action(async (target: string, options: { project?: string; board?: string }) => {
 			await initRuntime();
 			const { project, board, kanban, refs } = await withContext(options);
-			const columnId =
-				resolveColumnRef(refs, target) ||
-				findColumnByRefOrTitle(kanban, refs, target)?.id ||
-				target;
+			const columnId = findColumnByRefOrTitle(kanban, refs, target).id;
 			const next = kanban.filter((entry) => entry.id !== columnId);
 			if (next.length === kanban.length) {
 				throw new Error(`Column not found: ${target}`);
 			}
 			await syncProjectBoard(project.id, board.id, kanban, next);
-			console.log(ui.removed('Deleted column'));
+			printSuccess(
+				{ id: columnId, projectId: project.id, boardId: board.id, deleted: true },
+				ui.removed('Deleted column')
+			);
 		});
 };

@@ -1,6 +1,6 @@
 {
 	"name": "kainbu",
-	"version": "0.1.1",
+	"version": "0.2.0",
 	"description": "Kainbu workspace CLI — projects, boards, tasks, pages, and scratchpad from your terminal",
 	"keywords": [
 		"kanban",

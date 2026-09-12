@@ -7,13 +7,16 @@ import { registerPageCommands } from './commands/page.js';
 import { registerProjectCommands } from './commands/project.js';
 import { registerScratchpadCommands } from './commands/scratchpad.js';
 import { registerTaskCommands } from './commands/task.js';
-import { isKainbuError } from './errors.js';
 import { c, ui } from './color.js';
-import { printError } from './output.js';
+import { printError, printSuccess } from './output.js';
+import { configureInvocation, integerOption } from './invocation.js';
+import { registerSchemaCommand } from './schema.js';
 import { initRuntime } from './runtime.js';
 import { resolveContext, setActiveBoard, setActiveProject } from './context.js';
 import { requireUser } from './runtime.js';
 import { fetchWorkspace } from '@kainbu/core';
+import { KainbuError } from './errors.js';
+import { resolveByIdOrName } from './commands/shared.js';
 // Single source of truth for the version: bundled from package.json at build
 // time, so `kainbu -V` can never drift from the published npm version.
 import pkg from '../package.json' with { type: 'json' };
@@ -24,6 +27,16 @@ program
 	.name('kainbu')
 	.description('Kainbu workspace CLI')
 	.version(pkg.version)
+	.option('--json', 'Print JSON results and structured errors; never prompt')
+	.option('--non-interactive', 'Never prompt or open a browser')
+	.option('--auth-profile <name>', 'Use a saved credential pair for this invocation')
+	.option(
+		'--timeout <ms>',
+		'HTTP request timeout in milliseconds',
+		integerOption(1, 2_147_483_647),
+		30_000
+	)
+	.exitOverride()
 	.showHelpAfterError('(add --help for usage)');
 
 // Colorize help output with consistent tones. configureHelp/configureOutput
@@ -37,8 +50,9 @@ program.configureHelp({
 	styleDescriptionText: (str) => c.dim(str)
 });
 program.configureOutput({
-	outputError: (str, write) => write(c.red(str))
+	writeErr: () => {} // Parser failures are emitted once by the structured error handler.
 });
+program.hook('preAction', (_command, action) => configureInvocation(action.optsWithGlobals()));
 
 registerAuthCommands(program);
 registerConfigCommands(program);
@@ -49,17 +63,7 @@ registerTaskCommands(program);
 registerPageCommands(program);
 registerScratchpadCommands(program);
 
-program
-	.command('ls [board]')
-	.description('List tasks (alias for `task list`). [board] lists any board without making it active.')
-	.allowUnknownOption()
-	.allowExcessArguments(true)
-	.action(async () => {
-		const args = process.argv.slice(process.argv.indexOf('ls') + 1);
-		// Default ('node') parsing skips the first two argv entries, so keep the
-			// node/kainbu prefix here rather than mixing it with `{ from: 'user' }`.
-			await program.parseAsync(['node', 'kainbu', 'task', 'list', ...args]);
-	});
+registerSchemaCommand(program);
 
 program
 	.command('use <target>')
@@ -70,38 +74,49 @@ program
 		const user = await requireUser();
 		const workspace = await fetchWorkspace(user.id);
 		const trimmed = target.trim();
+		if (!trimmed)
+			throw new KainbuError('Target cannot be empty.', { code: 'invalid_arguments', exitCode: 2 });
 
 		const projectById = workspace.projects.find((entry) => entry.id === trimmed);
-		const projectByName = workspace.projects.filter((entry) =>
-			entry.name.toLowerCase().includes(trimmed.toLowerCase())
+		const exactProjectNames = workspace.projects.filter(
+			(entry) => entry.name.toLowerCase() === trimmed.toLowerCase()
 		);
+		const projectByName = exactProjectNames.length
+			? exactProjectNames
+			: workspace.projects.filter((entry) =>
+					entry.name.toLowerCase().includes(trimmed.toLowerCase())
+				);
 
-		if (projectById || projectByName.length === 1) {
+		if (!options.project && (projectById || projectByName.length === 1)) {
 			const selected = projectById || projectByName[0]!;
 			await setActiveProject(selected.id);
-			console.log(`${ui.active('Active project:')} ${ui.name(selected.name)}`);
+			printSuccess(
+				{ projectId: selected.id, name: selected.name },
+				`${ui.active('Active project:')} ${ui.name(selected.name)}`
+			);
 			return;
 		}
+		if (!options.project && projectByName.length > 1)
+			throw new KainbuError('Multiple projects match this target.', {
+				code: 'ambiguous_target',
+				exitCode: 2,
+				hint: 'Use a project ID, or --project when selecting a board.'
+			});
 
 		const { project } = await resolveContext({ project: options.project, requireBoard: false });
-		const boardById = project.boards.find((entry) => entry.id === trimmed);
-		const boardByName = project.boards.filter((entry) =>
-			entry.name.toLowerCase().includes(trimmed.toLowerCase())
-		);
-		const selectedBoard = boardById || (boardByName.length === 1 ? boardByName[0] : null);
-		if (!selectedBoard) {
-			throw new Error(`No project or board matched "${target}".`);
-		}
+		const selectedBoard = resolveByIdOrName(project.boards, target, 'board');
+		await setActiveProject(project.id);
 		await setActiveBoard(selectedBoard.id);
-		console.log(`${ui.active('Active board:')} ${ui.name(selectedBoard.name)}`);
+		printSuccess(
+			{ projectId: project.id, boardId: selectedBoard.id, name: selectedBoard.name },
+			`${ui.active('Active board:')} ${ui.name(selectedBoard.name)}`
+		);
 	});
 
 program.parseAsync(process.argv).catch((error: unknown) => {
-	if (isKainbuError(error)) {
-		printError(error.message, error.hint);
-		process.exit(error.exitCode);
-	}
-
-	printError(error instanceof Error ? error.message : 'Unexpected error');
-	process.exit(1);
+	if (error && typeof error === 'object' && 'exitCode' in error && error.exitCode === 0) return;
+	const args = process.argv.slice(2);
+	const flags = args.slice(0, args.indexOf('--') < 0 ? args.length : args.indexOf('--'));
+	configureInvocation({ json: flags.includes('--json') });
+	process.exitCode = printError(error);
 });

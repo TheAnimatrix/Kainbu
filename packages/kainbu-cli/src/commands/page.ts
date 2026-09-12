@@ -4,10 +4,11 @@ import {
 	renameProjectPage,
 	updateProjectPageContent
 } from '../writes.js';
-import { readFile } from 'node:fs/promises';
+import { readInput } from '../input.js';
+import { revisionOf, assertRevision } from '../revision.js';
 import type { Command } from 'commander';
 import { resolveContext } from '../context.js';
-import { printResult } from '../output.js';
+import { printSuccess, printResult } from '../output.js';
 import { ui } from '../color.js';
 import { initRuntime } from '../runtime.js';
 import { resolveByIdOrName } from './shared.js';
@@ -32,7 +33,8 @@ export const registerPageCommands = (program: Command) => {
 				{ json: Boolean(options.json), quiet: false },
 				rows,
 				rows.map(
-					(row) => `${ui.id(row.id)}  ${ui.name(row.name)}  ${ui.meta(`(${row.contentLength} chars)`)}`
+					(row) =>
+						`${ui.id(row.id)}  ${ui.name(row.name)}  ${ui.meta(`(${row.contentLength} chars)`)}`
 				)
 			);
 		});
@@ -46,11 +48,11 @@ export const registerPageCommands = (program: Command) => {
 			await initRuntime();
 			const { project } = await resolveContext({ project: options.project, requireBoard: false });
 			const selected = resolveByIdOrName(project.pages, target, 'page');
-			if (options.json) {
-				printResult({ json: true, quiet: false }, selected);
-				return;
-			}
-			console.log(selected.content);
+			printResult(
+				{ json: Boolean(options.json), quiet: false },
+				{ ...selected, projectId: project.id, revision: revisionOf(selected.content) },
+				[selected.content]
+			);
 		});
 
 	page
@@ -61,7 +63,10 @@ export const registerPageCommands = (program: Command) => {
 			await initRuntime();
 			const { project } = await resolveContext({ project: options.project, requireBoard: false });
 			const created = await createProjectPage(project.id, name, project.pages.length);
-			console.log(`${ui.success('Created page')} ${ui.name(created.name)} ${ui.id(`(${created.id})`)}`);
+			printSuccess(
+				{ id: created.id, projectId: project.id, name: created.name },
+				`${ui.success('Created page')} ${ui.name(created.name)} ${ui.id(`(${created.id})`)}`
+			);
 		});
 
 	page
@@ -73,33 +78,32 @@ export const registerPageCommands = (program: Command) => {
 			const { project } = await resolveContext({ project: options.project, requireBoard: false });
 			const selected = resolveByIdOrName(project.pages, target, 'page');
 			await renameProjectPage(project.id, selected.id, newName);
-			console.log(`${ui.success('Renamed page to')} ${ui.name(newName)}`);
+			printSuccess(
+				{ id: selected.id, projectId: project.id, name: newName },
+				`${ui.success('Renamed page to')} ${ui.name(newName)}`
+			);
 		});
 
 	page
 		.command('set <target>')
 		.description('Set page content from a file or stdin')
+		.option('--if-match <revision>', 'Require the revision returned by page get')
 		.requiredOption('--file <path>', 'Markdown file path (use - for stdin)')
 		.option('--project <id|name>', 'Project override')
-		.action(async (target: string, options: { file: string; project?: string }) => {
-			await initRuntime();
-			const { project } = await resolveContext({ project: options.project, requireBoard: false });
-			const selected = resolveByIdOrName(project.pages, target, 'page');
-			const content =
-				options.file === '-'
-					? await new Promise<string>((resolve, reject) => {
-							let buffer = '';
-							process.stdin.setEncoding('utf8');
-							process.stdin.on('data', (chunk) => {
-								buffer += chunk;
-							});
-							process.stdin.on('end', () => resolve(buffer));
-							process.stdin.on('error', reject);
-						})
-					: await readFile(options.file, 'utf8');
-			await updateProjectPageContent(project.id, selected.id, content);
-			console.log(`${ui.success('Updated page')} ${ui.name(selected.name)}`);
-		});
+		.action(
+			async (target: string, options: { file: string; project?: string; ifMatch?: string }) => {
+				await initRuntime();
+				const { project } = await resolveContext({ project: options.project, requireBoard: false });
+				const selected = resolveByIdOrName(project.pages, target, 'page');
+				const content = await readInput(options.file);
+				assertRevision(options.ifMatch, selected.content);
+				await updateProjectPageContent(project.id, selected.id, content, selected.content);
+				printSuccess(
+					{ id: selected.id, projectId: project.id, name: selected.name },
+					`${ui.success('Updated page')} ${ui.name(selected.name)}`
+				);
+			}
+		);
 
 	page
 		.command('delete <target>')
@@ -110,6 +114,9 @@ export const registerPageCommands = (program: Command) => {
 			const { project } = await resolveContext({ project: options.project, requireBoard: false });
 			const selected = resolveByIdOrName(project.pages, target, 'page');
 			await deleteProjectPage(project.id, selected.id);
-			console.log(`${ui.removed('Deleted page')} ${ui.name(selected.name)}`);
+			printSuccess(
+				{ id: selected.id, projectId: project.id, deleted: true },
+				`${ui.removed('Deleted page')} ${ui.name(selected.name)}`
+			);
 		});
 };

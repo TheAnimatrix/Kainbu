@@ -4,152 +4,108 @@ import {
 	getActiveAuthProfile,
 	getDefaultApiBase,
 	loadCliEnv,
-	readCliConfig,
-	resolveEffectiveApiBase,
+	readAuthFile,
 	setPocketBaseClient,
 	setWorkspaceApiConfig,
-	touchActiveProfile,
 	type CliConfig
 } from '@kainbu/core';
-import { getEnvApiKey } from '@kainbu/core/env';
+import { getEnvApiKey, getPocketBaseEnv } from '@kainbu/core/env';
 import { invokeWorkspaceApi } from '../../../src/lib/kainbu/workspaceApi.js';
 import { KainbuError } from './errors.js';
+import { getInvocation } from './invocation.js';
 
-/**
- * Read commands resolve everything from the workspace HTTP API (snapshot),
- * which works with an API key. Write commands still go through the PocketBase
- * SDK, which needs a real PB session — something API-key auth doesn't provide.
- *
- * Rather than let those writes fail with PocketBase's opaque "resource wasn't
- * found" 404, wrap the client so any collection access without a valid session
- * throws a clear, actionable error. Reads never touch `getPb()`, so this only
- * gates the write paths.
- */
-const guardPbWrites = <T extends { authStore: { isValid: boolean } }>(client: T): T =>
-	new Proxy(client, {
-		get(target, prop, receiver) {
-			if (prop === 'collection' && !target.authStore.isValid) {
-				return () => {
-					throw new KainbuError(
-						'This command needs a PocketBase session, which API-key sign-in does not provide.',
-						{
-							hint: 'Read commands (project/board/task/column/page list & get) work with an API key. For writes, run: kainbu login --device'
-						}
-					);
-				};
-			}
-			const value = Reflect.get(target, prop, receiver);
-			// Bind methods to the real client so PocketBase's internal `this` stays intact.
-			return typeof value === 'function' ? value.bind(target) : value;
-		}
-	});
-
-let initialized = false;
 let pocketbase: ReturnType<typeof createCliPocketBaseClient> | null = null;
-let activeAccessToken: { token: string; source: 'profile' | 'env' | 'jwt' } | null = null;
 
-const resolveAccessToken = async (): Promise<{ token: string; source: 'profile' | 'env' | 'jwt' }> => {
-	if (activeAccessToken) return activeAccessToken;
-
-	const profile = await getActiveAuthProfile();
-	if (profile?.apiKey) {
-		activeAccessToken = { token: profile.apiKey, source: 'profile' };
-		return activeAccessToken;
+/** Resolve URL and key together, so credentials cannot drift across servers. */
+export const resolveCredentials = async () => {
+	loadCliEnv();
+	const profileName = getInvocation().authProfile || process.env.KAINBU_PROFILE?.trim();
+	if (profileName) {
+		const profile = (await readAuthFile()).profiles[profileName];
+		if (!profile?.apiKey)
+			throw new KainbuError(`No credentials for profile "${profileName}".`, {
+				code: 'unauthenticated',
+				exitCode: 3
+			});
+		return {
+			apiBase: profile.apiBase,
+			token: profile.apiKey,
+			source: 'profile',
+			profile: profile.name
+		};
 	}
-
 	const envKey = getEnvApiKey();
-	if (envKey) {
-		activeAccessToken = { token: envKey, source: 'env' };
-		return activeAccessToken;
-	}
-
-	const pbToken = pocketbase?.authStore.token;
-	if (pbToken) {
-		activeAccessToken = { token: pbToken, source: 'jwt' };
-		return activeAccessToken;
-	}
-
-	throw new Error('Not logged in. Run: kainbu login --server <url> --api-key <key>');
-};
-
-const resolveApiBase = async (configPatch?: Partial<CliConfig>) => {
-	if (configPatch?.apiBase) return configPatch.apiBase;
-
+	const envBase = process.env.KAINBU_API_BASE?.trim();
 	const profile = await getActiveAuthProfile();
-	if (profile) return profile.apiBase;
-
-	const config = await readCliConfig();
-	return resolveEffectiveApiBase({ apiBase: config.apiBase }, getDefaultApiBase());
+	if (envKey)
+		return {
+			apiBase: envBase || profile?.apiBase || getDefaultApiBase(),
+			token: envKey,
+			source: 'env',
+			profile: null
+		};
+	if (envBase && profile && envBase.replace(/\/+$/, '') !== profile.apiBase.replace(/\/+$/, '')) {
+		throw new KainbuError('KAINBU_API_BASE differs from the saved profile server.', {
+			code: 'invalid_config',
+			exitCode: 2,
+			hint: 'Set KAINBU_API_KEY too, or select --auth-profile. Saved keys are bound to their server.'
+		});
+	}
+	if (profile?.apiKey)
+		return {
+			apiBase: profile.apiBase,
+			token: profile.apiKey,
+			source: 'profile',
+			profile: profile.name
+		};
+	return {
+		apiBase: getDefaultApiBase(),
+		token: pocketbase?.authStore.token || '',
+		source: 'jwt',
+		profile: null
+	};
 };
 
 export const initRuntime = async (configPatch?: Partial<CliConfig>) => {
-	if (!initialized) {
-		loadCliEnv();
-		try {
-			pocketbase = createCliPocketBaseClient();
-			// Core write helpers reach PocketBase via getPb(); hand them a
-			// guarded client so writes under API-key auth fail clearly.
-			setPocketBaseClient(guardPbWrites(pocketbase));
-		} catch (error) {
-			// PB URL not configured — the CLI no longer needs PB for the API path,
-			// so we tolerate this. Direct PB reads will throw the same error.
-			pocketbase = null;
+	loadCliEnv();
+	if (!pocketbase && getPocketBaseEnv().url) {
+		// Workspace reads and writes use HTTP; PB is optional for legacy JWT login.
+		pocketbase = createCliPocketBaseClient();
+		setPocketBaseClient(pocketbase);
+	}
+	const credentials = await resolveCredentials();
+	setWorkspaceApiConfig({
+		getApiBaseUrl: () => configPatch?.apiBase || credentials.apiBase,
+		requestTimeoutMs: getInvocation().timeout,
+		getAccessToken: async () => {
+			if (!credentials.token)
+				throw new KainbuError('Not logged in.', {
+					code: 'unauthenticated',
+					exitCode: 3,
+					hint: 'Set KAINBU_API_BASE and KAINBU_API_KEY, or run kainbu login.'
+				});
+			return credentials.token;
 		}
-
-		const apiBase = await resolveApiBase(configPatch);
-
-		setWorkspaceApiConfig({
-			getApiBaseUrl: () => apiBase,
-			getAccessToken: async () => {
-				const resolved = await resolveAccessToken();
-				if (resolved.source === 'profile') {
-					void touchActiveProfile().catch(() => {
-						// observability; never block the request
-					});
-				}
-				return resolved.token;
-			}
-		});
-
-		initialized = true;
-	}
+	});
 };
 
-export const resetRuntimeAccessToken = () => {
-	activeAccessToken = null;
-};
-
+// Refresh both endpoint and credentials after changing profiles. Reads do not rewrite auth.json.
+export const resetRuntimeAccessToken = () => initRuntime();
 export const getPocketBaseClient = () => {
-	if (!pocketbase) {
-		throw new Error('PocketBase is not configured for this CLI invocation.');
-	}
+	if (!pocketbase)
+		throw new KainbuError('PocketBase is not configured for this CLI invocation.', {
+			code: 'invalid_config',
+			exitCode: 2
+		});
 	return pocketbase;
 };
-
-/** @deprecated Use getPocketBaseClient */
 export const getSupabaseClient = getPocketBaseClient;
-
 export const requireUser = async () => {
 	await initRuntime();
-	// Hits the Hono API (works for both API-key and JWT auth) rather than reading
-	// the PB SDK's authStore — the CLI on a self-hosted domain may not have a PB
-	// session at all.
 	const me = await fetchWorkspaceMe();
-	if (!me?.id) {
-		throw new Error('Not logged in. Run: kainbu login --server <url> --api-key <key>');
-	}
-	return {
-		id: me.id,
-		email: me.email,
-		username: me.username
-	} as { id: string; email: string | null; username: string | null };
+	if (!me?.id)
+		throw new KainbuError('Server returned no user identity.', { code: 'invalid_response' });
+	return { id: me.id, email: me.email, username: me.username };
 };
-
-export const getApiBase = async () => {
-	const profile = await getActiveAuthProfile();
-	if (profile) return profile.apiBase;
-	const config = await readCliConfig();
-	return resolveEffectiveApiBase({ apiBase: config.apiBase }, getDefaultApiBase());
-};
-
+export const getApiBase = async () => (await resolveCredentials()).apiBase;
 export { invokeWorkspaceApi };

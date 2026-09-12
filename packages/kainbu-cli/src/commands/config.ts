@@ -9,7 +9,7 @@ import {
 	writeCliConfig
 } from '@kainbu/core';
 import type { Command } from 'commander';
-import { printResult } from '../output.js';
+import { printSuccess, printResult } from '../output.js';
 import { ui } from '../color.js';
 import { initRuntime } from '../runtime.js';
 
@@ -32,9 +32,15 @@ export const registerConfigCommands = (program: Command) => {
 		.command('path')
 		.description('Show config directory paths')
 		.action(() => {
-			console.log(getCliConfigDir());
-			console.log(getCliConfigPath());
-			console.log(join(getCliConfigDir(), '.env'));
+			printResult(
+				{ json: false, quiet: false },
+				{
+					directory: getCliConfigDir(),
+					config: getCliConfigPath(),
+					env: join(getCliConfigDir(), '.env')
+				},
+				[getCliConfigDir(), getCliConfigPath(), join(getCliConfigDir(), '.env')]
+			);
 		});
 
 	config
@@ -49,7 +55,10 @@ export const registerConfigCommands = (program: Command) => {
 			await mkdir(getCliConfigDir(), { recursive: true });
 			const target = join(getCliConfigDir(), '.env');
 			await copyFile(source, target);
-			console.log(`${ui.success('Imported')} ${ui.id(source)} → ${ui.id(target)}`);
+			printSuccess(
+				{ source, target },
+				`${ui.success('Imported')} ${ui.id(source)} → ${ui.id(target)}`
+			);
 		});
 
 	config
@@ -57,20 +66,15 @@ export const registerConfigCommands = (program: Command) => {
 		.description('Set a config value')
 		.option('--pocketbase-url <url>', 'PocketBase URL')
 		.option('--api-base <url>', 'Kainbu API base URL')
-		.action(
-			async (options: {
-				pocketbaseUrl?: string;
-				apiBase?: string;
-			}) => {
-				const current = await readCliConfig();
-				await writeCliConfig({
-					...current,
-					...(options.pocketbaseUrl ? { pocketbaseUrl: options.pocketbaseUrl } : {}),
-					...(options.apiBase ? { apiBase: options.apiBase } : {})
-				});
-				console.log(ui.success('Config updated.'));
-			}
-		);
+		.action(async (options: { pocketbaseUrl?: string; apiBase?: string }) => {
+			const current = await readCliConfig();
+			await writeCliConfig({
+				...current,
+				...(options.pocketbaseUrl ? { pocketbaseUrl: options.pocketbaseUrl } : {}),
+				...(options.apiBase ? { apiBase: options.apiBase } : {})
+			});
+			printSuccess({}, ui.success('Config updated.'));
+		});
 
 	config
 		.command('show')
@@ -102,15 +106,11 @@ export const registerConfigCommands = (program: Command) => {
 				hasPocketBaseUrl: Boolean(file.pocketbaseUrl)
 			};
 
-			printResult(
-				{ json: Boolean(options.json), quiet: false },
-				payload,
-				[
-					`${ui.meta('config:')} ${ui.id(getCliConfigDir())}`,
-					`${ui.meta('global .env:')} ${payload.globalEnvFile ? ui.id(payload.globalEnvFile) : ui.warn('(missing)')}`,
-					`${ui.meta('active project:')} ${file.activeProjectId ? ui.id(file.activeProjectId) : ui.warn('(none)')}`,
-					`${ui.meta('active board:')} ${file.activeBoardId ? ui.id(file.activeBoardId) : ui.warn('(none)')}`
-				]
-			);
+			printResult({ json: Boolean(options.json), quiet: false }, payload, [
+				`${ui.meta('config:')} ${ui.id(getCliConfigDir())}`,
+				`${ui.meta('global .env:')} ${payload.globalEnvFile ? ui.id(payload.globalEnvFile) : ui.warn('(missing)')}`,
+				`${ui.meta('active project:')} ${file.activeProjectId ? ui.id(file.activeProjectId) : ui.warn('(none)')}`,
+				`${ui.meta('active board:')} ${file.activeBoardId ? ui.id(file.activeBoardId) : ui.warn('(none)')}`
+			]);
 		});
 };

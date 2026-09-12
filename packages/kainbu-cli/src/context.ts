@@ -8,6 +8,7 @@ import {
 import type { Project, ProjectBoard } from '../../../src/lib/kainbu/types.js';
 import { KainbuError } from './errors.js';
 import { requireUser } from './runtime.js';
+import { resolveByIdOrName } from './commands/shared.js';
 
 export type CliContext = {
 	project: Project;
@@ -17,28 +18,6 @@ export type CliContext = {
 
 const matchesName = (value: string, query: string) =>
 	value.toLowerCase() === query.toLowerCase() || value.toLowerCase().includes(query.toLowerCase());
-
-const resolveByIdOrName = <T extends { id: string; name: string }>(
-	items: T[],
-	query: string,
-	label: string
-) => {
-	const trimmed = query.trim();
-	const byId = items.find((item) => item.id === trimmed);
-	if (byId) return byId;
-
-	const matches = items.filter((item) => matchesName(item.name, trimmed));
-	if (matches.length === 1) return matches[0];
-	if (matches.length > 1) {
-		throw new KainbuError(`Multiple ${label} entries match "${trimmed}".`, {
-			hint: 'Use the project or board id instead of the name.'
-		});
-	}
-
-	throw new KainbuError(`${label} not found: ${trimmed}`, {
-		hint: `Run kainbu ${label === 'project' ? 'project' : 'board'} list`
-	});
-};
 
 /**
  * Finds a board by id (globally unique) or name across every project in the
@@ -55,17 +34,33 @@ const findBoardInWorkspace = (projects: Project[], query: string) => {
 			if (matchesName(board.name, trimmed)) matches.push({ project, board });
 		}
 	}
-	return { matches, exactId: false };
+	const exact = matches.filter(({ board }) => board.name.toLowerCase() === trimmed.toLowerCase());
+	return { matches: exact.length ? exact : matches, exactId: false };
 };
 
-export const resolveContext = async (options: {
-	project?: string;
-	board?: string;
-	requireBoard?: boolean;
-}): Promise<CliContext> => {
+type ContextOptions = { project?: string; board?: string; requireBoard?: boolean };
+export function resolveContext(
+	options: ContextOptions & { requireBoard: false }
+): Promise<Omit<CliContext, 'board'> & { board?: ProjectBoard }>;
+export function resolveContext(options: ContextOptions): Promise<CliContext>;
+export async function resolveContext(
+	options: ContextOptions
+): Promise<Omit<CliContext, 'board'> & { board?: ProjectBoard }> {
 	const user = await requireUser();
 	const workspace = await fetchWorkspace(user.id);
 	const config = await readCliConfig();
+	options = {
+		...options,
+		project: options.project ?? (process.env.KAINBU_PROJECT || undefined),
+		board:
+			options.board ??
+			(options.requireBoard !== false ? process.env.KAINBU_BOARD || undefined : undefined)
+	};
+	if (options.project?.trim() === '' || options.board?.trim() === '')
+		throw new KainbuError('Project and board targets cannot be empty.', {
+			code: 'invalid_arguments',
+			exitCode: 2
+		});
 
 	let project: Project | undefined;
 	if (options.project) {
@@ -76,14 +71,20 @@ export const resolveContext = async (options: {
 
 	let board: ProjectBoard | undefined;
 
-	// An explicit board target resolves within the active/--project first, then
-	// falls back to a workspace-wide search so a board id (or unique board name)
-	// works even with no active project or board set.
+	// Explicit project scope is strict. Saved context is only a convenience;
+	// without explicit project scope a board ID can select another project.
 	if (options.board) {
-		if (project) {
+		if (options.project && project) {
+			board = resolveByIdOrName(project.boards, options.board, 'board');
+		} else if (project) {
 			board = project.boards.find((entry) => entry.id === options.board!.trim());
 			if (!board) {
-				const named = project.boards.filter((entry) => matchesName(entry.name, options.board!));
+				const exact = project.boards.filter(
+					(entry) => entry.name.toLowerCase() === options.board!.trim().toLowerCase()
+				);
+				const named = exact.length
+					? exact
+					: project.boards.filter((entry) => matchesName(entry.name, options.board!.trim()));
 				if (named.length === 1) board = named[0];
 			}
 		}
@@ -94,12 +95,16 @@ export const resolveContext = async (options: {
 				board = matches[0].board;
 			} else if (matches.length > 1) {
 				throw new KainbuError(`Multiple boards match "${options.board}".`, {
+					code: 'ambiguous_target',
+					exitCode: 2,
 					hint: 'Use the board id, or pass --project to disambiguate.'
 				});
 			}
 		}
 		if (!board) {
 			throw new KainbuError(`Board not found: ${options.board}`, {
+				code: 'not_found',
+				exitCode: 4,
 				hint: 'Run: kainbu board list (after kainbu project use <name|id>), or pass a board id.'
 			});
 		}
@@ -107,30 +112,34 @@ export const resolveContext = async (options: {
 
 	if (!project) {
 		throw new KainbuError('No active project.', {
+			code: 'context_required',
+			exitCode: 2,
 			hint: 'Run: kainbu project list — then kainbu project use <name|id>'
 		});
 	}
 
-	if (!board) {
+	if (!board && options.requireBoard !== false) {
 		board = getProjectBoard(project, config.activeBoardId) ?? project.boards[0] ?? undefined;
 	}
 
 	if (options.requireBoard !== false && !board) {
 		throw new KainbuError('No active board.', {
+			code: 'context_required',
+			exitCode: 2,
 			hint: 'Run: kainbu board list — then kainbu board use <name|id>'
 		});
 	}
 
-	if (!board) {
-		throw new KainbuError('No board available on this project.');
-	}
-
 	return { project, board, config };
-};
+}
 
 export const setActiveProject = async (projectId: string) => {
 	const config = await readCliConfig();
-	await writeCliConfig({ ...config, activeProjectId: projectId });
+	await writeCliConfig({
+		...config,
+		activeProjectId: projectId,
+		...(config.activeProjectId !== projectId ? { activeBoardId: undefined } : {})
+	});
 };
 
 export const setActiveBoard = async (boardId: string) => {

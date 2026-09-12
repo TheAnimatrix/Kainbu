@@ -1,0 +1,14 @@
+{
+	"extends": "../../tsconfig.json",
+	"compilerOptions": {
+		"noEmit": true,
+		"types": ["node"],
+		"rootDir": "../..",
+		"paths": {
+			"$lib/*": ["../../src/lib/*"],
+			"@kainbu/core": ["../kainbu-core/src/index.ts"],
+			"@kainbu/core/*": ["../kainbu-core/src/*"]
+		}
+	},
+	"include": ["src/**/*.ts"]
+}

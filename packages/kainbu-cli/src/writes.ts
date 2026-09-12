@@ -55,10 +55,11 @@ export const renameProjectPage = async (projectId: string, pageId: string, name:
 export const updateProjectPageContent = async (
 	projectId: string,
 	pageId: string,
-	content: string
+	content: string,
+	previousContent: string
 ) => {
 	await invokeWorkspaceApi('/api/workspace/pages/content', {
-		body: { projectId, pageId, content }
+		body: { projectId, pageId, content, previousContent }
 	});
 };
 

@@ -42,6 +42,7 @@ export {
 	getAuthFileLocation,
 	listAuthProfiles,
 	readAuthFile,
+	writeAuthFile,
 	removeAuthProfile,
 	resolveEffectiveApiBase,
 	setActiveAuthProfile,
@@ -52,6 +53,12 @@ export {
 	type AuthProfile,
 	type AuthProfileSummary
 } from './auth.js';
-export { setProjectActiveBoard, getProjectBoard } from '../../../src/lib/kainbu/projectStructure.js';
+export {
+	setProjectActiveBoard,
+	getProjectBoard
+} from '../../../src/lib/kainbu/projectStructure.js';
 export { createId } from '../../../src/lib/kainbu/id.js';
-export { normalizeScratchpadData, serializeScratchpadData } from '../../../src/lib/kainbu/scratchpad.js';
+export {
+	normalizeScratchpadData,
+	serializeScratchpadData
+} from '../../../src/lib/kainbu/scratchpad.js';

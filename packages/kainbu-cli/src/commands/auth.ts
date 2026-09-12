@@ -1,14 +1,21 @@
 import { randomUUID } from 'node:crypto';
-import { deleteCliSession, fetchWorkspaceMe, type AuthProfileSummary } from '@kainbu/core';
+import type { AuthRecord } from 'pocketbase';
+import {
+	deleteCliSession,
+	fetchWorkspaceMe,
+	loadCliEnv,
+	type AuthProfileSummary
+} from '@kainbu/core';
 import type { Command } from 'commander';
 import { readJsonResponse } from '../http.js';
 import { isInteractive, promptChoice, promptLine } from '../prompt.js';
-import { getApiBase, initRuntime, resetRuntimeAccessToken } from '../runtime.js';
-import { printError, printResult, type OutputMode } from '../output.js';
+import { getApiBase, initRuntime, resolveCredentials } from '../runtime.js';
+import { printSuccess, printResult, type OutputMode } from '../output.js';
 import { ui } from '../color.js';
 import { KainbuError } from '../errors.js';
+import { readInput } from '../input.js';
+import { getInvocation, requestSignal } from '../invocation.js';
 import {
-	getActiveAuthProfile,
 	listAuthProfiles,
 	removeAuthProfile,
 	setActiveAuthProfile,
@@ -18,17 +25,23 @@ import {
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 const formatUserCode = (value: string) => {
-	const compact = value.replace(/[^A-Za-z0-9]/g, '').toUpperCase().slice(0, 8);
+	const compact = value
+		.replace(/[^A-Za-z0-9]/g, '')
+		.toUpperCase()
+		.slice(0, 8);
 	if (compact.length <= 4) return compact;
 	return `${compact.slice(0, 4)}-${compact.slice(4)}`;
 };
 
 const verifyApiKey = async (apiBase: string, apiKey: string) => {
 	const response = await fetch(`${apiBase}/api/me`, {
+		signal: requestSignal(),
 		headers: { Authorization: `Bearer ${apiKey}` }
 	});
 	if (response.status === 401) {
 		throw new KainbuError('Server rejected the API key (401).', {
+			code: 'unauthenticated',
+			exitCode: 3,
 			hint: 'Double-check the key on the server, or run: kainbu login --server <url> --api-key <new-key>'
 		});
 	}
@@ -66,6 +79,13 @@ const resolveProfileName = async (
 	existing: AuthProfileSummary[]
 ): Promise<string> => {
 	if (argName) return argName;
+	if (!isInteractive()) {
+		if (!existing.length) return 'default';
+		throw new KainbuError('Pass --profile when saving another account.', {
+			code: 'input_required',
+			exitCode: 2
+		});
+	}
 	const defaultName = existing.length === 0 ? 'default' : '';
 	const answer = await promptLine(`Profile name${defaultName ? ` (${defaultName})` : ''}: `);
 	const trimmed = (answer || '').trim();
@@ -76,11 +96,14 @@ const resolveProfileName = async (
 	});
 };
 
-const interactivePickProfile = async (profiles: AuthProfileSummary[]): Promise<AuthProfileSummary | null> => {
+const interactivePickProfile = async (
+	profiles: AuthProfileSummary[]
+): Promise<AuthProfileSummary | null> => {
 	if (profiles.length === 0) return null;
 	const labels = [
 		...profiles.map(
-			(p, i) => `${i === 0 ? '* ' : '  '}${p.name}  (${p.apiBase}, ${p.lastUsedAt ? 'used ' + new Date(p.lastUsedAt).toLocaleString() : 'never used'})`
+			(p, i) =>
+				`${i === 0 ? '* ' : '  '}${p.name}  (${p.apiBase}, ${p.lastUsedAt ? 'used ' + new Date(p.lastUsedAt).toLocaleString() : 'never used'})`
 		),
 		'+ Add a new profile'
 	];
@@ -103,48 +126,56 @@ export const registerAuthCommands = (program: Command) => {
 		.option('--no-open', 'Do not open the browser automatically')
 		.option('--switch', 'Pick a different saved profile even if one is active')
 		.action(async (options: LoginArgs) => {
-			const mode: OutputMode = { json: false, quiet: false };
+			const mode: OutputMode = { json: getInvocation().json, quiet: false };
+			if (options.device && !isInteractive())
+				throw new KainbuError('Device login requires an interactive terminal.', {
+					code: 'input_required',
+					exitCode: 2,
+					hint: 'For agents, set KAINBU_API_BASE and KAINBU_API_KEY or use login --server --api-key -.'
+				});
 
 			// PB JWT shortcut — used by the existing device-auth exchange.
 			if (options.token) {
-				const { getPocketBaseClient, setPocketBaseClient, createCliPocketBaseClient } = await import('../runtime.js');
-				try {
-					setPocketBaseClient(createCliPocketBaseClient());
-				} catch {
-					/* PB not configured; ignore */
-				}
+				await initRuntime();
+				const { getPocketBaseClient } = await import('../runtime.js');
 				const pb = getPocketBaseClient();
 				pb.authStore.save(options.token, null);
 				printResult(mode, { ok: true }, [ui.success('Logged in with provided token.')]);
 				return;
 			}
 
-			await initRuntime();
+			loadCliEnv();
 			const existing = await listAuthProfiles();
-			const active = await getActiveAuthProfile();
 
 			// Path 1: explicit --switch or no flags in interactive mode → pick profile
-			if (options.switch || (existing.length > 0 && !options.server && !options.apiKey && !options.device)) {
-				if (!isInteractive()) {
-					throw new KainbuError('Multiple profiles are saved but no flags were given.', {
+			if (
+				options.switch ||
+				(existing.length > 0 && !options.server && !options.apiKey && !options.device)
+			) {
+				if (!isInteractive() && !options.profile) {
+					throw new KainbuError('Select a saved profile or provide login credentials.', {
+						code: 'input_required',
+						exitCode: 2,
 						hint: 'Use --profile <name>, --server, or --api-key.'
 					});
 				}
-				const pick = await interactivePickProfile(existing);
-				if (pick) {
-					await setActiveAuthProfile(pick.name);
-					resetRuntimeAccessToken();
-					const apiBase = await getApiBase();
-					const me = await fetchWorkspaceMe().catch((error) => {
-						throw new KainbuError(`Saved key is no longer valid: ${error instanceof Error ? error.message : 'unknown'}`, {
-							hint: 'Run: kainbu login --server <url> --api-key <new-key>'
-						});
+				const pick = options.profile
+					? existing.find((profile) => profile.name === options.profile)
+					: await interactivePickProfile(existing);
+				if (options.profile && !pick)
+					throw new KainbuError('Profile not found: ' + options.profile, {
+						code: 'not_found',
+						exitCode: 4
 					});
-					printResult(
-						mode,
-						{ ok: true, profile: pick.name, apiBase, user: me },
-						[`${ui.success('Switched to profile')} ${ui.name(`"${pick.name}"`)} ${ui.meta(`(${me.email || me.username || me.id})`)}`]
-					);
+				if (pick) {
+					const { readAuthFile } = await import('@kainbu/core');
+					const profile = (await readAuthFile()).profiles[pick.name];
+					const apiBase = profile.apiBase;
+					const me = await verifyApiKey(apiBase, profile.apiKey);
+					await setActiveAuthProfile(pick.name);
+					printResult(mode, { ok: true, profile: pick.name, apiBase, user: me }, [
+						`${ui.success('Switched to profile')} ${ui.name(`"${pick.name}"`)} ${ui.meta(`(${me.email || me.username || me.id})`)}`
+					]);
 					return;
 				}
 				// User chose "Add a new profile" — fall through to creation.
@@ -152,29 +183,19 @@ export const registerAuthCommands = (program: Command) => {
 
 			// Path 2: device flow
 			if (options.device) {
+				await initRuntime(options.server ? { apiBase: options.server } : undefined);
 				await runDeviceFlow(options, mode);
 				return;
 			}
 
 			// Path 3: interactive create or create from flags
-			let server = options.server?.trim() || '';
-			let apiKey = options.apiKey?.trim() || '';
+			let server = options.server?.trim().replace(/\/+$/, '') || '';
+			let apiKey =
+				options.apiKey === '-' ? (await readInput('-')).trim() : options.apiKey?.trim() || '';
 
 			if (!server && isInteractive()) {
 				const answer = await promptLine('Server URL (e.g. https://kainbu.example.com): ');
 				server = (answer || '').trim();
-			}
-			if (!apiKey && options.apiKey === '-' && !isInteractive()) {
-				// Read from stdin in non-interactive mode.
-				const readAllStdin = async () => {
-					const chunks: Buffer[] = [];
-					process.stdin.on('data', (chunk) => {
-						chunks.push(typeof chunk === 'string' ? Buffer.from(chunk) : chunk);
-					});
-					await new Promise((resolve) => process.stdin.on('end', resolve));
-					return Buffer.concat(chunks).toString('utf8').trim();
-				};
-				apiKey = await readAllStdin();
 			}
 			if (!apiKey && isInteractive()) {
 				const answer = await promptLine('API key: ', { hidden: true });
@@ -183,15 +204,31 @@ export const registerAuthCommands = (program: Command) => {
 
 			if (!server) {
 				throw new KainbuError('Server URL is required.', {
+					code: 'input_required',
+					exitCode: 2,
 					hint: 'Pass --server <url> or run interactively in a TTY.'
 				});
 			}
 			if (!apiKey) {
 				throw new KainbuError('API key is required.', {
+					code: 'input_required',
+					exitCode: 2,
 					hint: 'Pass --api-key <key> (or --api-key - to read from stdin) or run interactively in a TTY.'
 				});
 			}
 
+			const serverUrl = new URL(server);
+			if (
+				!['http:', 'https:'].includes(serverUrl.protocol) ||
+				serverUrl.username ||
+				serverUrl.password ||
+				serverUrl.search ||
+				serverUrl.hash
+			)
+				throw new KainbuError(
+					'Server must be an HTTP(S) URL without embedded credentials, query or fragment.',
+					{ code: 'invalid_arguments', exitCode: 2 }
+				);
 			const profileName = await resolveProfileName(options.profile, existing);
 			const identity = await verifyApiKey(server, apiKey);
 			const profile = await upsertAuthProfile({
@@ -200,37 +237,32 @@ export const registerAuthCommands = (program: Command) => {
 				apiKey,
 				setActive: true
 			});
-			resetRuntimeAccessToken();
 
-			printResult(
-				mode,
-				{ ok: true, profile: profile.name, apiBase: server, user: identity },
-				[
-					`${ui.success('Logged in as')} ${ui.name(identity.email || identity.username || identity.id)} ${ui.meta(`on ${server}`)}`,
-					`${ui.meta('Saved to profile')} ${ui.name(`"${profile.name}"`)}`
-				]
-			);
+			printResult(mode, { ok: true, profile: profile.name, apiBase: server, user: identity }, [
+				`${ui.success('Logged in as')} ${ui.name(identity.email || identity.username || identity.id)} ${ui.meta(`on ${server}`)}`,
+				`${ui.meta('Saved to profile')} ${ui.name(`"${profile.name}"`)}`
+			]);
 		});
 
 	program
 		.command('logout')
-		.description('Sign out and clear the active profile\'s key (does not delete the profile)')
+		.description("Sign out and clear the active profile's key (does not delete the profile)")
 		.action(async () => {
 			await initRuntime();
-			const { getPocketBaseClient, setPocketBaseClient, createCliPocketBaseClient } = await import('../runtime.js');
-			try {
-				setPocketBaseClient(createCliPocketBaseClient());
-			} catch {
-				/* PB not configured */
-			}
+			const { getPocketBaseClient } = await import('../runtime.js');
 			try {
 				getPocketBaseClient().authStore.clear();
 			} catch {
 				/* PB not configured */
 			}
 			await deleteCliSession();
-			resetRuntimeAccessToken();
-			console.log(ui.success('Logged out.'));
+			const { readAuthFile, writeAuthFile } = await import('@kainbu/core');
+			const file = await readAuthFile();
+			if (file.activeProfile && file.profiles[file.activeProfile]) {
+				file.profiles[file.activeProfile].apiKey = '';
+				await writeAuthFile(file);
+			}
+			printSuccess({}, ui.success('Logged out.'));
 		});
 
 	program
@@ -239,28 +271,21 @@ export const registerAuthCommands = (program: Command) => {
 		.option('--json', 'Print JSON')
 		.action(async (cmdOptions: { json?: boolean }) => {
 			await initRuntime();
-			try {
-				const me = await fetchWorkspaceMe();
-				printResult(
-					{ json: Boolean(cmdOptions.json), quiet: false },
-					{
-						id: me.id,
-						email: me.email,
-						username: me.username,
-						auth_method: me.auth_method,
-						is_admin: me.is_admin
-					},
-					[
-						`${ui.meta('user:')} ${ui.name(me.email || me.username || me.id)}`,
-						`${ui.meta('auth:')} ${me.auth_method === 'api-key' ? 'API key' : 'PocketBase session'}`
-					]
-				);
-			} catch (error) {
-				const message =
-					error instanceof Error ? error.message : 'Not logged in.';
-				printError(message, 'Run: kainbu login --server <url> --api-key <key>');
-				process.exit(1);
-			}
+			const me = await fetchWorkspaceMe();
+			printResult(
+				{ json: Boolean(cmdOptions.json), quiet: false },
+				{
+					id: me.id,
+					email: me.email,
+					username: me.username,
+					auth_method: me.auth_method,
+					is_admin: me.is_admin
+				},
+				[
+					`${ui.meta('user:')} ${ui.name(me.email || me.username || me.id)}`,
+					`${ui.meta('auth:')} ${me.auth_method === 'api-key' ? 'API key' : 'PocketBase session'}`
+				]
+			);
 		});
 
 	const auth = program.command('auth').description('Authentication utilities');
@@ -274,15 +299,21 @@ export const registerAuthCommands = (program: Command) => {
 		.option('--rename <name>', 'Rename the active profile to <name>')
 		.action(
 			async (cmdOptions: { json?: boolean; use?: string; remove?: string; rename?: string }) => {
-				await initRuntime();
+				loadCliEnv();
+				if ([cmdOptions.use, cmdOptions.remove, cmdOptions.rename].filter(Boolean).length > 1)
+					throw new KainbuError('Choose one profile operation.', {
+						code: 'invalid_arguments',
+						exitCode: 2
+					});
 
 				if (cmdOptions.use) {
 					const profile = await setActiveAuthProfile(cmdOptions.use);
-					resetRuntimeAccessToken();
 					printResult(
 						{ json: Boolean(cmdOptions.json), quiet: false },
 						{ ok: true, active: profile.name },
-						[`${ui.active('Active profile:')} ${ui.name(profile.name)} ${ui.meta(`(${profile.apiBase})`)}`]
+						[
+							`${ui.active('Active profile:')} ${ui.name(profile.name)} ${ui.meta(`(${profile.apiBase})`)}`
+						]
 					);
 					return;
 				}
@@ -298,22 +329,26 @@ export const registerAuthCommands = (program: Command) => {
 							`Remove profile "${target.name}" (${target.apiBase})? [y/N] `
 						);
 						if ((confirm || '').trim().toLowerCase() !== 'y') {
-							console.log(ui.warn('Cancelled.'));
+							printSuccess({ cancelled: true }, ui.warn('Cancelled.'));
 							return;
 						}
 					}
 					const removed = await removeAuthProfile(target.name);
-					resetRuntimeAccessToken();
 					printResult(
 						{ json: Boolean(cmdOptions.json), quiet: false },
 						{ ok: removed, removed: target.name },
-						[removed ? `${ui.removed('Removed profile')} ${ui.name(`"${target.name}"`)}` : ui.warn('No profile removed.')]
+						[
+							removed
+								? `${ui.removed('Removed profile')} ${ui.name(`"${target.name}"`)}`
+								: ui.warn('No profile removed.')
+						]
 					);
 					return;
 				}
 
 				if (cmdOptions.rename) {
-					const { readAuthFile, upsertAuthProfile, removeAuthProfile } = await import('@kainbu/core');
+					const { readAuthFile, upsertAuthProfile, removeAuthProfile } =
+						await import('@kainbu/core');
 					const file = await readAuthFile();
 					if (!file.activeProfile) {
 						throw new KainbuError('No active profile to rename.');
@@ -322,6 +357,11 @@ export const registerAuthCommands = (program: Command) => {
 					if (!current) {
 						throw new KainbuError('Active profile is missing from auth.json.');
 					}
+					if (cmdOptions.rename !== current.name && Object.hasOwn(file.profiles, cmdOptions.rename))
+						throw new KainbuError('Profile already exists: ' + cmdOptions.rename, {
+							code: 'conflict',
+							exitCode: 5
+						});
 					await upsertAuthProfile({
 						name: cmdOptions.rename,
 						apiBase: current.apiBase,
@@ -331,7 +371,6 @@ export const registerAuthCommands = (program: Command) => {
 					if (cmdOptions.rename !== current.name) {
 						await removeAuthProfile(current.name);
 					}
-					resetRuntimeAccessToken();
 					printResult(
 						{ json: Boolean(cmdOptions.json), quiet: false },
 						{ ok: true, active: cmdOptions.rename },
@@ -367,14 +406,8 @@ export const registerAuthCommands = (program: Command) => {
 			const profiles = await listAuthProfiles();
 			const file = await (await import('@kainbu/core')).readAuthFile();
 			const apiBase = await getApiBase();
-			const active = file.activeProfile ? file.profiles[file.activeProfile] : null;
-			let me: Awaited<ReturnType<typeof fetchWorkspaceMe>> | null = null;
-			let verifyError = '';
-			try {
-				me = await fetchWorkspaceMe();
-			} catch (error) {
-				verifyError = error instanceof Error ? error.message : String(error);
-			}
+			const credentials = await resolveCredentials();
+			const me = await fetchWorkspaceMe();
 			printResult(
 				{ json: Boolean(cmdOptions.json), quiet: false },
 				{
@@ -386,12 +419,14 @@ export const registerAuthCommands = (program: Command) => {
 						lastUsedAt: p.lastUsedAt
 					})),
 					user: me,
-					verifyError
+					authenticated: true,
+					credentialSource: credentials.source,
+					effectiveProfile: credentials.profile
 				},
 				[
 					`${ui.meta('api:')} ${apiBase}`,
 					`${ui.meta('active:')} ${file.activeProfile ? ui.name(file.activeProfile) : ui.warn('(none)')}`,
-					`${ui.meta('user:')} ${me ? ui.name(me.email || me.username || me.id) : ui.warn(verifyError || '(unverified)')}`
+					`${ui.meta('user:')} ${ui.name(me.email || me.username || me.id)}`
 				]
 			);
 		});
@@ -401,10 +436,11 @@ export const registerAuthCommands = (program: Command) => {
 // key yet (e.g. they're setting up a fresh self-hosted instance and the
 // invite flow produces one later).
 async function runDeviceFlow(options: LoginArgs, mode: OutputMode) {
-	const apiBase = await getApiBase();
+	const apiBase = options.server?.replace(/\/+$/, '') || (await getApiBase());
 	const deviceId = randomUUID();
 
 	const startResponse = await fetch(`${apiBase}/api/cli/device/start`, {
+		signal: requestSignal(),
 		method: 'POST',
 		headers: { 'Content-Type': 'application/json' },
 		body: JSON.stringify({ deviceId })
@@ -429,19 +465,21 @@ async function runDeviceFlow(options: LoginArgs, mode: OutputMode) {
 	console.log(`${ui.meta('If needed, open:')} ${verificationUrl}`);
 
 	if (options.open !== false) {
-		const { exec } = await import('node:child_process');
-		const { promisify } = await import('node:util');
-		const execAsync = promisify(exec);
-		const platform = process.platform;
-		const command =
-			platform === 'win32'
-				? `start "" "${verificationUrl}"`
-				: platform === 'darwin'
-					? `open "${verificationUrl}"`
-					: `xdg-open "${verificationUrl}"`;
-		await execAsync(command).catch(() => {
-			console.log(`Open this URL in your browser:\n${verificationUrl}`);
-		});
+		const url = new URL(verificationUrl);
+		if (!['http:', 'https:'].includes(url.protocol))
+			throw new KainbuError('Invalid device verification URL.');
+		const { spawn } = await import('node:child_process');
+		const child =
+			process.platform === 'win32'
+				? spawn('rundll32.exe', ['url.dll,FileProtocolHandler', url.href], {
+						windowsHide: true,
+						stdio: 'ignore'
+					})
+				: spawn(process.platform === 'darwin' ? 'open' : 'xdg-open', [url.href], {
+						stdio: 'ignore'
+					});
+		child.on('error', () => console.error('Open the verification URL above in your browser.'));
+		child.unref();
 	}
 
 	const pollIntervalMs = (startPayload.interval || 3) * 1000;
@@ -450,6 +488,7 @@ async function runDeviceFlow(options: LoginArgs, mode: OutputMode) {
 	while (Date.now() < deadline) {
 		await sleep(pollIntervalMs);
 		const pollResponse = await fetch(`${apiBase}/api/cli/device/poll`, {
+			signal: requestSignal(),
 			method: 'POST',
 			headers: { 'Content-Type': 'application/json' },
 			body: JSON.stringify({ deviceId })
@@ -470,6 +509,7 @@ async function runDeviceFlow(options: LoginArgs, mode: OutputMode) {
 
 		if (pollPayload.status === 'approved' && pollPayload.exchangeToken) {
 			const exchangeResponse = await fetch(`${apiBase}/api/cli/device/exchange`, {
+				signal: requestSignal(),
 				method: 'POST',
 				headers: { 'Content-Type': 'application/json' },
 				body: JSON.stringify({ exchangeToken: pollPayload.exchangeToken })
@@ -480,27 +520,18 @@ async function runDeviceFlow(options: LoginArgs, mode: OutputMode) {
 				refreshToken?: string;
 			}>(exchangeResponse, 'CLI device exchange');
 
-			if (
-				!exchangeResponse.ok ||
-				!exchangePayload.accessToken ||
-				!exchangePayload.refreshToken
-			) {
+			if (!exchangeResponse.ok || !exchangePayload.accessToken || !exchangePayload.refreshToken) {
 				throw new KainbuError(exchangePayload.error || 'Unable to exchange CLI login.');
 			}
 
-			const { getPocketBaseClient, setPocketBaseClient, createCliPocketBaseClient } = await import('../runtime.js');
-			try {
-				setPocketBaseClient(createCliPocketBaseClient());
-			} catch {
-				/* ignore */
-			}
+			const { getPocketBaseClient } = await import('../runtime.js');
 			const pb = getPocketBaseClient();
 			pb.authStore.save(
 				exchangePayload.accessToken,
-				(exchangePayload as { user?: Record<string, unknown> }).user || null
+				(exchangePayload as { user?: AuthRecord }).user || null
 			);
 
-			printResult(mode, { ok: true, email: exchangePayload }, [ui.success('Logged in successfully.')]);
+			printResult(mode, { ok: true }, [ui.success('Logged in successfully.')]);
 			return;
 		}
 

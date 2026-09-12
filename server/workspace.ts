@@ -714,6 +714,7 @@ type WorkspacePageMutateRequest = {
 	pageId: string;
 	name?: string;
 	content?: string;
+	previousContent?: string;
 };
 
 type WorkspaceProjectCreateRequest = {
@@ -1007,8 +1008,18 @@ export const handleWorkspacePageContentRequest = async (
 	const page = await findProjectChildByClientId(admin, 'project_pages', projectPbId, pageId);
 	if (!page) throw new WorkspaceApiError(404, 'Page not found.');
 
-	await admin.collection('project_pages').update(page.id, {
-		content: sanitizeProjectPageContent(body.content)
+	if (body.previousContent !== undefined && typeof body.previousContent !== 'string') {
+		throw new WorkspaceApiError(400, 'previousContent must be a string.');
+	}
+	await admin.send('/api/kainbu/page', {
+		method: 'POST',
+		body: {
+			projectId,
+			pageId,
+			userId,
+			content: sanitizeProjectPageContent(body.content),
+			previousContent: body.previousContent ?? String(page.content || '')
+		}
 	});
 	return { ok: true };
 };

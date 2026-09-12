@@ -1,37 +1,27 @@
 import { createInterface } from 'node:readline';
 
-const isTty = (): boolean => Boolean(process.stdin.isTTY && process.stdout.isTTY);
+const isTty = (): boolean =>
+	Boolean(
+		process.stdin.isTTY &&
+		process.stdout.isTTY &&
+		!getInvocation().nonInteractive &&
+		!getInvocation().json
+	);
 
 /**
  * Reads a single line of input from stdin. If the stream is a TTY and
  * `hidden` is true, the input is masked with `*` and never echoed back.
  * Resolves to null on EOF so callers can show a "cancelled" message.
  */
-export const promptLine = (question: string, options: { hidden?: boolean } = {}): Promise<string | null> => {
-	if (!isTty()) {
-		return new Promise((resolve) => {
-			const chunks: Buffer[] = [];
-			const onData = (chunk: Buffer | string) => {
-				chunks.push(typeof chunk === 'string' ? Buffer.from(chunk) : chunk);
-			};
-			const onEnd = () => {
-				process.stdin.removeListener('data', onData);
-				const value = Buffer.concat(chunks).toString('utf8').trim();
-				resolve(value || null);
-			};
-			process.stdin.on('data', onData);
-			process.stdin.on('end', onEnd);
-			process.stdin.on('error', () => {
-				process.stdin.removeListener('data', onData);
-				process.stdin.removeListener('end', onEnd);
-				resolve(null);
-			});
-			// No question to print in non-TTY mode.
-		}).then((value) => {
-			if (value !== null) return value;
-			return null;
+export const promptLine = (
+	question: string,
+	options: { hidden?: boolean } = {}
+): Promise<string | null> => {
+	if (!isTty())
+		throw new KainbuError('This operation requires explicit options in non-interactive mode.', {
+			code: 'input_required',
+			exitCode: 2
 		});
-	}
 
 	if (options.hidden) {
 		return new Promise((resolve) => {
@@ -119,3 +109,5 @@ export const promptChoice = async (question: string, options: string[]): Promise
 	if (!Number.isFinite(parsed) || parsed < 1 || parsed > options.length) return null;
 	return parsed;
 };
+import { getInvocation } from './invocation.js';
+import { KainbuError } from './errors.js';

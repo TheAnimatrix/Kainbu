@@ -1,10 +1,12 @@
 import { createId, updateProjectScratchpad } from '@kainbu/core';
 import { fetchProjectScratchpadMeta } from '../writes.js';
-import { readFile } from 'node:fs/promises';
+import { readInput } from '../input.js';
+import { integerOption } from '../invocation.js';
+import { KainbuError } from '../errors.js';
 import type { Command } from 'commander';
 import type { ScratchpadData } from '../../../../src/lib/kainbu/types.js';
 import { resolveContext } from '../context.js';
-import { printResult } from '../output.js';
+import { printSuccess, printResult } from '../output.js';
 import { ui } from '../color.js';
 import { initRuntime } from '../runtime.js';
 import { resolveByIdOrName } from './shared.js';
@@ -14,11 +16,7 @@ const resolvePad = (scratchpad: ScratchpadData, target?: string) => {
 		return scratchpad.pads.find((pad) => pad.id === scratchpad.activePadId) || scratchpad.pads[0];
 	}
 
-	return (
-		scratchpad.pads.find((pad) => pad.id === target) ||
-		scratchpad.pads.find((pad) => pad.name.toLowerCase() === target.toLowerCase()) ||
-		null
-	);
+	return resolveByIdOrName(scratchpad.pads, target, 'pad');
 };
 
 export const registerScratchpadCommands = (program: Command) => {
@@ -37,67 +35,64 @@ export const registerScratchpadCommands = (program: Command) => {
 			const pad = resolvePad(meta.scratchpadData, options.pad);
 			if (!pad) throw new Error('Scratchpad pad not found.');
 
-			if (options.json) {
-				printResult({ json: true, quiet: false }, { pad, revision: meta.scratchpadRev });
-				return;
-			}
-
-			console.log(pad.content);
+			printResult(
+				{ json: Boolean(options.json), quiet: false },
+				{ pad, projectId: project.id, revision: meta.scratchpadRev },
+				[pad.content]
+			);
 		});
 
 	scratchpad
 		.command('set')
 		.description('Replace scratchpad content')
+		.option(
+			'--if-revision <n>',
+			'Require the revision returned by scratchpad show',
+			integerOption(0)
+		)
 		.requiredOption('--file <path>', 'Content file (- for stdin)')
 		.option('--pad <id|name>', 'Pad to update')
 		.option('--project <id|name>', 'Project override')
-		.action(async (options: { file: string; pad?: string; project?: string }) => {
-			await initRuntime();
-			const { project } = await resolveContext({ project: options.project, requireBoard: false });
-			const meta = await fetchProjectScratchpadMeta(project.id);
-			const content =
-				options.file === '-'
-					? await new Promise<string>((resolve, reject) => {
-							let buffer = '';
-							process.stdin.setEncoding('utf8');
-							process.stdin.on('data', (chunk) => {
-								buffer += chunk;
-							});
-							process.stdin.on('end', () => resolve(buffer));
-							process.stdin.on('error', reject);
-						})
-					: await readFile(options.file, 'utf8');
+		.action(
+			async (options: { file: string; pad?: string; project?: string; ifRevision?: number }) => {
+				await initRuntime();
+				const { project } = await resolveContext({ project: options.project, requireBoard: false });
+				const meta = await fetchProjectScratchpadMeta(project.id);
+				const content = await readInput(options.file);
+				if (options.ifRevision !== undefined && options.ifRevision !== meta.scratchpadRev)
+					throw new KainbuError('Scratchpad revision conflict.', { code: 'conflict', exitCode: 5 });
 
-			const pad = resolvePad(meta.scratchpadData, options.pad);
-			if (!pad) throw new Error('Scratchpad pad not found.');
+				const pad = resolvePad(meta.scratchpadData, options.pad);
+				if (!pad) throw new Error('Scratchpad pad not found.');
 
-			const nextPads = meta.scratchpadData.pads.map((entry) =>
-				entry.id === pad.id ? { ...entry, content } : entry
-			);
-			const nextData: ScratchpadData = {
-				activePadId: pad.id,
-				pads: nextPads
-			};
-
-			try {
-				const result = await updateProjectScratchpad(
-					project.id,
-					nextData,
-					meta.scratchpadRev
+				const nextPads = meta.scratchpadData.pads.map((entry) =>
+					entry.id === pad.id ? { ...entry, content } : entry
 				);
-				console.log(`${ui.success('Scratchpad updated')} ${ui.meta(`(rev ${result.scratchpadRev})`)}`);
-			} catch (error) {
-				const message = error instanceof Error ? error.message : 'Scratchpad update failed.';
-				const status =
-					error && typeof error === 'object' && 'status' in error ? Number(error.status) : 0;
-				if (status === 409 || /revision|conflict/i.test(message)) {
-					throw new Error(
-						'Scratchpad revision conflict. Run scratchpad show and retry with the latest revision.'
+				const nextData: ScratchpadData = {
+					activePadId: pad.id,
+					pads: nextPads
+				};
+
+				try {
+					const result = await updateProjectScratchpad(project.id, nextData, meta.scratchpadRev);
+					printSuccess(
+						{ id: pad.id, projectId: project.id, revision: result.scratchpadRev },
+						`${ui.success('Scratchpad updated')} ${ui.meta(`(rev ${result.scratchpadRev})`)}`
 					);
+				} catch (error) {
+					const message = error instanceof Error ? error.message : 'Scratchpad update failed.';
+					const status =
+						error && typeof error === 'object' && 'status' in error ? Number(error.status) : 0;
+					if (status === 409 || /revision|conflict/i.test(message)) {
+						throw new KainbuError(
+							'Scratchpad revision conflict. Run scratchpad show and retry with the latest revision.',
+							{ code: 'conflict', exitCode: 5 }
+						);
+					}
+					throw error;
 				}
-				throw error;
 			}
-		});
+		);
 
 	const pad = scratchpad.command('pad').description('Manage scratchpad pads');
 
@@ -120,8 +115,7 @@ export const registerScratchpadCommands = (program: Command) => {
 				{ json: Boolean(options.json), quiet: false },
 				rows,
 				rows.map(
-					(row) =>
-						`${row.active ? ui.active('*') : ' '} ${ui.id(row.id)}  ${ui.name(row.name)}`
+					(row) => `${row.active ? ui.active('*') : ' '} ${ui.id(row.id)}  ${ui.name(row.name)}`
 				)
 			);
 		});
@@ -140,7 +134,10 @@ export const registerScratchpadCommands = (program: Command) => {
 				pads: [...meta.scratchpadData.pads, nextPad]
 			};
 			await updateProjectScratchpad(project.id, nextData, meta.scratchpadRev);
-			console.log(`${ui.success('Created pad')} ${ui.name(name)} ${ui.id(`(${nextPad.id})`)}`);
+			printSuccess(
+				{ id: nextPad.id, projectId: project.id, name },
+				`${ui.success('Created pad')} ${ui.name(name)} ${ui.id(`(${nextPad.id})`)}`
+			);
 		});
 
 	pad
@@ -161,7 +158,10 @@ export const registerScratchpadCommands = (program: Command) => {
 				)
 			};
 			await updateProjectScratchpad(project.id, nextData, meta.scratchpadRev);
-			console.log(`${ui.success('Renamed pad to')} ${ui.name(newName)}`);
+			printSuccess(
+				{ id: selected.id, projectId: project.id, name: newName },
+				`${ui.success('Renamed pad to')} ${ui.name(newName)}`
+			);
 		});
 
 	pad
@@ -187,6 +187,9 @@ export const registerScratchpadCommands = (program: Command) => {
 				pads: remaining
 			};
 			await updateProjectScratchpad(project.id, nextData, meta.scratchpadRev);
-			console.log(ui.removed('Deleted pad'));
+			printSuccess(
+				{ id: selected.id, projectId: project.id, deleted: true },
+				ui.removed('Deleted pad')
+			);
 		});
 };
