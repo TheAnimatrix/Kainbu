@@ -37,7 +37,7 @@ const mergeCreateProjectSeed = (
 
 describe('backup restore', () => {
 	it('parseProjectsImport preserves all projects and multi-board projects', async () => {
-		const raw = readFileSync('k:/Downloads/kainbu-backup-2026-05-25.json', 'utf8');
+		const raw = readFileSync('tests/fixtures/workspace-backup.json', 'utf8');
 		const projects = await parseProjectsImport(new MockFile(raw) as unknown as File, 'user-1');
 		expect(projects).toHaveLength(8);
 		const calur = projects.find((project) => project.name === 'Calur');
@@ -46,7 +46,7 @@ describe('backup restore', () => {
 	});
 
 	it('assigns fresh ids when importing legacy Supabase/PocketBase backups that still contain ids', async () => {
-		const raw = readFileSync('k:/Downloads/kainbu-backup-2026-05-25.json', 'utf8');
+		const raw = readFileSync('tests/fixtures/workspace-backup.json', 'utf8');
 		const legacy = JSON.parse(raw) as {
 			projects: Array<{
 				boards: Array<{ id: string; projectId?: string }>;
@@ -78,7 +78,7 @@ describe('backup restore', () => {
 	});
 
 	it('createProject seed merge keeps every imported board', async () => {
-		const raw = readFileSync('k:/Downloads/kainbu-backup-2026-05-25.json', 'utf8');
+		const raw = readFileSync('tests/fixtures/workspace-backup.json', 'utf8');
 		const calur = (await parseProjectsImport(new MockFile(raw) as unknown as File, 'user-1')).find(
 			(project) => project.name === 'Calur'
 		);

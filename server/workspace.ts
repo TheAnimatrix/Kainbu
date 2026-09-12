@@ -1,3 +1,5 @@
+import { getAvatarUrlFromClient } from '../src/lib/kainbu/avatarUrl.js';
+import { getPublicPocketBaseUrl } from './publicUrls.js';
 import type PocketBase from 'pocketbase';
 import type { BackgroundTheme, Project } from '../src/lib/kainbu/types.js';
 import { formatPocketBaseError } from '../src/lib/pocketbaseErrors.js';
@@ -15,7 +17,6 @@ import {
 	getProjectPbId,
 	getProjectRecord,
 	pbEscapeFilter,
-	projectClientFilter,
 	projectRelationFilter,
 	resolveProjectClientId
 } from './pbWorkspace.js';
@@ -177,7 +178,7 @@ const getProjectOrThrow = async (admin: PocketBase, projectId: string) => {
 			name: String(data.name || ''),
 			scratchpad_data: String(data.scratchpad_data || ''),
 			scratchpad_rev: typeof data.scratchpad_rev === 'number' ? data.scratchpad_rev : 0,
-			updated_at: String(data.updated || new Date().toISOString()),
+			updated_at: String(data.updated || '1970-01-01T00:00:00.000Z'),
 			_pbId: String(data.id)
 		};
 	} catch {
@@ -200,7 +201,7 @@ const getMembership = async (admin: PocketBase, projectId: string, userId: strin
 		return await admin
 			.collection('project_memberships')
 			.getFirstListItem(
-				`${projectRelationFilter(projectPbId)} && user = "${pbEscapeFilter(userId)}"`
+				`${projectRelationFilter(projectPbId)} && user = "${pbEscapeFilter(userId)}" && left_at = ""`
 			);
 	} catch {
 		return null;
@@ -304,25 +305,6 @@ export const linkPendingInvitesByEmail = async (
 
 	return { linked, failed };
 };
-
-const inviteeCanRespond = (
-	invite: { invitee_user_id: string; invitee_email: string },
-	userId: string,
-	authEmail: string
-) => {
-	if (invite.invitee_user_id && invite.invitee_user_id === userId) return true;
-	return !invite.invitee_user_id && invite.invitee_email.toLowerCase() === authEmail;
-};
-
-const jsonProjectScratchpadResult = (row: {
-	scratchpad_data: string;
-	scratchpad_rev: number;
-	updated_at: string;
-}) => ({
-	scratchpadData: row.scratchpad_data,
-	scratchpadRev: row.scratchpad_rev,
-	updatedAt: new Date(row.updated_at).getTime()
-});
 
 export const toWorkspaceApiError = (error: unknown) => {
 	if (error instanceof WorkspaceApiError) {
@@ -433,28 +415,16 @@ export const handleWorkspaceScratchpadRequest = async (
 
 	await ensureMembership(admin, projectId, userId);
 
-	const project = await getProjectOrThrow(admin, projectId);
-	if (project.scratchpad_rev !== expectedRevision) {
-		return {
-			ok: false,
-			...jsonProjectScratchpadResult(project)
-		};
-	}
-
-	const updatedProject = await admin.collection('projects').update(project._pbId, {
-		scratchpad_data: scratchpadData,
-		scratchpad_rev: expectedRevision + 1
+	return admin.send<{
+		ok: boolean;
+		scratchpadData: string;
+		scratchpadRev: number;
+		updatedAt: number;
+	}>('/api/kainbu/scratchpad', {
+		method: 'POST',
+		body: { projectId, scratchpadData, expectedRevision, userId },
+		requestKey: null
 	});
-
-	return {
-		ok: true,
-		...jsonProjectScratchpadResult({
-			scratchpad_data: String(updatedProject.scratchpad_data || ''),
-			scratchpad_rev:
-				typeof updatedProject.scratchpad_rev === 'number' ? updatedProject.scratchpad_rev : 0,
-			updated_at: String(updatedProject.updated || new Date().toISOString())
-		})
-	};
 };
 
 export const handleWorkspaceProjectBackgroundRequest = async (
@@ -540,54 +510,11 @@ export const handleWorkspaceRespondInviteRequest = async (
 	const admin = await createAdminPb();
 	const inviteId = requireString(body.inviteId, 'inviteId');
 	const accept = requireBoolean(body.accept, 'accept');
-	const invite = await getInviteOrThrow(admin, inviteId);
-	const authUser = await admin.collection('users').getOne(userId);
-	const authEmail = String(authUser.email || '')
-		.trim()
-		.toLowerCase();
-
-	if (!inviteeCanRespond(invite, userId, authEmail)) {
-		throw new WorkspaceApiError(403, 'You can only respond to your own invite.');
-	}
-
-	if (invite.status !== 'pending') {
-		throw new WorkspaceApiError(409, 'This invite has already been handled.');
-	}
-
-	const respondedAt = new Date().toISOString();
-	const inviteUpdate: Record<string, unknown> = {
-		status: accept ? 'accepted' : 'rejected',
-		responded_at: respondedAt
-	};
-	if (!invite.invitee_user_id) {
-		inviteUpdate.invitee = userId;
-	}
-	await admin.collection('project_invites').update(inviteId, inviteUpdate);
-
-	if (accept) {
-		const projectPbId = invite.project_pb_id;
-		const memberUserId = invite.invitee_user_id || userId;
-		const existingMembership = await getMembership(admin, invite.project_id, memberUserId);
-		const now = new Date().toISOString();
-		if (existingMembership) {
-			await admin.collection('project_memberships').update(existingMembership.id, {
-				// A legitimate invite acceptance/rejoin reactivates the historical row;
-				// never create a duplicate membership for the same project/user.
-				left_at: '',
-				last_opened_at: now
-			});
-		} else {
-			await admin.collection('project_memberships').create({
-				project: projectPbId,
-				user: memberUserId,
-				role: 'member',
-				joined_at: now,
-				last_opened_at: now
-			});
-		}
-	}
-
-	return { ok: true };
+	return admin.send<{ ok: boolean }>('/api/kainbu/invites/respond', {
+		method: 'POST',
+		body: { inviteId, accept, userId },
+		requestKey: null
+	});
 };
 
 export const handleWorkspaceCancelInviteRequest = async (
@@ -664,10 +591,10 @@ export const handleWorkspaceLeaveProjectRequest = async (
 
 	const projectPbId = await getProjectPbId(admin, projectId);
 	const userStates = await admin.collection('project_user_state').getFullList({
-		filter: `${projectRelationFilter(projectPbId)} && user = "${pbEscapeFilter(userId)}"`
+		filter: `${projectRelationFilter(projectPbId)} && user = "${pbEscapeFilter(userId)}" && left_at = ""`
 	});
 	const aiSessions = await admin.collection('project_ai_sessions').getFullList({
-		filter: `${projectRelationFilter(projectPbId)} && user = "${pbEscapeFilter(userId)}"`
+		filter: `${projectRelationFilter(projectPbId)} && user = "${pbEscapeFilter(userId)}" && left_at = ""`
 	});
 
 	await Promise.all([
@@ -705,7 +632,7 @@ export const handleWorkspaceMemberProfilesRequest = async (
 	}
 
 	const ownMemberships = await admin.collection('project_memberships').getFullList({
-		filter: `user = "${pbEscapeFilter(userId)}"`
+		filter: `user = "${pbEscapeFilter(userId)}" && left_at = ""`
 	});
 	const projectIds = [...new Set(ownMemberships.map((membership) => String(membership.project)))];
 	if (!projectIds.length) {
@@ -739,7 +666,7 @@ export const handleWorkspaceMemberProfilesRequest = async (
 				typeof user.username === 'string' && user.username.trim() ? user.username.trim() : null,
 			avatarUrl:
 				typeof user.avatar === 'string' && user.avatar.trim()
-					? admin.files.getURL(user, user.avatar)
+					? getAvatarUrlFromClient(admin, user, user.avatar, getPublicPocketBaseUrl())
 					: null
 		}))
 	};
@@ -801,10 +728,14 @@ type WorkspaceProjectRenameRequest = {
 };
 
 const isKanbanColumn = (value: unknown): value is KanbanData[number] =>
-	isRecord(value) && typeof value.id === 'string' && Array.isArray((value as { tasks?: unknown }).tasks);
+	isRecord(value) &&
+	typeof value.id === 'string' &&
+	Array.isArray((value as { tasks?: unknown }).tasks);
 
-const isFiniteOptionalNumber = (value: unknown) => value === undefined || (typeof value === 'number' && Number.isFinite(value));
-const isOptionalString = (value: unknown, max: number) => value === undefined || (typeof value === 'string' && value.length <= max);
+const isFiniteOptionalNumber = (value: unknown) =>
+	value === undefined || (typeof value === 'number' && Number.isFinite(value));
+const isOptionalString = (value: unknown, max: number) =>
+	value === undefined || (typeof value === 'string' && value.length <= max);
 
 const requireKanbanData = (value: unknown, field: string): KanbanData => {
 	if (!Array.isArray(value) || value.length > 100 || !value.every(isKanbanColumn)) {
@@ -813,38 +744,87 @@ const requireKanbanData = (value: unknown, field: string): KanbanData => {
 	let taskCount = 0;
 	for (const [columnIndex, column] of value.entries()) {
 		if (
-			column.id.length === 0 || column.id.length > 128 ||
-			typeof column.title !== 'string' || column.title.length > 500 ||
+			column.id.length === 0 ||
+			column.id.length > 128 ||
+			typeof column.title !== 'string' ||
+			column.title.length > 500 ||
 			!isOptionalString(column.color, 128) ||
-			(column.width !== undefined && (typeof column.width !== 'number' || !Number.isFinite(column.width) || column.width < 0))
+			(column.width !== undefined &&
+				(typeof column.width !== 'number' || !Number.isFinite(column.width) || column.width < 0))
 		) {
 			throw new WorkspaceApiError(400, `${field}[${columnIndex}] has invalid fields.`);
 		}
-		if (column.tasks.length > 1000) throw new WorkspaceApiError(413, `${field}[${columnIndex}] has too many tasks.`);
+		if (column.tasks.length > 1000)
+			throw new WorkspaceApiError(413, `${field}[${columnIndex}] has too many tasks.`);
 		taskCount += column.tasks.length;
 		for (const [taskIndex, task] of column.tasks.entries()) {
-			if (!isRecord(task) || typeof task.id !== 'string' || task.id.length === 0 || task.id.length > 128 || typeof task.title !== 'string' || task.title.length > 1000) {
-				throw new WorkspaceApiError(400, `${field}[${columnIndex}].tasks[${taskIndex}] is malformed.`);
+			if (
+				!isRecord(task) ||
+				typeof task.id !== 'string' ||
+				task.id.length === 0 ||
+				task.id.length > 128 ||
+				typeof task.title !== 'string' ||
+				task.title.length > 1000
+			) {
+				throw new WorkspaceApiError(
+					400,
+					`${field}[${columnIndex}].tasks[${taskIndex}] is malformed.`
+				);
 			}
 			if (typeof task.description === 'string' && task.description.length > 100_000) {
-				throw new WorkspaceApiError(413, `${field}[${columnIndex}].tasks[${taskIndex}].description is too large.`);
+				throw new WorkspaceApiError(
+					413,
+					`${field}[${columnIndex}].tasks[${taskIndex}].description is too large.`
+				);
 			}
-			if (!isOptionalString(task.color, 128) || !isOptionalString(task.assignedTo, 128) ||
+			if (
+				!isOptionalString(task.color, 128) ||
+				!isOptionalString(task.assignedTo, 128) ||
 				(task.hasCheckbox !== undefined && typeof task.hasCheckbox !== 'boolean') ||
 				(task.checked !== undefined && typeof task.checked !== 'boolean') ||
-				!isFiniteOptionalNumber(task.createdAt) || !isFiniteOptionalNumber(task.updatedAt) ||
-				!isFiniteOptionalNumber(task.completedAt) || !isFiniteOptionalNumber(task.countdownAt) ||
-				!isFiniteOptionalNumber(task.alarmAt)) {
-				throw new WorkspaceApiError(400, `${field}[${columnIndex}].tasks[${taskIndex}] has invalid fields.`);
+				!isFiniteOptionalNumber(task.createdAt) ||
+				!isFiniteOptionalNumber(task.updatedAt) ||
+				!isFiniteOptionalNumber(task.completedAt) ||
+				!isFiniteOptionalNumber(task.countdownAt) ||
+				!isFiniteOptionalNumber(task.alarmAt)
+			) {
+				throw new WorkspaceApiError(
+					400,
+					`${field}[${columnIndex}].tasks[${taskIndex}] has invalid fields.`
+				);
 			}
-			if (!Array.isArray(task.tags) || task.tags.length > 50 || task.tags.some((tag) =>
-				!isRecord(tag) || typeof tag.id !== 'string' || tag.id.length === 0 || tag.id.length > 128 ||
-				typeof tag.label !== 'string' || tag.label.length > 200 || typeof tag.color !== 'string' || tag.color.length > 128
-			)) {
-				throw new WorkspaceApiError(400, `${field}[${columnIndex}].tasks[${taskIndex}].tags is invalid.`);
+			if (
+				!Array.isArray(task.tags) ||
+				task.tags.length > 50 ||
+				task.tags.some(
+					(tag) =>
+						!isRecord(tag) ||
+						typeof tag.id !== 'string' ||
+						tag.id.length === 0 ||
+						tag.id.length > 128 ||
+						typeof tag.label !== 'string' ||
+						tag.label.length > 200 ||
+						typeof tag.color !== 'string' ||
+						tag.color.length > 128
+				)
+			) {
+				throw new WorkspaceApiError(
+					400,
+					`${field}[${columnIndex}].tasks[${taskIndex}].tags is invalid.`
+				);
 			}
-			if (task.linkedTaskIds !== undefined && (!Array.isArray(task.linkedTaskIds) || task.linkedTaskIds.length > 100 || task.linkedTaskIds.some((id) => typeof id !== 'string' || id.length === 0 || id.length > 128))) {
-				throw new WorkspaceApiError(400, `${field}[${columnIndex}].tasks[${taskIndex}].linkedTaskIds is invalid.`);
+			if (
+				task.linkedTaskIds !== undefined &&
+				(!Array.isArray(task.linkedTaskIds) ||
+					task.linkedTaskIds.length > 100 ||
+					task.linkedTaskIds.some(
+						(id) => typeof id !== 'string' || id.length === 0 || id.length > 128
+					))
+			) {
+				throw new WorkspaceApiError(
+					400,
+					`${field}[${columnIndex}].tasks[${taskIndex}].linkedTaskIds is invalid.`
+				);
 			}
 		}
 	}
@@ -894,7 +874,7 @@ export const handleWorkspaceBoardSyncRequest = async (
 		throw new WorkspaceApiError(404, 'Board not found.');
 	}
 
-	await syncBoardWithPb(admin, projectId, boardId, previous, next);
+	await syncBoardWithPb(admin, projectId, boardId, previous, next, userId);
 	return { ok: true };
 };
 
@@ -1093,8 +1073,7 @@ export const handleWorkspaceProjectCreateRequest = async (
 ) => {
 	const userId = (await resolveAuthenticatedUserId(authorization)).userId;
 	const admin = await createAdminPb();
-	const name =
-		typeof body.name === 'string' && body.name.trim() ? body.name.trim() : 'New Project';
+	const name = typeof body.name === 'string' && body.name.trim() ? body.name.trim() : 'New Project';
 
 	// The API is the authoritative create transaction. Preserve browser-provided
 	// client IDs so restore/import callers can reconcile their local state with
@@ -1103,7 +1082,10 @@ export const handleWorkspaceProjectCreateRequest = async (
 	const seed = normalizeProjectStructure({
 		...EMPTY_PROJECT(userId, name),
 		...requestedSeed,
-		id: typeof requestedSeed.id === 'string' && requestedSeed.id.trim() ? requestedSeed.id : createId(),
+		id:
+			typeof requestedSeed.id === 'string' && requestedSeed.id.trim()
+				? requestedSeed.id
+				: createId(),
 		name,
 		ownerUserId: userId,
 		accessRole: 'owner' as const
@@ -1122,13 +1104,28 @@ export const handleWorkspaceProjectCreateRequest = async (
 
 	const rollback = async () => {
 		const failures: unknown[] = [];
-		for (const collection of ['project_tasks', 'project_columns', 'project_tags', 'project_pages', 'project_ai_sessions', 'project_user_state', 'project_boards', 'project_memberships']) {
+		for (const collection of [
+			'project_tasks',
+			'project_columns',
+			'project_tags',
+			'project_pages',
+			'project_ai_sessions',
+			'project_user_state',
+			'project_boards',
+			'project_memberships'
+		]) {
 			try {
-				const records = await admin.collection(collection).getFullList({ filter: `project = "${pbEscapeFilter(projectRecord.id)}"` });
+				const records = await admin
+					.collection(collection)
+					.getFullList({ filter: `project = "${pbEscapeFilter(projectRecord.id)}"` });
 				for (const record of records) await admin.collection(collection).delete(record.id);
-			} catch (error) { if (!(error instanceof ClientResponseError && error.status === 404)) failures.push(error); }
+			} catch (error) {
+				if (!(error instanceof ClientResponseError && error.status === 404)) failures.push(error);
+			}
 		}
-		try { await admin.collection('projects').delete(projectRecord.id); } catch (error) {
+		try {
+			await admin.collection('projects').delete(projectRecord.id);
+		} catch (error) {
 			if (!(error instanceof ClientResponseError && error.status === 404)) failures.push(error);
 		}
 		if (failures.length) throw new AggregateError(failures, 'Project rollback failed');
@@ -1148,48 +1145,48 @@ export const handleWorkspaceProjectCreateRequest = async (
 			if (!/unique|validation_not_unique/i.test(message)) throw error;
 		}
 
-	for (const board of seed.boards) {
-		await admin.collection('project_boards').create({
-			project: projectRecord.id,
-			client_id: board.id,
-			name: board.name,
-			position: board.position,
-			preferences: normalizeBoardPreferences(board.preferences)
-		});
-	}
+		for (const board of seed.boards) {
+			await admin.collection('project_boards').create({
+				project: projectRecord.id,
+				client_id: board.id,
+				name: board.name,
+				position: board.position,
+				preferences: normalizeBoardPreferences(board.preferences)
+			});
+		}
 
-	for (const page of seed.pages) {
-		await admin.collection('project_pages').create({
-			project: projectRecord.id,
-			client_id: page.id,
-			name: page.name,
-			content: sanitizeProjectPageContent(page.content),
-			position: page.position
-		});
-	}
+		for (const page of seed.pages) {
+			await admin.collection('project_pages').create({
+				project: projectRecord.id,
+				client_id: page.id,
+				name: page.name,
+				content: sanitizeProjectPageContent(page.content),
+				position: page.position
+			});
+		}
 
-	for (const board of seed.boards) {
-		await syncBoardWithPb(admin, seed.id, board.id, [], board.kanbanData);
-	}
+		for (const board of seed.boards) {
+			await syncBoardWithPb(admin, seed.id, board.id, [], board.kanbanData);
+		}
 
-	const activeSession = seed.aiSessions[0];
-	if (activeSession) {
-		await admin.collection('project_ai_sessions').create({
-			project: projectRecord.id,
-			client_id: activeSession.id,
-			user: userId,
-			title: activeSession.title,
-			model_id: activeSession.modelId,
-			history: activeSession.history,
-			last_message_at: new Date(activeSession.lastMessageAt).toISOString()
-		});
-		await admin.collection('project_user_state').create({
-			project: projectRecord.id,
-			user: userId,
-			active_ai_session_id: activeSession.id,
-			chat_history: []
-		});
-	}
+		const activeSession = seed.aiSessions[0];
+		if (activeSession) {
+			await admin.collection('project_ai_sessions').create({
+				project: projectRecord.id,
+				client_id: activeSession.id,
+				user: userId,
+				title: activeSession.title,
+				model_id: activeSession.modelId,
+				history: activeSession.history,
+				last_message_at: new Date(activeSession.lastMessageAt).toISOString()
+			});
+			await admin.collection('project_user_state').create({
+				project: projectRecord.id,
+				user: userId,
+				active_ai_session_id: activeSession.id,
+				chat_history: []
+			});
+		}
 	};
 
 	await runProjectInitialization(initialize, rollback);

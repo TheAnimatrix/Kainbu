@@ -22,7 +22,11 @@ import { normalizeAiModelCatalog } from '../src/lib/kainbu/aiModelCatalog.js';
 import { invalidateProviderKeyCache } from './openrouter-key.js';
 import { repairUsersCollectionApiRules } from './usersCollectionRules.js';
 import { getEnv } from './env.js';
-import { isMailDeliveryReady, loadMailDeliveryConfig, normalizeMailProvider } from './mailDelivery.js';
+import {
+	isMailDeliveryReady,
+	loadMailDeliveryConfig,
+	normalizeMailProvider
+} from './mailDelivery.js';
 
 const parseDays = (value: string | undefined, fallback = 30) => {
 	const parsed = Number.parseInt(value || '', 10);
@@ -70,65 +74,25 @@ const settingsRecordAsData = (record: unknown): Record<string, unknown> | null =
 	return record as Record<string, unknown>;
 };
 
-/** Migrations may no-op on some PB builds; repair schema via Collections API. */
+/** Schema changes belong to versioned migrations; fail clearly on an outdated database. */
 const ensureAuthEmailSettingsFields = async (pb: PocketBase) => {
 	if (authEmailSchemaReady) return;
-	if (authEmailSchemaRepair) {
-		await authEmailSchemaRepair;
-		return;
-	}
-
-	authEmailSchemaRepair = (async () => {
-		let collection = await pb.collections.getOne('app_settings');
-		const existing = () => new Set(collection.fields.map((field) => field.name));
-		const added: string[] = [];
-
-		if (!existing().has('signups_enabled')) {
-			await pb.collections.update(collection.id, {
-				fields: [...collection.fields, { name: 'signups_enabled', type: 'bool', required: false }]
-			});
-			added.push('signups_enabled');
-			collection = await pb.collections.getOne('app_settings');
-		}
-
-		if (!existing().has('mail_provider')) {
-			await pb.collections.update(collection.id, {
-				fields: [
-					...collection.fields,
-					{ name: 'mail_provider', type: 'text', required: false, max: 16 }
-				]
-			});
-			added.push('mail_provider');
-			collection = await pb.collections.getOne('app_settings');
-		}
-
-		if (!existing().has('resend_api_key')) {
-			await pb.collections.update(collection.id, {
-				fields: [
-					...collection.fields,
-					{ name: 'resend_api_key', type: 'text', required: false, max: 512 }
-				]
-			});
-			added.push('resend_api_key');
-			collection = await pb.collections.getOne('app_settings');
-		}
-
-		if (!existing().has('ai_gateway_api_key')) {
-			await pb.collections.update(collection.id, {
-				fields: [
-					...collection.fields,
-					{ name: 'ai_gateway_api_key', type: 'text', required: false, max: 512 }
-				]
-			});
-			added.push('ai_gateway_api_key');
-		}
-
-		if (added.length) {
-			console.log(`[admin] Added missing app_settings fields: ${added.join(', ')}`);
-		}
-		authEmailSchemaReady = true;
-	})();
-
+	if (!authEmailSchemaRepair)
+		authEmailSchemaRepair = (async () => {
+			const collection = await pb.collections.getOne('app_settings');
+			const fields = new Set(collection.fields.map((field) => field.name));
+			const missing = [
+				'signups_enabled',
+				'mail_provider',
+				'resend_api_key',
+				'ai_gateway_api_key'
+			].filter((field) => !fields.has(field));
+			if (missing.length)
+				throw new Error(
+					`PocketBase migrations are required: app_settings is missing ${missing.join(', ')}.`
+				);
+			authEmailSchemaReady = true;
+		})();
 	try {
 		await authEmailSchemaRepair;
 	} finally {
@@ -278,13 +242,28 @@ export const handleAuthSignup = async (c: Context) => {
 		}
 
 		const body = (await c.req.json()) as { email?: string; password?: string };
-		if (!body || typeof body !== 'object' || typeof body.email !== 'string' || typeof body.password !== 'string') {
+		if (
+			!body ||
+			typeof body !== 'object' ||
+			typeof body.email !== 'string' ||
+			typeof body.password !== 'string'
+		) {
 			return c.json({ error: 'Email and password are required.' }, 400);
 		}
 		const email = body.email.trim().toLowerCase();
 		const password = body.password;
-		if (!email || !password || email.length > 320 || password.length < 8 || password.length > 256 || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) {
-			return c.json({ error: 'Provide a valid email and a password between 8 and 256 characters.' }, 400);
+		if (
+			!email ||
+			!password ||
+			email.length > 320 ||
+			password.length < 8 ||
+			password.length > 256 ||
+			!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)
+		) {
+			return c.json(
+				{ error: 'Provide a valid email and a password between 8 and 256 characters.' },
+				400
+			);
 		}
 
 		if (settings.emailVerificationEnabled) {
@@ -294,7 +273,8 @@ export const handleAuthSignup = async (c: Context) => {
 		const user = await pb.collection('users').create({
 			email,
 			emailVisibility: true,
-			verified: !settings.emailVerificationEnabled,
+			// Mail being off is not proof of ownership (notably for admin allowlist emails).
+			verified: false,
 			password,
 			passwordConfirm: password
 		});

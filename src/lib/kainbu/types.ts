@@ -1,3 +1,4 @@
+import type { PendingBoardSync, PendingPageSync } from './syncQueue';
 export type AiModelId = string;
 export type AiThinkingLevel = 'none' | 'low' | 'medium' | 'high' | 'xhigh' | 'max';
 
@@ -373,6 +374,8 @@ export interface Project {
 }
 
 export interface DashboardTimedTask {
+	boardId: string;
+	boardName: string;
 	projectId: string;
 	projectName: string;
 	accessRole: ProjectAccessRole;
@@ -684,6 +687,9 @@ export interface ProjectBackupFile {
 }
 
 export interface LocalWorkspaceSnapshot {
+	pendingBoardSyncs?: Array<[string, PendingBoardSync]>;
+	pendingPageSyncs?: Array<[string, PendingPageSync]>;
+	pendingChatSyncs?: string[];
 	version: 3;
 	userId: string;
 	currentProjectId: string;

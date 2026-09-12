@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { createBoardSyncQueue, createPageSyncQueue } from '$lib/kainbu/syncQueue';
 	import { onDestroy, onMount, tick } from 'svelte';
 	import { browser } from '$app/environment';
 	import { crossfade, fade } from 'svelte/transition';
@@ -32,6 +33,7 @@
 	import BrandMark from '$lib/components/BrandMark.svelte';
 	import ChatOrb from '$lib/components/ChatOrb.svelte';
 	import ChatPane from '$lib/components/ChatPane.svelte';
+	import { retainDeletedTasks } from '$lib/kainbu/boardSyncCore';
 	import DashboardView from '$lib/components/DashboardView.svelte';
 	import KanbanBoard from '$lib/components/KanbanBoard.svelte';
 	import PagePane from '$lib/components/PagePane.svelte';
@@ -149,8 +151,14 @@
 		type WorkspaceUrlState
 	} from '$lib/kainbu/workspaceUrl';
 	import { normalizeBoardPreferences, boardPreferencesEqual } from '$lib/kainbu/boardPreferences';
-	import { deletePageAsset, downloadPageAssetBlob, fetchPageAssets, uploadPageAsset, type PageAsset } from '$lib/kainbu/pageAssets';
-import { getProjectMemberDisplayName, getProjectMemberSearchText } from '$lib/kainbu/members';
+	import {
+		deletePageAsset,
+		downloadPageAssetBlob,
+		fetchPageAssets,
+		uploadPageAsset,
+		type PageAsset
+	} from '$lib/kainbu/pageAssets';
+	import { getProjectMemberDisplayName, getProjectMemberSearchText } from '$lib/kainbu/members';
 	import {
 		getProjectBoard,
 		getProjectPage,
@@ -370,20 +378,9 @@ import { getProjectMemberDisplayName, getProjectMemberSearchText } from '$lib/ka
 	let pendingWorkspaceNavigation = '';
 	let workspaceUrlSyncKey = '';
 	const boardSyncTimeouts = new Map<string, ReturnType<typeof setTimeout>>();
-	const pendingBoardSyncs = new Map<
-		string,
-		{
-			projectId: string;
-			boardId: string;
-			previousKanbanData: Project['kanbanData'];
-			nextKanbanData: Project['kanbanData'];
-		}
-	>();
+	const pendingBoardSyncs = createBoardSyncQueue();
 	const scratchpadSyncTimeouts = new Map<string, ReturnType<typeof setTimeout>>();
-	const pendingScratchpadSyncs = new Map<
-		string,
-		{ projectId: string; pageId: string; content: string }
-	>();
+	const pendingScratchpadSyncs = createPageSyncQueue();
 	const chatSyncTimeouts = new Map<string, ReturnType<typeof setTimeout>>();
 	const pendingChatSyncs = new Set<string>();
 	const pendingBoardPreferenceSyncs = new Set<string>();
@@ -421,9 +418,7 @@ import { getProjectMemberDisplayName, getProjectMemberSearchText } from '$lib/ka
 				? model.allowedThinkingLevels
 				: (['none'] satisfies import('$lib/kainbu/types').AiThinkingLevel[]);
 			aiThinkingLevel =
-				stored && allowed.includes(stored)
-					? stored
-					: defaultThinkingLevelForModel(model);
+				stored && allowed.includes(stored) ? stored : defaultThinkingLevelForModel(model);
 			lastSyncedAiThinkingModelId = activeAiModelId;
 		}
 	}
@@ -499,11 +494,11 @@ import { getProjectMemberDisplayName, getProjectMemberSearchText } from '$lib/ka
 		previewProposal?.target === 'kanban'
 			? previewProposal.preview.kanbanData
 			: currentProject?.kanbanData || [];
-	$: displayKanbanData = kanbanData.map(column => ({
+	$: displayKanbanData = kanbanData.map((column) => ({
 		...column,
-		tasks: column.tasks.filter(task => !task.deletedAt)
+		tasks: column.tasks.filter((task) => !task.deletedAt)
 	}));
-$: kanbanComparisonData =
+	$: kanbanComparisonData =
 		previewProposal?.target === 'kanban' ? previewProposal.originalKanbanData : undefined;
 	$: mobileHeaderReviewing =
 		isMobile &&
@@ -517,7 +512,12 @@ $: kanbanComparisonData =
 	// Svelte cannot infer dependencies read inside syncWorkspaceUrl(). Track the
 	// canonical route inputs explicitly so every project/tab/board/page change
 	// creates the corresponding history entry.
-	$: workspaceUrlSyncKey = [currentProjectId, currentBoardId, currentPageId, visibleWorkspaceTab].join('|');
+	$: workspaceUrlSyncKey = [
+		currentProjectId,
+		currentBoardId,
+		currentPageId,
+		visibleWorkspaceTab
+	].join('|');
 	$: if (workspaceUrlReady && user && projects.length && workspaceUrlSyncKey) {
 		syncWorkspaceUrl();
 	}
@@ -618,12 +618,7 @@ $: kanbanComparisonData =
 		closeBoardSearch();
 	}
 
-	$: if (
-		isMobile &&
-		mobileTab === 'kanban' &&
-		boardSearchActive &&
-		!priorBoardSearchActive
-	) {
+	$: if (isMobile && mobileTab === 'kanban' && boardSearchActive && !priorBoardSearchActive) {
 		void tick().then(() => {
 			boardSearchInput?.focus();
 			boardSearchInput?.select();
@@ -675,9 +670,7 @@ $: kanbanComparisonData =
 
 	const getPendingKanbanBoardIds = (projectId: string) =>
 		new Set(
-			getBoardSyncKeysForProject(projectId).map((key) =>
-				key.slice(`${projectId}::board::`.length)
-			)
+			getBoardSyncKeysForProject(projectId).map((key) => key.slice(`${projectId}::board::`.length))
 		);
 	const getPendingSyncPageIds = (projectId: string) =>
 		new Set(
@@ -1192,7 +1185,7 @@ $: kanbanComparisonData =
 		const previousKanbanData = cloneKanbanData(project.kanbanData);
 		const normalizedNextKanbanData = normalizeKanbanAssignments(
 			project,
-			cloneKanbanData(nextKanbanData)
+			retainDeletedTasks(previousKanbanData, cloneKanbanData(nextKanbanData))
 		);
 
 		if (areKanbanDataEqual(previousKanbanData, normalizedNextKanbanData)) {
@@ -1264,6 +1257,9 @@ $: kanbanComparisonData =
 
 		return {
 			version: 3,
+			pendingBoardSyncs: [...pendingBoardSyncs],
+			pendingPageSyncs: [...pendingScratchpadSyncs],
+			pendingChatSyncs: [...pendingChatSyncs],
 			userId: user.id,
 			currentProjectId,
 			projects,
@@ -1281,7 +1277,11 @@ $: kanbanComparisonData =
 	const persistSnapshotNow = () => {
 		const snapshot = buildLocalSnapshot();
 		if (!snapshot) return;
-		saveWorkspaceSnapshot(snapshot);
+		if (!saveWorkspaceSnapshot(snapshot)) {
+			syncErrorMessage =
+				'Local storage is full or unavailable. Keep this tab open until your changes sync.';
+			refreshSyncStatus();
+		}
 	};
 
 	const scheduleSnapshotPersist = () => {
@@ -1564,7 +1564,7 @@ $: kanbanComparisonData =
 		try {
 			const result = await operation();
 			lastSuccessfulSyncAt = Date.now();
-			clearSyncError();
+			if (!pendingBoardSyncs.errors.size && !pendingScratchpadSyncs.errors.size) clearSyncError();
 			scheduleSnapshotPersist();
 			refreshSyncStatus(true);
 			return result;
@@ -1625,7 +1625,7 @@ $: kanbanComparisonData =
 			syncKey,
 			setTimeout(() => {
 				boardSyncTimeouts.delete(syncKey);
-				void flushBoardSync(syncKey);
+				void flushBoardSync(syncKey).catch(console.error);
 			}, delay)
 		);
 
@@ -1635,41 +1635,23 @@ $: kanbanComparisonData =
 
 	const flushBoardSync = async (syncKey: string) => {
 		if (!user) return;
-		const pending = pendingBoardSyncs.get(syncKey);
-		if (!pending) return;
-		const project = projects.find((entry) => entry.id === pending.projectId);
-		const normalizedPreviousKanbanData = project
-			? normalizeKanbanAssignments(project, cloneKanbanData(pending.previousKanbanData))
-			: pending.previousKanbanData;
-		const normalizedNextKanbanData = project
-			? normalizeKanbanAssignments(project, cloneKanbanData(pending.nextKanbanData))
-			: pending.nextKanbanData;
-
-		if (project && !areKanbanDataEqual(project.kanbanData, normalizedNextKanbanData)) {
-			updateProjectLocal(pending.projectId, (currentProject) =>
-				updateProjectBoardData(currentProject, pending.boardId, normalizedNextKanbanData)
-			);
-		}
-
 		try {
-			await runSyncAction(
-				() =>
-					syncProjectBoard(
-						pending.projectId,
-						pending.boardId,
-						normalizedPreviousKanbanData,
-						normalizedNextKanbanData
-					),
-				'Unable to sync the board right now.'
-			);
-			if (pendingBoardSyncs.get(syncKey) === pending) {
-				pendingBoardSyncs.delete(syncKey);
-			}
-			lastProjectSyncAt = {
-				...lastProjectSyncAt,
-				[pending.projectId]: Date.now()
-			};
+			await pendingBoardSyncs.flush(syncKey, async (pending) => {
+				await runSyncAction(
+					() =>
+						syncProjectBoard(
+							pending.projectId,
+							pending.boardId,
+							pending.previousKanbanData,
+							pending.nextKanbanData
+						),
+					'Unable to sync the board. Your local changes have been kept.'
+				);
+				lastProjectSyncAt = { ...lastProjectSyncAt, [pending.projectId]: Date.now() };
+			});
 		} finally {
+			if (!pendingBoardSyncs.errors.size && !pendingScratchpadSyncs.errors.size) clearSyncError();
+			persistSnapshotNow();
 			refreshSyncStatus(syncErrorMessage.length === 0 && !hasPendingLocalChanges());
 		}
 	};
@@ -1678,12 +1660,14 @@ $: kanbanComparisonData =
 		projectId: string,
 		pageId: string,
 		content: string,
+		previousContent: string,
 		delay = SCRATCHPAD_SYNC_DEBOUNCE_MS
 	) => {
 		const syncKey = getPageSyncKey(projectId, pageId);
 		pendingScratchpadSyncs.set(syncKey, {
 			projectId,
 			pageId,
+			previousContent: pendingScratchpadSyncs.get(syncKey)?.previousContent ?? previousContent,
 			content
 		});
 
@@ -1695,7 +1679,7 @@ $: kanbanComparisonData =
 			syncKey,
 			setTimeout(() => {
 				scratchpadSyncTimeouts.delete(syncKey);
-				void flushScratchpadSync(syncKey);
+				void flushScratchpadSync(syncKey).catch(console.error);
 			}, delay)
 		);
 
@@ -1704,24 +1688,70 @@ $: kanbanComparisonData =
 	};
 
 	const flushScratchpadSync = async (syncKey: string) => {
-		const pending = pendingScratchpadSyncs.get(syncKey);
-		if (!pending) return;
-
+		if (!user) return;
 		try {
-			await runSyncAction(
-				() => syncProjectPageContent(pending.projectId, pending.pageId, pending.content),
-				'Unable to sync the page right now.'
-			);
-
-			if (pendingScratchpadSyncs.get(syncKey) === pending) {
-				pendingScratchpadSyncs.delete(syncKey);
-			}
-			lastProjectSyncAt = {
-				...lastProjectSyncAt,
-				[pending.projectId]: Date.now()
-			};
+			await pendingScratchpadSyncs.flush(syncKey, async (pending) => {
+				await runSyncAction(
+					() =>
+						syncProjectPageContent(
+							pending.projectId,
+							pending.pageId,
+							pending.content,
+							pending.previousContent
+						),
+					'Unable to sync the page. Your local draft has been kept.'
+				);
+				lastProjectSyncAt = { ...lastProjectSyncAt, [pending.projectId]: Date.now() };
+			});
 		} finally {
+			persistSnapshotNow();
 			refreshSyncStatus(syncErrorMessage.length === 0 && !hasPendingLocalChanges());
+		}
+	};
+
+	const retryPendingSyncs = async (manual = false) => {
+		if (!user || !navigator.onLine) return;
+		await Promise.allSettled([
+			...[...pendingBoardSyncs.keys()]
+				.filter((key) => manual || pendingBoardSyncs.canRetryAutomatically(key))
+				.map(flushBoardSync),
+			...[...pendingScratchpadSyncs.keys()]
+				.filter((key) => manual || pendingScratchpadSyncs.canRetryAutomatically(key))
+				.map(flushScratchpadSync),
+			...[...pendingChatSyncs].map(flushChatSync),
+			...(dirtySettings ? [flushSettings()] : [])
+		]);
+	};
+
+	const saveDraftsAndLoadServer = async () => {
+		if (!user || activeSyncRequests) return;
+		const boardDrafts = [...pendingBoardSyncs];
+		const pageDrafts = [...pendingScratchpadSyncs];
+		try {
+			const remote = await fetchWorkspace(user.id, { fresh: true });
+			exportProjectsToFile(projects);
+			for (const [key, draft] of boardDrafts)
+				if (pendingBoardSyncs.get(key) === draft) {
+					clearTimeout(boardSyncTimeouts.get(key));
+					boardSyncTimeouts.delete(key);
+					pendingBoardSyncs.delete(key);
+				}
+			for (const [key, draft] of pageDrafts)
+				if (pendingScratchpadSyncs.get(key) === draft) {
+					clearTimeout(scratchpadSyncTimeouts.get(key));
+					scratchpadSyncTimeouts.delete(key);
+					pendingScratchpadSyncs.delete(key);
+				}
+			applyWorkspaceState({
+				nextProjects: mergeRemoteProjects(projects, remote.projects),
+				nextIncomingInvites: remote.incomingInvites
+			});
+			clearSyncError();
+			persistSnapshotNow();
+		} catch (error) {
+			setSyncError(
+				formatPocketBaseError(error, 'Unable to load the server copy. Your drafts are still here.')
+			);
 		}
 	};
 
@@ -2003,6 +2033,11 @@ $: kanbanComparisonData =
 		}
 
 		if (localSnapshot) {
+			for (const [key, pending] of localSnapshot.pendingBoardSyncs || [])
+				pendingBoardSyncs.set(key, pending);
+			for (const [key, pending] of localSnapshot.pendingPageSyncs || [])
+				pendingScratchpadSyncs.set(key, pending);
+			for (const key of localSnapshot.pendingChatSyncs || []) pendingChatSyncs.add(key);
 			applyWorkspaceState({
 				nextProjects: localSnapshot.projects,
 				preferredProjectId: localSnapshot.currentProjectId,
@@ -2106,6 +2141,7 @@ $: kanbanComparisonData =
 				profileLoaded = true;
 				profileLoadedAt = profileLoadedAt || Date.now();
 				hydrateWorkspaceFromUrl();
+				void retryPendingSyncs();
 			}
 		}
 	};
@@ -2234,6 +2270,7 @@ $: kanbanComparisonData =
 			if (!normalizeUsername(profile?.username)) {
 				void refreshUserProfile(user);
 			}
+			await retryPendingSyncs();
 			void refreshWorkspaceFromRemote(user);
 		})();
 	};
@@ -2398,33 +2435,32 @@ $: kanbanComparisonData =
 
 	const applyWorkspaceUrlState = (parsed: WorkspaceUrlState) => {
 		if (!parsed.projectId && !parsed.view && !parsed.boardId && !parsed.pageId) return;
-
+		suppressWorkspaceUrlSync = true;
 		if (parsed.view) {
-			if (isMobile) mobileTab = parsed.view;
-			else desktopWorkspaceTab = parsed.view;
+			// Keep the canonical route when crossing the mobile breakpoint.
+			mobileTab = parsed.view;
+			desktopWorkspaceTab = parsed.view;
 		}
-
-		if (!parsed.projectId) return;
-
 		const project = projects.find((entry) => entry.id === parsed.projectId);
-		if (!project) return;
-
-		let updater: ((entry: Project) => Project) | undefined;
-		if (parsed.view === 'kanban' && parsed.boardId) {
-			if (project.boards.some((board) => board.id === parsed.boardId)) {
+		if (project && parsed.projectId) {
+			let updater: ((entry: Project) => Project) | undefined;
+			if (
+				parsed.view === 'kanban' &&
+				parsed.boardId &&
+				project.boards.some((board) => board.id === parsed.boardId)
+			) {
 				updater = (entry) => setProjectActiveBoard(entry, parsed.boardId!);
-			}
-		} else if (parsed.view === 'scratchpad' && parsed.pageId) {
-			if (project.pages.some((page) => page.id === parsed.pageId)) {
+			} else if (
+				parsed.view === 'scratchpad' &&
+				parsed.pageId &&
+				project.pages.some((page) => page.id === parsed.pageId)
+			) {
 				updater = (entry) => setProjectActivePage(entry, parsed.pageId!);
 			}
+			selectProject(parsed.projectId, updater);
 		}
-
-		suppressWorkspaceUrlSync = true;
-		selectProject(parsed.projectId, updater);
-		// Keep URL synchronization suppressed through Svelte's state flush. If it
-		// is released synchronously, Back/Forward can briefly observe the previous
-		// tab and push it again, consuming the browser's forward entry.
+		// Derived tab/board values must flush before URL synchronization resumes,
+		// including /dashboard which intentionally has no project id.
 		void tick().then(() => {
 			suppressWorkspaceUrlSync = false;
 		});
@@ -2432,18 +2468,15 @@ $: kanbanComparisonData =
 
 	const hydrateWorkspaceFromUrl = () => {
 		if (typeof window === 'undefined') return;
-
-		const parsed = parseWorkspaceLocation($page.url.pathname, $page.url.searchParams);
-		if (parsed.projectId || parsed.view || parsed.boardId || parsed.pageId) {
-			applyWorkspaceUrlState(parsed);
-		}
-
-		workspaceUrlReady = true;
-		syncWorkspaceUrl();
+		applyWorkspaceUrlState(parseWorkspaceLocation($page.url.pathname, $page.url.searchParams));
+		void tick().then(() => {
+			workspaceUrlReady = true;
+			syncWorkspaceUrl();
+		});
 	};
 
 	const clearProjectSyncState = (projectId: string) => {
-		for (const syncKey of [...boardSyncTimeouts.keys()]) {
+		for (const syncKey of new Set([...boardSyncTimeouts.keys(), ...pendingBoardSyncs.keys()])) {
 			if (!syncKey.startsWith(`${projectId}::board::`)) continue;
 			const boardTimeout = boardSyncTimeouts.get(syncKey);
 			if (boardTimeout) clearTimeout(boardTimeout);
@@ -2451,7 +2484,10 @@ $: kanbanComparisonData =
 			pendingBoardSyncs.delete(syncKey);
 		}
 
-		for (const syncKey of [...scratchpadSyncTimeouts.keys()]) {
+		for (const syncKey of new Set([
+			...scratchpadSyncTimeouts.keys(),
+			...pendingScratchpadSyncs.keys()
+		])) {
 			if (!syncKey.startsWith(`${projectId}::page::`)) continue;
 			const scratchpadTimeout = scratchpadSyncTimeouts.get(syncKey);
 			if (scratchpadTimeout) clearTimeout(scratchpadTimeout);
@@ -2892,11 +2928,20 @@ $: kanbanComparisonData =
 		}
 	};
 
-	const handleClearTimedTaskDue = (projectId: string, columnId: string, taskId: string) => {
+	const handleClearTimedTaskDue = (
+		projectId: string,
+		columnId: string,
+		taskId: string,
+		boardId?: string
+	) => {
 		const project = projects.find((entry) => entry.id === projectId);
 		if (!project) return;
 
-		const nextKanbanData = project.kanbanData.map((column) =>
+		const targetBoard = project.boards.find(
+			(board) => board.id === (boardId || project.activeBoardId)
+		);
+		if (!targetBoard) return;
+		const nextKanbanData = targetBoard.kanbanData.map((column) =>
 			column.id === columnId
 				? {
 						...column,
@@ -2905,9 +2950,10 @@ $: kanbanComparisonData =
 				: column
 		);
 
-		applyLocalKanbanChange(project, nextKanbanData, {
-			recordHistory: true
-		});
+		updateProjectLocal(projectId, (current) =>
+			updateProjectBoardData(current, targetBoard.id, nextKanbanData)
+		);
+		scheduleBoardSync(projectId, targetBoard.id, targetBoard.kanbanData, nextKanbanData);
 	};
 
 	const clearBoardSyncState = (projectId: string, boardId: string) => {
@@ -3218,8 +3264,7 @@ $: kanbanComparisonData =
 
 	const handleSelectPersonalBackground = async (theme: BackgroundTheme) => {
 		const previousTheme = settings.backgroundTheme;
-		const themeChanged =
-			getBackgroundThemeKey(previousTheme) !== getBackgroundThemeKey(theme);
+		const themeChanged = getBackgroundThemeKey(previousTheme) !== getBackgroundThemeKey(theme);
 
 		try {
 			if (themeChanged) {
@@ -3313,8 +3358,7 @@ $: kanbanComparisonData =
 
 		const projectId = currentProject.id;
 		const previousTheme = currentProject.backgroundTheme;
-		const themeChanged =
-			getBackgroundThemeKey(previousTheme) !== getBackgroundThemeKey(theme);
+		const themeChanged = getBackgroundThemeKey(previousTheme) !== getBackgroundThemeKey(theme);
 
 		try {
 			if (themeChanged) {
@@ -3323,11 +3367,7 @@ $: kanbanComparisonData =
 					await safelyDeleteBackgroundImage(previousTheme.path);
 				}
 			} else {
-				applyThemeAccent(
-					theme,
-					projectBackgroundImageUrl ?? '',
-					settings.colorMode
-				);
+				applyThemeAccent(theme, projectBackgroundImageUrl ?? '', settings.colorMode);
 			}
 		} catch (error) {
 			console.error(error);
@@ -3473,9 +3513,7 @@ $: kanbanComparisonData =
 				? nextModel.allowedThinkingLevels
 				: (['none'] satisfies import('$lib/kainbu/types').AiThinkingLevel[]);
 			aiThinkingLevel =
-				stored && allowed.includes(stored)
-					? stored
-					: defaultThinkingLevelForModel(nextModel);
+				stored && allowed.includes(stored) ? stored : defaultThinkingLevelForModel(nextModel);
 			lastSyncedAiThinkingModelId = nextModelId;
 		}
 		handleSettingsChange({
@@ -3531,13 +3569,15 @@ $: kanbanComparisonData =
 
 	// Fetch page assets whenever the current page changes
 	$: if (currentProject && currentPage) {
-		fetchPageAssets(currentProject.id, currentPage.id).then((assets) => {
-			for (const asset of assets) {
-				void ensurePageAssetPreview(asset);
-			}
-		}).catch((error) => {
-			console.error(error);
-		});
+		fetchPageAssets(currentProject.id, currentPage.id)
+			.then((assets) => {
+				for (const asset of assets) {
+					void ensurePageAssetPreview(asset);
+				}
+			})
+			.catch((error) => {
+				console.error(error);
+			});
 	}
 
 	const handlePageEmbedUpload = async (
@@ -3582,6 +3622,7 @@ $: kanbanComparisonData =
 	const handleScratchpadChange = (value: string) => {
 		if (!currentProject || !currentPage || proposalPreviewTarget === 'scratchpad') return;
 		if (currentPage.content === value) return;
+		const previousContent = currentPage.content;
 
 		const updateResult = updateProjectLocal(currentProject.id, (project) =>
 			updateProjectPageState(project, currentPage.id, value)
@@ -3589,7 +3630,7 @@ $: kanbanComparisonData =
 		if (!updateResult) return;
 
 		bumpProjectRevision(currentProject.id, 'scratchpad');
-		scheduleScratchpadSync(currentProject.id, currentPage.id, value);
+		scheduleScratchpadSync(currentProject.id, currentPage.id, value, previousContent);
 	};
 
 	const handleKanbanChange = (
@@ -3659,8 +3700,7 @@ $: kanbanComparisonData =
 		void (async () => {
 			try {
 				await runSyncAction(
-					() =>
-						updateProjectBoardPreferencesRemote(projectId, boardId, normalizedPreferences),
+					() => updateProjectBoardPreferencesRemote(projectId, boardId, normalizedPreferences),
 					'Unable to save board options right now.'
 				);
 			} catch (error) {
@@ -3808,9 +3848,7 @@ $: kanbanComparisonData =
 			const lines = [`Board: "${board.name}"`];
 			for (const col of board.kanbanData) {
 				const taskSummaries = col.tasks.map((task) => {
-					const tagSuffix = task.tags?.length
-						? ` [${formatTagsForAiContext(task.tags)}]`
-						: '';
+					const tagSuffix = task.tags?.length ? ` [${formatTagsForAiContext(task.tags)}]` : '';
 					return `${task.title}${tagSuffix}`;
 				});
 				lines.push(`[${col.title}] ${taskSummaries.join(', ') || '(empty)'}`);
@@ -4880,7 +4918,10 @@ $: kanbanComparisonData =
 
 		const handlePopState = () => {
 			applyWorkspaceUrlState(
-				parseWorkspaceLocation(window.location.pathname, new URLSearchParams(window.location.search))
+				parseWorkspaceLocation(
+					window.location.pathname,
+					new URLSearchParams(window.location.search)
+				)
 			);
 		};
 
@@ -4891,7 +4932,9 @@ $: kanbanComparisonData =
 			}
 		};
 
+		const syncRetryTimer = setInterval(() => void retryPendingSyncs(), 30_000);
 		stopVisibilityListener = () => {
+			clearInterval(syncRetryTimer);
 			document.removeEventListener('visibilitychange', handleVisibilityChange);
 			window.removeEventListener('popstate', handlePopState);
 		};
@@ -4942,6 +4985,9 @@ $: kanbanComparisonData =
 <svelte:window
 	bind:innerWidth={viewportWidth}
 	on:focus={recoverWorkspaceIfNeeded}
+	on:online={recoverWorkspaceIfNeeded}
+	on:pagehide={persistSnapshotNow}
+	on:beforeunload={persistSnapshotNow}
 	on:keydown={handleWorkspaceKeydown}
 />
 
@@ -5173,9 +5219,7 @@ $: kanbanComparisonData =
 								<button
 									type="button"
 									class={`inline-flex h-8 w-8 items-center justify-center rounded-md transition ${
-										boardSearchActive
-											? 'text-app-primary'
-											: 'text-app-subtext hover:text-app-text'
+										boardSearchActive ? 'text-app-primary' : 'text-app-subtext hover:text-app-text'
 									}`}
 									title={boardSearchActive ? 'Close card search' : 'Search cards (Ctrl+F)'}
 									aria-label={boardSearchActive ? 'Close card search' : 'Search cards'}
@@ -5237,6 +5281,28 @@ $: kanbanComparisonData =
 						</div>
 					</header>
 
+					{#if syncErrorMessage}
+						<div
+							role="status"
+							class="mx-3 mt-2 flex flex-wrap items-center gap-2 border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-app-text"
+						>
+							<p class="min-w-0 flex-1">{syncErrorMessage}</p>
+							<button
+								type="button"
+								class="kainbu-btn kainbu-btn--compact"
+								disabled={activeSyncRequests > 0}
+								on:click={() => retryPendingSyncs(true)}>Retry sync</button
+							>
+							{#if pendingBoardSyncs.size || pendingScratchpadSyncs.size}
+								<button
+									type="button"
+									class="kainbu-btn kainbu-btn--compact"
+									disabled={activeSyncRequests > 0}
+									on:click={saveDraftsAndLoadServer}>Save local backup and load server</button
+								>
+							{/if}
+						</div>
+					{/if}
 					{#if workspaceError || isRestoring}
 						<div class="space-y-2 px-3 pt-2 lg:px-4">
 							{#if workspaceError}
@@ -5289,6 +5355,7 @@ $: kanbanComparisonData =
 											{timedTasks}
 											onCreateProject={handleCreateProject}
 											onOpenProject={openProjectWorkspace}
+											onOpenBoard={openProjectBoard}
 											onInvite={handleInvite}
 											onAcceptInvite={handleAcceptInvite}
 											onRejectInvite={handleRejectInvite}
@@ -5326,7 +5393,7 @@ $: kanbanComparisonData =
 													{boardPreferences}
 													colorMode={settings.colorMode}
 													active={mobileTab === 'kanban'}
-													members={currentProject.members.filter(m => !m.leftAt)}
+													members={currentProject.members.filter((m) => !m.leftAt)}
 													bind:boardSearchActive
 													bind:boardSearchQuery
 													onChange={handleKanbanChange}
@@ -5394,7 +5461,7 @@ $: kanbanComparisonData =
 													onAddAttachments={handleAddAttachments}
 													onRemoveAttachment={handleRemoveAttachment}
 													onRemoveTaskCard={handleRemoveTaskCard}
-												onSessionChange={handleActiveAiSessionChange}
+													onSessionChange={handleActiveAiSessionChange}
 													onCreateSession={handleCreateAiSession}
 													onRenameSession={handleRenameAiSession}
 													onDeleteSession={handleDeleteAiSession}
@@ -5491,6 +5558,7 @@ $: kanbanComparisonData =
 											{timedTasks}
 											onCreateProject={handleCreateProject}
 											onOpenProject={openProjectWorkspace}
+											onOpenBoard={openProjectBoard}
 											onInvite={handleInvite}
 											onAcceptInvite={handleAcceptInvite}
 											onRejectInvite={handleRejectInvite}
@@ -5528,7 +5596,7 @@ $: kanbanComparisonData =
 													{boardPreferences}
 													colorMode={settings.colorMode}
 													active={desktopWorkspaceTab === 'kanban'}
-													members={currentProject.members.filter(m => !m.leftAt)}
+													members={currentProject.members.filter((m) => !m.leftAt)}
 													bind:boardSearchActive
 													bind:boardSearchQuery
 													onChange={handleKanbanChange}
@@ -5688,52 +5756,52 @@ $: kanbanComparisonData =
 									out:fade={projectSwitchFadeOut}
 								>
 									<ChatPane
-									history={currentProject.chatHistory}
-									bind:draft={composerDraft}
-									{queuedAttachments}
-									{queuedTaskCards}
-									isProcessing={isAiProcessing}
-									processingEvents={aiProgressEvents}
-									pendingProposals={activePendingProposals}
-									{proposalApplyErrors}
-									{applyingProposalId}
-									activeProposalTarget={proposalPreviewTarget}
-									sessions={currentProject.aiSessions}
-									activeSessionId={currentProject.activeAiSessionId}
-									modelId={activeAiModelId}
-									modelOptions={aiModels}
-									active={true}
-									chrome="sidebar"
-									onDraftChange={handleDraftChange}
-									onSend={handleSendMessage}
-									onAddAttachments={handleAddAttachments}
-									onRemoveAttachment={handleRemoveAttachment}
-									onRemoveTaskCard={handleRemoveTaskCard}
-									onSessionChange={handleActiveAiSessionChange}
-									onCreateSession={handleCreateAiSession}
-									onRenameSession={handleRenameAiSession}
-									onDeleteSession={handleDeleteAiSession}
-									onModelChange={handleAiModelChange}
-									thinkingLevel={aiThinkingLevel}
-									onThinkingLevelChange={(level) => {
-										aiThinkingLevel = level;
-										handleSettingsChange({
-											...settings,
-											preferredAiThinkingLevel: level
-										});
-									}}
-									onReviewProposal={activePendingProposals.length ? handleReviewProposal : null}
-									onAcceptProposal={handleAcceptProposal}
-									onRejectProposal={handleRejectProposal}
-									onAnswerQuestion={handleAnswerQuestion}
-									onAnswerQuestions={handleAnswerQuestions}
-									onCollapseSidebar={() => {
-										desktopChatCollapsed = true;
-										chatOrbExitAnimating = false;
-									}}
-								/>
-							</div>
-						{/key}
+										history={currentProject.chatHistory}
+										bind:draft={composerDraft}
+										{queuedAttachments}
+										{queuedTaskCards}
+										isProcessing={isAiProcessing}
+										processingEvents={aiProgressEvents}
+										pendingProposals={activePendingProposals}
+										{proposalApplyErrors}
+										{applyingProposalId}
+										activeProposalTarget={proposalPreviewTarget}
+										sessions={currentProject.aiSessions}
+										activeSessionId={currentProject.activeAiSessionId}
+										modelId={activeAiModelId}
+										modelOptions={aiModels}
+										active={true}
+										chrome="sidebar"
+										onDraftChange={handleDraftChange}
+										onSend={handleSendMessage}
+										onAddAttachments={handleAddAttachments}
+										onRemoveAttachment={handleRemoveAttachment}
+										onRemoveTaskCard={handleRemoveTaskCard}
+										onSessionChange={handleActiveAiSessionChange}
+										onCreateSession={handleCreateAiSession}
+										onRenameSession={handleRenameAiSession}
+										onDeleteSession={handleDeleteAiSession}
+										onModelChange={handleAiModelChange}
+										thinkingLevel={aiThinkingLevel}
+										onThinkingLevelChange={(level) => {
+											aiThinkingLevel = level;
+											handleSettingsChange({
+												...settings,
+												preferredAiThinkingLevel: level
+											});
+										}}
+										onReviewProposal={activePendingProposals.length ? handleReviewProposal : null}
+										onAcceptProposal={handleAcceptProposal}
+										onRejectProposal={handleRejectProposal}
+										onAnswerQuestion={handleAnswerQuestion}
+										onAnswerQuestions={handleAnswerQuestions}
+										onCollapseSidebar={() => {
+											desktopChatCollapsed = true;
+											chatOrbExitAnimating = false;
+										}}
+									/>
+								</div>
+							{/key}
 						</div>
 					</div>
 				{/if}
@@ -5755,9 +5823,7 @@ $: kanbanComparisonData =
 		{/if}
 
 		{#if nameModalState}
-			<div
-				class="kainbu-overlay absolute inset-0 z-40 flex items-center justify-center p-4"
-			>
+			<div class="kainbu-overlay absolute inset-0 z-40 flex items-center justify-center p-4">
 				<div
 					role="dialog"
 					aria-modal="true"

@@ -23,7 +23,8 @@ const relationId = (value: unknown) => {
 	return '';
 };
 
-const iso = (value: unknown, fallback = new Date().toISOString()) => {
+// Missing legacy timestamps are unknown, not a new event on every fetch.
+const iso = (value: unknown, fallback = '1970-01-01T00:00:00.000Z') => {
 	if (typeof value === 'string' && value.trim()) return value;
 	return fallback;
 };
@@ -36,7 +37,8 @@ export const projectClientFilter = (clientId: string) =>
 export const projectRecordFilter = (projectClientId: string) =>
 	`project.client_id = "${pbEscapeFilter(projectClientId)}"`;
 
-export const projectRelationFilter = (projectPbId: string) => `project = "${pbEscapeFilter(projectPbId)}"`;
+export const projectRelationFilter = (projectPbId: string) =>
+	`project = "${pbEscapeFilter(projectPbId)}"`;
 
 export const compositeClientFilter = (projectClientId: string, clientId: string) =>
 	`project.client_id = "${pbEscapeFilter(projectClientId)}" && client_id = "${pbEscapeFilter(clientId)}"`;
@@ -79,9 +81,7 @@ export const mapInviteRecord = (record: PbRecord, projectClientId: string): Proj
 	invitee_email: String(record.invitee_email || ''),
 	invited_by_user_id: relationId(record.invited_by),
 	status:
-		record.status === 'accepted' ||
-		record.status === 'rejected' ||
-		record.status === 'cancelled'
+		record.status === 'accepted' || record.status === 'rejected' || record.status === 'cancelled'
 			? record.status
 			: 'pending',
 	created_at: iso(record.created),
@@ -215,8 +215,7 @@ export const mapProfileRecord = (
 		typeof record.preferred_ai_thinking_level === 'string'
 			? (record.preferred_ai_thinking_level as import('$lib/kainbu/types').AiThinkingLevel)
 			: null,
-	preferred_model_preset:
-		record.preferred_model_preset === 'smart' ? 'smart' : 'fast',
+	preferred_model_preset: record.preferred_model_preset === 'smart' ? 'smart' : 'fast',
 	background_theme: (record.background_theme as ProfileRow['background_theme']) ?? null,
 	color_mode:
 		record.color_mode === 'light' || record.color_mode === 'dark' ? record.color_mode : null,
@@ -224,10 +223,7 @@ export const mapProfileRecord = (
 	updated_at: iso(record.updated)
 });
 
-export const resolveProjectRef = async (
-	pb: import('pocketbase').default,
-	projectRef: string
-) => {
+export const resolveProjectRef = async (pb: import('pocketbase').default, projectRef: string) => {
 	try {
 		const byClient = await pb
 			.collection('projects')

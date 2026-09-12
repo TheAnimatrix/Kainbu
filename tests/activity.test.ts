@@ -9,6 +9,7 @@ import {
 	paginateActivityEvents,
 	summarizeActivityDelta
 } from '../src/lib/kainbu/activity';
+import { buildTimedTasks } from '../src/lib/kainbu/timing';
 import type { Project } from '../src/lib/kainbu/types';
 
 const now = Date.UTC(2026, 0, 15, 12, 0, 0);
@@ -153,11 +154,19 @@ describe('activity summaries', () => {
 	it('uses the local calendar day instead of a rolling 24-hour window', () => {
 		const dayStart = getCalendarDayStart(now);
 		const project = makeProject({
-			kanbanData: [{ id: 'todo', title: 'To Do', tasks: [
-				{ id: 'before-midnight', title: 'Before', tags: [], createdAt: dayStart - 1 },
-				{ id: 'today', title: 'Today', tags: [], createdAt: dayStart }
-			] }],
-			members: [], invites: [], updatedAt: dayStart - 2 * day
+			kanbanData: [
+				{
+					id: 'todo',
+					title: 'To Do',
+					tasks: [
+						{ id: 'before-midnight', title: 'Before', tags: [], createdAt: dayStart - 1 },
+						{ id: 'today', title: 'Today', tags: [], createdAt: dayStart }
+					]
+				}
+			],
+			members: [],
+			invites: [],
+			updatedAt: dayStart - 2 * day
 		});
 		const events = buildWorkspaceActivityEvents([project]);
 		expect(getDailyActivity(events, now, 10).map((event) => event.taskId)).toEqual(['today']);
@@ -165,14 +174,34 @@ describe('activity summaries', () => {
 
 	it('keeps deleted task and departed member history without counting them as current state', () => {
 		const project = makeProject({
-			kanbanData: [{ id: 'todo', title: 'To Do', tasks: [{
-				id: 'deleted', title: 'Removed task', tags: [], createdAt: now - day, deletedAt: now - 1
-			}] }],
-			members: [{
-			projectId: 'project-a', userId: 'former', role: 'member', email: 'former@example.test',
-			joinedAt: now - 3 * day, leftAt: now - 1, lastOpenedAt: now - 2 * day
-			}],
-			invites: [], updatedAt: now - 2 * day
+			kanbanData: [
+				{
+					id: 'todo',
+					title: 'To Do',
+					tasks: [
+						{
+							id: 'deleted',
+							title: 'Removed task',
+							tags: [],
+							createdAt: now - day,
+							deletedAt: now - 1
+						}
+					]
+				}
+			],
+			members: [
+				{
+					projectId: 'project-a',
+					userId: 'former',
+					role: 'member',
+					email: 'former@example.test',
+					joinedAt: now - 3 * day,
+					leftAt: now - 1,
+					lastOpenedAt: now - 2 * day
+				}
+			],
+			invites: [],
+			updatedAt: now - 2 * day
 		});
 		const summary = buildWorkspaceActivitySummary([project], now);
 		expect(summary.events.map((event) => event.kind)).toContain('member_left');
@@ -183,10 +212,15 @@ describe('activity summaries', () => {
 
 	it('deduplicates reconstructed records and clamps pagination after filtering', () => {
 		const task = { id: 'same', title: 'Same', tags: [], createdAt: now - day };
-		const project = makeProject({ kanbanData: [
-			{ id: 'one', title: 'One', tasks: [task] },
-			{ id: 'two', title: 'Two', tasks: [task] }
-		], members: [], invites: [], updatedAt: now - 2 * day });
+		const project = makeProject({
+			kanbanData: [
+				{ id: 'one', title: 'One', tasks: [task] },
+				{ id: 'two', title: 'Two', tasks: [task] }
+			],
+			members: [],
+			invites: [],
+			updatedAt: now - 2 * day
+		});
 		const events = buildWorkspaceActivityEvents([project]);
 		expect(events.filter((event) => event.taskId === 'same')).toHaveLength(1);
 		expect(paginateActivityEvents(events, 99, 2).currentPage).toBe(1);
@@ -195,9 +229,116 @@ describe('activity summaries', () => {
 
 	it('does not manufacture activity from mutable project or task update timestamps', () => {
 		const project = makeProject({
-			kanbanData: [{ id: 'todo', title: 'To Do', tasks: [{ id: 'quiet', title: 'Quiet', tags: [], updatedAt: now }] }],
-			members: [], invites: [], updatedAt: now
+			kanbanData: [
+				{
+					id: 'todo',
+					title: 'To Do',
+					tasks: [{ id: 'quiet', title: 'Quiet', tags: [], updatedAt: now }]
+				}
+			],
+			members: [],
+			invites: [],
+			updatedAt: now
 		});
 		expect(buildWorkspaceActivityEvents([project])).toEqual([]);
+	});
+});
+
+describe('dashboard task statistics', () => {
+	it('includes inactive boards exactly once and counts overdue and local-calendar due dates', () => {
+		const project = makeProject();
+		const board = {
+			projectId: project.id,
+			sharePublic: false,
+			id: 'board-a',
+			name: 'First',
+			position: 0,
+			preferences: {
+				defaultShowCheckbox: true,
+				moveCheckedTasks: true,
+				checkedTaskTargetColumnId: ''
+			},
+			createdAt: now,
+			updatedAt: now,
+			kanbanData: project.kanbanData
+		};
+		project.boards = [
+			board,
+			{
+				...board,
+				id: 'board-b',
+				name: 'Second',
+				position: 1,
+				kanbanData: [
+					{
+						id: 'second-column',
+						title: 'Next',
+						tasks: [
+							{ id: 'overdue', title: 'Overdue', tags: [], countdownAt: now - 1000 },
+							{ id: 'later', title: 'Later today', tags: [], countdownAt: now + 1000 },
+							{ id: 'future', title: 'Tomorrow', tags: [], countdownAt: now + day }
+						]
+					}
+				]
+			}
+		];
+		const summary = buildWorkspaceActivitySummary([project], now);
+		expect(summary).toMatchObject({
+			taskCount: 6,
+			openTaskCount: 5,
+			completedTaskCount: 1,
+			completedLast7d: 1,
+			overdueTaskCount: 1,
+			dueTodayTaskCount: 2
+		});
+		const timed = buildTimedTasks([project]);
+		expect(timed).toHaveLength(3);
+		expect(timed[0]).toMatchObject({ boardId: 'board-b', columnId: 'second-column' });
+		project.activeBoardId = 'board-b';
+		project.kanbanData = project.boards[1].kanbanData;
+		expect(buildWorkspaceActivitySummary([project], now).taskCount).toBe(6);
+	});
+	it('does not invent activity for unknown timestamps, future dates, or reopened tasks', () => {
+		const project = makeProject({ members: [], invites: [] });
+		project.kanbanData = [
+			{
+				id: 'c',
+				title: 'Tasks',
+				tasks: [
+					{ id: 'unknown', title: 'Legacy task', tags: [], createdAt: 0, updatedAt: 0 },
+					{ id: 'reopened', title: 'Reopened', tags: [], checked: false, completedAt: now - 1000 },
+					{ id: 'future', title: 'Future timestamp', tags: [], createdAt: now + day }
+				]
+			}
+		];
+		const summary = buildWorkspaceActivitySummary([project], now);
+		expect(summary).toMatchObject({
+			taskCount: 3,
+			completedTaskCount: 0,
+			completedLast7d: 0,
+			createdLast7d: 0
+		});
+		expect(summary.events).toHaveLength(0);
+	});
+	it('uses midnight for today and deduplicates members across projects', () => {
+		const morning = new Date(2026, 0, 15, 0, 30).getTime();
+		const project = makeProject({
+			members: [],
+			invites: [],
+			kanbanData: [
+				{
+					id: 'c',
+					title: 'Tasks',
+					tasks: [
+						{ id: 'yesterday', title: 'Yesterday', tags: [], createdAt: morning - 60 * 60 * 1000 },
+						{ id: 'today', title: 'Today', tags: [], createdAt: morning - 1000 }
+					]
+				}
+			]
+		});
+		expect(buildWorkspaceActivitySummary([project], morning).activityToday).toBe(1);
+		expect(
+			buildWorkspaceActivitySummary([makeProject(), makeProject({ id: 'second' })], now).memberCount
+		).toBe(1);
 	});
 });

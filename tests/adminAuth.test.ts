@@ -46,6 +46,7 @@ describe('adminAuth helpers', () => {
 			isUserAppAdmin({
 				id: '2',
 				email: 'admin@example.com',
+				verified: true,
 				is_admin: false,
 				disabled: false
 			} as never)

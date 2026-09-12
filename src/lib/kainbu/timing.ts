@@ -1,3 +1,4 @@
+import { projectTaskEntries } from './projectTasks';
 import type { DashboardTimedTask, Project, Task } from '$lib/kainbu/types';
 
 const HOUR_MS = 60 * 60 * 1000;
@@ -25,30 +26,28 @@ export const clearTaskDueAt = (task: Task): Task => ({
 });
 
 export const isTaskActiveForDashboard = (task: Task) =>
-	!task.checked && !task.completedAt && isTaskTimed(task);
+	!task.deletedAt && !task.checked && isTaskTimed(task);
 
 export const buildTimedTasks = (projects: Project[]): DashboardTimedTask[] =>
 	projects
 		.flatMap((project) =>
-			project.kanbanData.flatMap((column) =>
-				column.tasks.flatMap((task) => {
-					if (!isTaskActiveForDashboard(task)) return [];
-					const dueAt = getTaskDueAt(task);
-					if (dueAt === null) return [];
-
-					return [
-						{
-							projectId: project.id,
-							projectName: project.name,
-							accessRole: project.accessRole,
-							columnId: column.id,
-							columnTitle: column.title,
-							task,
-							dueAt
-						}
-					];
-				})
-			)
+			projectTaskEntries(project).flatMap(({ boardId, boardName, column, task }) => {
+				const dueAt = getTaskDueAt(task);
+				if (!isTaskActiveForDashboard(task) || dueAt === null) return [];
+				return [
+					{
+						projectId: project.id,
+						projectName: project.name,
+						accessRole: project.accessRole,
+						boardId,
+						boardName,
+						columnId: column.id,
+						columnTitle: column.title,
+						task,
+						dueAt
+					}
+				];
+			})
 		)
 		.sort((left, right) => left.dueAt - right.dueAt);
 

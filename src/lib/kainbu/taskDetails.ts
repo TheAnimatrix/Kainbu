@@ -1,6 +1,5 @@
 import { pbNoAutoCancel } from '$lib/kainbu/pbRequest';
 import { pocketbase } from '$lib/pocketbaseClient';
-import { createId } from '$lib/kainbu/id';
 import { getProjectPbId } from '$lib/kainbu/pbHelpers';
 import { pbEscapeFilter, projectRelationFilter } from '$lib/kainbu/pbRecords';
 import type { TaskAsset, TaskAssetKind, TaskComment } from '$lib/kainbu/types';
@@ -145,7 +144,8 @@ export const addTaskComment = async (projectId: string, taskId: string, body: st
 
 export const downloadTaskAssetBlob = async (asset: TaskAsset) => {
 	const record = await pocketbase.collection('project_task_assets').getOne(asset.id);
-	const url = pocketbase.files.getURL(record, record.file);
+	const token = await pocketbase.files.getToken();
+	const url = pocketbase.files.getURL(record, record.file, { token });
 	const response = await fetch(url, {
 		headers: {
 			Authorization: pocketbase.authStore.token ? `Bearer ${pocketbase.authStore.token}` : ''

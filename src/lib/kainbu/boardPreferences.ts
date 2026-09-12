@@ -18,16 +18,6 @@ export const mergeBoardPreferences = (
 	const normalizedRemote = normalizeBoardPreferences(remote);
 
 	if (preferLocal) return normalizedLocal;
-	if (boardPreferencesEqual(normalizedLocal, normalizedRemote)) return normalizedRemote;
-
-	// Remote can look newer while still carrying factory defaults if preferences were not stored.
-	if (
-		boardPreferencesEqual(normalizedRemote, DEFAULT_BOARD_PREFERENCES) &&
-		!boardPreferencesEqual(normalizedLocal, DEFAULT_BOARD_PREFERENCES)
-	) {
-		return normalizedLocal;
-	}
-
 	return normalizedRemote;
 };
 

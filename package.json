@@ -30,6 +30,7 @@
 		"format": "prettier --write .",
 		"setup": "node setup.js",
 		"test:deploy": "vitest run tests/deploy.test.ts",
+		"test:pb": "node scripts/test-pocketbase.mjs && node scripts/test-pocketbase.mjs --upgrade",
 		"test:local-docker": "vitest run tests/local-docker.test.ts",
 		"test:admin-docker": "vitest run tests/admin-docker.test.ts",
 		"test:security-p0-docker": "vitest run tests/security-p0-docker.test.ts",

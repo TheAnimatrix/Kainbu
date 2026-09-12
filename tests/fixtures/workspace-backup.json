@@ -1,0 +1,288 @@
+{
+	"version": 2,
+	"projects": [
+		{
+			"id": "legacy-project-0",
+			"name": "Calur",
+			"boards": [
+				{
+					"id": "legacy-board-0-0",
+					"projectId": "legacy-project-0",
+					"name": "Board",
+					"position": 0,
+					"kanbanData": [
+						{
+							"id": "legacy-column-0-0",
+							"title": "Todo",
+							"tasks": [
+								{
+									"id": "legacy-task-0-0",
+									"title": "Example task 0-0",
+									"tags": []
+								}
+							]
+						}
+					]
+				},
+				{
+					"id": "legacy-board-0-1",
+					"projectId": "legacy-project-0",
+					"name": "Board 2",
+					"position": 1,
+					"kanbanData": [
+						{
+							"id": "legacy-column-0-1",
+							"title": "Todo",
+							"tasks": [
+								{
+									"id": "legacy-task-0-1",
+									"title": "Example task 0-1",
+									"tags": []
+								}
+							]
+						}
+					]
+				}
+			],
+			"pages": [
+				{
+					"id": "legacy-page-0",
+					"name": "Notes",
+					"position": 0,
+					"content": "Example note"
+				}
+			]
+		},
+		{
+			"id": "legacy-project-1",
+			"name": "Example 1",
+			"boards": [
+				{
+					"id": "legacy-board-1-0",
+					"projectId": "legacy-project-1",
+					"name": "Board",
+					"position": 0,
+					"kanbanData": [
+						{
+							"id": "legacy-column-1-0",
+							"title": "Todo",
+							"tasks": [
+								{
+									"id": "legacy-task-1-0",
+									"title": "Example task 1-0",
+									"tags": []
+								}
+							]
+						}
+					]
+				}
+			],
+			"pages": [
+				{
+					"id": "legacy-page-1",
+					"name": "Notes",
+					"position": 0,
+					"content": "Example note"
+				}
+			]
+		},
+		{
+			"id": "legacy-project-2",
+			"name": "Example 2",
+			"boards": [
+				{
+					"id": "legacy-board-2-0",
+					"projectId": "legacy-project-2",
+					"name": "Board",
+					"position": 0,
+					"kanbanData": [
+						{
+							"id": "legacy-column-2-0",
+							"title": "Todo",
+							"tasks": [
+								{
+									"id": "legacy-task-2-0",
+									"title": "Example task 2-0",
+									"tags": []
+								}
+							]
+						}
+					]
+				}
+			],
+			"pages": [
+				{
+					"id": "legacy-page-2",
+					"name": "Notes",
+					"position": 0,
+					"content": "Example note"
+				}
+			]
+		},
+		{
+			"id": "legacy-project-3",
+			"name": "Example 3",
+			"boards": [
+				{
+					"id": "legacy-board-3-0",
+					"projectId": "legacy-project-3",
+					"name": "Board",
+					"position": 0,
+					"kanbanData": [
+						{
+							"id": "legacy-column-3-0",
+							"title": "Todo",
+							"tasks": [
+								{
+									"id": "legacy-task-3-0",
+									"title": "Example task 3-0",
+									"tags": []
+								}
+							]
+						}
+					]
+				}
+			],
+			"pages": [
+				{
+					"id": "legacy-page-3",
+					"name": "Notes",
+					"position": 0,
+					"content": "Example note"
+				}
+			]
+		},
+		{
+			"id": "legacy-project-4",
+			"name": "Example 4",
+			"boards": [
+				{
+					"id": "legacy-board-4-0",
+					"projectId": "legacy-project-4",
+					"name": "Board",
+					"position": 0,
+					"kanbanData": [
+						{
+							"id": "legacy-column-4-0",
+							"title": "Todo",
+							"tasks": [
+								{
+									"id": "legacy-task-4-0",
+									"title": "Example task 4-0",
+									"tags": []
+								}
+							]
+						}
+					]
+				}
+			],
+			"pages": [
+				{
+					"id": "legacy-page-4",
+					"name": "Notes",
+					"position": 0,
+					"content": "Example note"
+				}
+			]
+		},
+		{
+			"id": "legacy-project-5",
+			"name": "Example 5",
+			"boards": [
+				{
+					"id": "legacy-board-5-0",
+					"projectId": "legacy-project-5",
+					"name": "Board",
+					"position": 0,
+					"kanbanData": [
+						{
+							"id": "legacy-column-5-0",
+							"title": "Todo",
+							"tasks": [
+								{
+									"id": "legacy-task-5-0",
+									"title": "Example task 5-0",
+									"tags": []
+								}
+							]
+						}
+					]
+				}
+			],
+			"pages": [
+				{
+					"id": "legacy-page-5",
+					"name": "Notes",
+					"position": 0,
+					"content": "Example note"
+				}
+			]
+		},
+		{
+			"id": "legacy-project-6",
+			"name": "Example 6",
+			"boards": [
+				{
+					"id": "legacy-board-6-0",
+					"projectId": "legacy-project-6",
+					"name": "Board",
+					"position": 0,
+					"kanbanData": [
+						{
+							"id": "legacy-column-6-0",
+							"title": "Todo",
+							"tasks": [
+								{
+									"id": "legacy-task-6-0",
+									"title": "Example task 6-0",
+									"tags": []
+								}
+							]
+						}
+					]
+				}
+			],
+			"pages": [
+				{
+					"id": "legacy-page-6",
+					"name": "Notes",
+					"position": 0,
+					"content": "Example note"
+				}
+			]
+		},
+		{
+			"id": "legacy-project-7",
+			"name": "Example 7",
+			"boards": [
+				{
+					"id": "legacy-board-7-0",
+					"projectId": "legacy-project-7",
+					"name": "Board",
+					"position": 0,
+					"kanbanData": [
+						{
+							"id": "legacy-column-7-0",
+							"title": "Todo",
+							"tasks": [
+								{
+									"id": "legacy-task-7-0",
+									"title": "Example task 7-0",
+									"tags": []
+								}
+							]
+						}
+					]
+				}
+			],
+			"pages": [
+				{
+					"id": "legacy-page-7",
+					"name": "Notes",
+					"position": 0,
+					"content": "Example note"
+				}
+			]
+		}
+	]
+}

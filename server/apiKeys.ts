@@ -31,8 +31,7 @@ export const generateApiToken = (): { raw: string; prefix: string; hash: string 
 };
 
 /** sha-256 of a raw token, hex-encoded. Deterministic and cheap to index. */
-export const hashApiToken = (raw: string) =>
-	createHash('sha256').update(raw, 'utf8').digest('hex');
+export const hashApiToken = (raw: string) => createHash('sha256').update(raw, 'utf8').digest('hex');
 
 /**
  * Constant-time compare of two hex digests of the same length. Returns false
@@ -92,6 +91,12 @@ export const resolveApiKeyUser = async (
 		if (Number.isFinite(expires) && expires < Date.now()) return null;
 	}
 
+	const userValue = record.user;
+	const userId = typeof userValue === 'string' ? userValue : '';
+	if (!userId) return null;
+	const user = await pb.collection('users').getOne(userId, { fields: 'id,disabled' });
+	if (user.disabled === true) return null;
+
 	if (options.touchLastUsed) {
 		// Best-effort. Don't block the request on a failed update.
 		void pb
@@ -101,10 +106,6 @@ export const resolveApiKeyUser = async (
 				// ignore — last_used_at is observability, not security
 			});
 	}
-
-	const userValue = record.user;
-	const userId = typeof userValue === 'string' ? userValue : '';
-	if (!userId) return null;
 
 	return {
 		userId,

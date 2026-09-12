@@ -17,7 +17,7 @@ cp .env.example .env
 docker compose -f docker-compose.yml -f docker-compose.local.yml up --build
 ```
 
-3. Open the app at [http://localhost:3000](http://localhost:3000). PocketBase admin: [http://localhost:8090/_/](http://localhost:8090/_/) (or [http://localhost:3000/pb/_/](http://localhost:3000/pb/_/) via nginx).
+3. Open the app at [http://localhost:3000](http://localhost:3000). PocketBase admin: [http://localhost:8090/\_/](http://localhost:8090/_/) (or [http://localhost:3000/pb/\_/](http://localhost:3000/pb/_/) via nginx).
 
 4. Verify signup, username, board create, API auth, and admin panel:
 
@@ -26,7 +26,9 @@ npm run test:local-docker
 npm run test:admin-docker
 ```
 
-Set `KAINBU_ADMIN_EMAILS` in `.env` (default in compose: `admin-e2e@kainbu.test`). Sign in with that email, then open [http://localhost:3000/admin](http://localhost:3000/admin) or use **Settings → Open admin**.
+Set `KAINBU_ADMIN_EMAILS` in `.env` (default in compose: `admin-e2e@kainbu.test`). Verify that email through the verification link before signing in, then open [http://localhost:3000/admin](http://localhost:3000/admin) or use **Settings → Open admin**.
+
+If email delivery is disabled, a PocketBase superuser must verify the administrator account or explicitly set its `is_admin` flag. Public signup never verifies email ownership.
 
 Fresh database (wipes data): `docker compose -f docker-compose.yml -f docker-compose.local.yml down -v` then `up --build` again.
 
@@ -36,21 +38,21 @@ Fresh database (wipes data): `docker compose -f docker-compose.yml -f docker-com
 
 **PocketBase URLs in Docker**
 
-| Consumer | URL | Why |
-|----------|-----|-----|
-| Browser (app) | same origin `/pb` | nginx proxies to the `pocketbase` container; no public PB hostname required |
-| `api` service | `http://pocketbase:8090` | Docker network DNS between containers |
-| Optional override | `VITE_POCKETBASE_URL` | Separate PocketBase host (e.g. `https://pb.example.com`) |
+| Consumer          | URL                      | Why                                                                         |
+| ----------------- | ------------------------ | --------------------------------------------------------------------------- |
+| Browser (app)     | same origin `/pb`        | nginx proxies to the `pocketbase` container; no public PB hostname required |
+| `api` service     | `http://pocketbase:8090` | Docker network DNS between containers                                       |
+| Optional override | `VITE_POCKETBASE_URL`    | Separate PocketBase host (e.g. `https://pb.example.com`)                    |
 
 Set `KAINBU_PUBLIC_URL` to your public app URL (for CLI device login). Leave `VITE_POCKETBASE_URL` unset on Dokploy unless PocketBase is on another domain.
 
 Services:
 
-| Service | Port | Role |
-|---------|------|------|
-| `web` | 3000 | Static UI (nginx) |
-| `api` | 8789 (host, local override) / 8788 (in Docker network) | Hono API (AI, workspace mutations, CLI auth) |
-| `pocketbase` | 8090 | Auth, database, file storage, realtime |
+| Service      | Port                                                   | Role                                         |
+| ------------ | ------------------------------------------------------ | -------------------------------------------- |
+| `web`        | 3000                                                   | Static UI (nginx)                            |
+| `api`        | 8789 (host, local override) / 8788 (in Docker network) | Hono API (AI, workspace mutations, CLI auth) |
+| `pocketbase` | 8090                                                   | Auth, database, file storage, realtime       |
 
 Schema is applied from [`pocketbase/pb_migrations/`](pocketbase/pb_migrations/) on PocketBase startup.
 
@@ -65,6 +67,21 @@ npm run dev:full
 ```
 
 Web: [http://localhost:3001](http://localhost:3001) (Vite proxies `/api` to port 8788).
+
+### Regression checks
+
+Use Node 22. The database regression suite downloads the pinned PocketBase binary into a temporary cache and tests disposable fresh and upgraded databases:
+
+```bash
+npm run check
+npm run check:server
+npm run test:pb
+node scripts/test-pocketbase.mjs --stack
+```
+
+`--stack` runs the HTTP suites with native PocketBase, Hono, and Vite proxies when Docker is unavailable; it does not test the Docker images or nginx configuration. `--serve` starts a disposable browser fixture and prints its local URL and synthetic login. Set `KAINBU_TEST_PB_BIN` to use an existing PocketBase 0.38.2 binary.
+
+See [the review and remediation notes](docs/review-2026-09-12.md) for the security changes, dashboard definitions, and remaining architectural work.
 
 ## CLI
 
@@ -101,15 +118,15 @@ scratchpad, filtering, and pagination).
 
 ## Environment variables
 
-| Variable | Purpose |
-|----------|---------|
-| `VITE_POCKETBASE_URL` | Optional browser PocketBase URL (Docker default: same-origin `/pb`) |
-| `POCKETBASE_URL` | Server PocketBase URL (`http://pocketbase:8090` in compose) |
-| `POCKETBASE_ADMIN_EMAIL` / `POCKETBASE_ADMIN_PASSWORD` | API admin access to PocketBase |
-| `OPENROUTER_API_KEY` | Workspace AI routes (fallback if not set in admin UI) |
-| `KAINBU_ADMIN_EMAILS` | Comma-separated emails with in-app admin access (`/admin`) |
-| `KAINBU_PUBLIC_URL` | CLI device-login links |
-| `KAINBU_API_KEY` | One-shot CLI API key (overrides saved profile) |
+| Variable                                               | Purpose                                                             |
+| ------------------------------------------------------ | ------------------------------------------------------------------- |
+| `VITE_POCKETBASE_URL`                                  | Optional browser PocketBase URL (Docker default: same-origin `/pb`) |
+| `POCKETBASE_URL`                                       | Server PocketBase URL (`http://pocketbase:8090` in compose)         |
+| `POCKETBASE_ADMIN_EMAIL` / `POCKETBASE_ADMIN_PASSWORD` | API admin access to PocketBase                                      |
+| `OPENROUTER_API_KEY`                                   | Workspace AI routes (fallback if not set in admin UI)               |
+| `KAINBU_ADMIN_EMAILS`                                  | Comma-separated emails with in-app admin access (`/admin`)          |
+| `KAINBU_PUBLIC_URL`                                    | CLI device-login links                                              |
+| `KAINBU_API_KEY`                                       | One-shot CLI API key (overrides saved profile)                      |
 
 ## Android (optional)
 

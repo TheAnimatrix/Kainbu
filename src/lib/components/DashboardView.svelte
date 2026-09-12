@@ -22,7 +22,6 @@
 		getActivityWindowStart,
 		getDailyActivity,
 		paginateActivityEvents,
-		summarizeActivityDelta,
 		type WorkspaceActivityEvent,
 		type WorkspaceActivityGroup
 	} from '$lib/kainbu/activity';
@@ -39,6 +38,7 @@
 	export let timedTasks: DashboardTimedTask[] = [];
 	export let onCreateProject: () => void;
 	export let onOpenProject: (projectId: string) => void;
+	export let onOpenBoard: (projectId: string, boardId: string) => void = (id) => onOpenProject(id);
 	export let onInvite: (projectId: string, email: string) => void;
 	export let onAcceptInvite: (inviteId: string) => void;
 	export let onRejectInvite: (inviteId: string) => void;
@@ -48,7 +48,12 @@
 	export let onRenameProject: (projectId: string, newName: string) => void;
 	export let onDeleteProject: (projectId: string) => void;
 	export let onToggleProjectPin: (projectId: string, pinned: boolean) => void;
-	export let onClearTimedTaskDue: (projectId: string, columnId: string, taskId: string) => void;
+	export let onClearTimedTaskDue: (
+		projectId: string,
+		columnId: string,
+		taskId: string,
+		boardId?: string
+	) => void;
 
 	let shortcutsOpen = false;
 	let inviteDrafts: Record<string, string> = {};
@@ -94,6 +99,7 @@
 	onMount(() => {
 		tickInterval = setInterval(() => {
 			tickNow = Date.now();
+			if (Math.floor(tickNow / 60000) !== Math.floor(summaryNow / 60000)) summaryNow = tickNow;
 		}, 1000);
 	});
 
@@ -136,7 +142,8 @@
 		};
 	};
 
-	const memberLabel = (project: Project) => `${project.members.filter(m => !m.leftAt).length} people`;
+	const memberLabel = (project: Project) =>
+		`${project.members.filter((m) => !m.leftAt).length} people`;
 	const getMemberName = (member: Project['members'][number]) => getProjectMemberDisplayName(member);
 	const formatActivityTime = (timestamp: number) =>
 		new Date(timestamp).toLocaleString(undefined, {
@@ -145,12 +152,6 @@
 			hour: '2-digit',
 			minute: '2-digit'
 		});
-	const formatDeltaTone = (delta: number) =>
-		delta > 0
-			? 'text-emerald-600 dark:text-emerald-400'
-			: delta < 0
-				? 'text-amber-600 dark:text-amber-400'
-				: 'text-app-subtext';
 	const isPinned = (project: Project) => Boolean(project.viewerPinnedAt);
 	const projectCardClass = (project: Project, pinnedHighlight = false) => {
 		const classes = ['kainbu-board-card'];
@@ -173,17 +174,23 @@
 	$: sharedProjects = projects
 		.filter((project) => project.accessRole === 'member' && !isPinned(project))
 		.sort(compareByPinThenName);
-	// Activity is a snapshot of the latest workspace state. Recompute its reference
-	// time only when the input projects change; a wall-clock tick must not fabricate
-	// activity or reorder the history underneath the user.
+	// Refresh date windows each minute and when workspace records change.
+	// Events still come only from persisted action timestamps.
 	$: if (projects) summaryNow = Date.now();
 	$: activitySummary = buildWorkspaceActivitySummary(projects, summaryNow);
-	$: activityWindowStart = getActivityWindowStart(activityTimeWindow as '7d' | '30d' | 'all', summaryNow);
+	$: activityWindowStart = getActivityWindowStart(
+		activityTimeWindow as '7d' | '30d' | 'all',
+		summaryNow
+	);
 	$: groupedWorkspaceActivity = (() => {
-		const filtered = activitySummary.events.filter((event) =>
-			(!activityProjectFilter || activityProjectFilter === 'all' || event.projectId === activityProjectFilter) &&
-			(activityFilter === 'all' || event.group === activityFilter) &&
-			event.timestamp >= activityWindowStart && event.timestamp <= summaryNow
+		const filtered = activitySummary.events.filter(
+			(event) =>
+				(!activityProjectFilter ||
+					activityProjectFilter === 'all' ||
+					event.projectId === activityProjectFilter) &&
+				(activityFilter === 'all' || event.group === activityFilter) &&
+				event.timestamp >= activityWindowStart &&
+				event.timestamp <= summaryNow
 		);
 		const groups = new Map<string, { projectName: string; events: WorkspaceActivityEvent[] }>();
 		for (const event of filtered) {
@@ -198,7 +205,11 @@
 			}
 		}
 		return Array.from(groups.entries()).map(([projectId, group]) => {
-			const page = paginateActivityEvents(group.events, activityPages[projectId] ?? 1, activityPageSize);
+			const page = paginateActivityEvents(
+				group.events,
+				activityPages[projectId] ?? 1,
+				activityPageSize
+			);
 			return {
 				projectId,
 				projectName: group.projectName,
@@ -209,655 +220,509 @@
 			};
 		});
 	})();
-$: workspaceFlatActivity = (() => {
+	$: workspaceFlatActivity = (() => {
 		if (activityProjectFilter !== 'all') return null;
-		const filtered = activitySummary.events.filter((event) =>
-			(activityFilter === 'all' || event.group === activityFilter) &&
-			event.timestamp >= activityWindowStart && event.timestamp <= summaryNow
+		const filtered = activitySummary.events.filter(
+			(event) =>
+				(activityFilter === 'all' || event.group === activityFilter) &&
+				event.timestamp >= activityWindowStart &&
+				event.timestamp <= summaryNow
 		);
 		const page = paginateActivityEvents(filtered, workspaceActivityPage, activityPageSize);
-		return { events: page.items, totalCount: page.totalCount, totalPages: page.totalPages, currentPage: page.currentPage };
+		return {
+			events: page.items,
+			totalCount: page.totalCount,
+			totalPages: page.totalPages,
+			currentPage: page.currentPage
+		};
 	})();
 	$: dailyActivity = getDailyActivity(activitySummary.events, summaryNow, 6);
-
 </script>
 
-	<section
-		class="kainbu-dashboard absolute inset-0 overflow-x-hidden overflow-y-auto px-3 py-4 sm:px-5 sm:py-5 lg:px-7 lg:py-6"
-	>
-		<div class="mx-auto flex min-w-0 max-w-6xl flex-col gap-7">
-			<header class="kainbu-dashboard__header flex flex-wrap items-end justify-between gap-4">
-				<div class="min-w-0 max-w-xl">
-					<p class="kainbu-dashboard__kicker">It's BU, Kainbu</p>
-					<h2 class="kainbu-dashboard__title mt-1 text-app-text">Dashboard</h2>
-					<dl class="kainbu-dashboard__stats mt-3">
-						<div class="kainbu-dashboard__stat">
-							<dt class="sr-only">Boards</dt>
-							<dd>
-								<span class="kainbu-dashboard__stat-value">{projects.length}</span>
-								boards
-							</dd>
-						</div>
-						<div class="kainbu-dashboard__stat">
-							<dt class="sr-only">Pinned</dt>
-							<dd>
-								<span class="kainbu-dashboard__stat-value">{pinnedProjects.length}</span>
-								pinned
-							</dd>
-						</div>
-						<div class="kainbu-dashboard__stat">
-							<dt class="sr-only">Shared</dt>
-							<dd>
-								<span class="kainbu-dashboard__stat-value">{sharedProjects.length}</span>
-								shared
-							</dd>
-						</div>
-						<div class="kainbu-dashboard__stat">
-							<dt class="sr-only">Open tasks</dt>
-							<dd>
-								<span class="kainbu-dashboard__stat-value">{activitySummary.openTaskCount}</span>
-								open
-							</dd>
-						</div>
-						<div class="kainbu-dashboard__stat">
-							<dt class="sr-only">Completed this week</dt>
-							<dd>
-								<span class="kainbu-dashboard__stat-value">{activitySummary.completedLast7d}</span>
-								done this week
-							</dd>
-						</div>
-					</dl>
-				</div>
-				<div class="flex w-full flex-wrap gap-2 sm:w-auto">
+<section
+	class="kainbu-dashboard absolute inset-0 overflow-x-hidden overflow-y-auto px-3 py-4 sm:px-5 sm:py-5 lg:px-7 lg:py-6"
+>
+	<div class="mx-auto flex min-w-0 max-w-6xl flex-col gap-7">
+		<header class="kainbu-dashboard__header flex flex-wrap items-end justify-between gap-4">
+			<div class="min-w-0 max-w-xl">
+				<p class="kainbu-dashboard__kicker">It's BU, Kainbu</p>
+				<h2 class="kainbu-dashboard__title mt-1 text-app-text">Dashboard</h2>
+				<dl class="kainbu-dashboard__stats mt-3">
+					<div class="kainbu-dashboard__stat">
+						<dt class="sr-only">Projects</dt>
+						<dd>
+							<span class="kainbu-dashboard__stat-value">{projects.length}</span>
+							projects
+						</dd>
+					</div>
+					<div class="kainbu-dashboard__stat">
+						<dt class="sr-only">Pinned</dt>
+						<dd>
+							<span class="kainbu-dashboard__stat-value">{pinnedProjects.length}</span>
+							pinned
+						</dd>
+					</div>
+					<div class="kainbu-dashboard__stat">
+						<dt class="sr-only">Shared</dt>
+						<dd>
+							<span class="kainbu-dashboard__stat-value"
+								>{projects.filter((project) => project.accessRole === 'member').length}</span
+							>
+							shared
+						</dd>
+					</div>
+					<div class="kainbu-dashboard__stat">
+						<dt class="sr-only">Open tasks</dt>
+						<dd>
+							<span class="kainbu-dashboard__stat-value">{activitySummary.openTaskCount}</span>
+							open
+						</dd>
+					</div>
+					<div class="kainbu-dashboard__stat">
+						<dt class="sr-only">Completed in the last 7 days</dt>
+						<dd>
+							<span class="kainbu-dashboard__stat-value">{activitySummary.completedLast7d}</span>
+							done in 7 days
+						</dd>
+					</div>
+				</dl>
+			</div>
+			<div class="flex w-full flex-wrap gap-2 sm:w-auto">
+				<button
+					type="button"
+					class="kainbu-btn kainbu-btn--primary inline-flex flex-1 items-center justify-center gap-1.5 sm:flex-none"
+					on:click={onCreateProject}
+				>
+					<FolderPlus size={14} />
+					New project
+				</button>
+				{#if currentProjectId}
 					<button
 						type="button"
-						class="kainbu-btn kainbu-btn--primary inline-flex flex-1 items-center justify-center gap-1.5 sm:flex-none"
-						on:click={onCreateProject}
+						class="kainbu-btn kainbu-btn--ghost inline-flex flex-1 items-center justify-center gap-1.5 sm:flex-none"
+						on:click={() => onOpenProject(currentProjectId)}
 					>
-						<FolderPlus size={14} />
-						New board
+						Current project
+						<ArrowRight size={14} />
 					</button>
-					{#if currentProjectId}
-						<button
-							type="button"
-							class="kainbu-btn kainbu-btn--ghost inline-flex flex-1 items-center justify-center gap-1.5 sm:flex-none"
-							on:click={() => onOpenProject(currentProjectId)}
-						>
-							Current board
-							<ArrowRight size={14} />
-						</button>
-					{/if}
-					<button
-						type="button"
-						class="kainbu-shortcuts-btn"
-						on:click={() => (shortcutsOpen = !shortcutsOpen)}
-						aria-label="Keyboard shortcuts and tips"
-						title="Shortcuts & tips"
-					>
-						<KeyRound size={14} />
-					</button>
-				</div>
-			</header>
+				{/if}
+				<button
+					type="button"
+					class="kainbu-shortcuts-btn"
+					on:click={() => (shortcutsOpen = !shortcutsOpen)}
+					aria-label="Keyboard shortcuts and tips"
+					title="Shortcuts & tips"
+				>
+					<KeyRound size={14} />
+				</button>
+			</div>
+		</header>
 
-			{#if incomingInvites.length}
-				<div class="kainbu-dashboard__invites">
-					<h3 class="kainbu-dashboard__section-label">
-						Incoming invites
-						<span class="kainbu-dashboard__section-count">{incomingInvites.length}</span>
-					</h3>
-					<div class="mt-2.5 flex flex-wrap gap-2">
-						{#each incomingInvites as invite (invite.id)}
-							<div class="kainbu-invite-chip">
-								<Mail size={13} class="shrink-0 text-app-primary" />
-								<div class="min-w-0 flex-1">
-									<p class="truncate text-sm font-medium text-app-text">
-										{invite.projectName || 'Shared board'}
-									</p>
-									<p class="truncate text-xs text-app-subtext">{invite.inviteeEmail}</p>
-								</div>
-								<button
-									type="button"
-									class="kainbu-btn kainbu-btn--primary kainbu-btn--compact px-2 py-1"
-									on:click={() => onAcceptInvite(invite.id)}
-									aria-label="Accept invite"
-								>
-									<Check size={12} />
-								</button>
-								<button
-									type="button"
-									class="kainbu-btn kainbu-btn--ghost kainbu-btn--compact px-2 py-1 text-app-subtext"
-									on:click={() => onRejectInvite(invite.id)}
-									aria-label="Decline invite"
-								>
-									<X size={12} />
-								</button>
+		{#if incomingInvites.length}
+			<div class="kainbu-dashboard__invites">
+				<h3 class="kainbu-dashboard__section-label">
+					Incoming invites
+					<span class="kainbu-dashboard__section-count">{incomingInvites.length}</span>
+				</h3>
+				<div class="mt-2.5 flex flex-wrap gap-2">
+					{#each incomingInvites as invite (invite.id)}
+						<div class="kainbu-invite-chip">
+							<Mail size={13} class="shrink-0 text-app-primary" />
+							<div class="min-w-0 flex-1">
+								<p class="truncate text-sm font-medium text-app-text">
+									{invite.projectName || 'Shared board'}
+								</p>
+								<p class="truncate text-xs text-app-subtext">{invite.inviteeEmail}</p>
 							</div>
+							<button
+								type="button"
+								class="kainbu-btn kainbu-btn--primary kainbu-btn--compact px-2 py-1"
+								on:click={() => onAcceptInvite(invite.id)}
+								aria-label="Accept invite"
+							>
+								<Check size={12} />
+							</button>
+							<button
+								type="button"
+								class="kainbu-btn kainbu-btn--ghost kainbu-btn--compact px-2 py-1 text-app-subtext"
+								on:click={() => onRejectInvite(invite.id)}
+								aria-label="Decline invite"
+							>
+								<X size={12} />
+							</button>
+						</div>
+					{/each}
+				</div>
+			</div>
+		{/if}
+
+		<div class="flex flex-col gap-7">
+			<section class="kainbu-dashboard__insights">
+				<div class="kainbu-insight">
+					<p class="kainbu-insight__label">Open tasks</p>
+					<p class="kainbu-insight__value">{activitySummary.openTaskCount}</p>
+					<p class="kainbu-insight__meta">across all boards</p>
+				</div>
+				<div class="kainbu-insight">
+					<p class="kainbu-insight__label">Overdue</p>
+					<p class="kainbu-insight__value">{activitySummary.overdueTaskCount}</p>
+					<p class="kainbu-insight__meta">open tasks past their due date</p>
+				</div>
+				<div class="kainbu-insight">
+					<p class="kainbu-insight__label">Due today</p>
+					<p class="kainbu-insight__value">{activitySummary.dueTodayTaskCount}</p>
+					<p class="kainbu-insight__meta">open tasks due today, including overdue</p>
+				</div>
+				<div class="kainbu-insight">
+					<p class="kainbu-insight__label">Completed · 7 days</p>
+					<p class="kainbu-insight__value">{activitySummary.completedLast7d}</p>
+					<p class="kainbu-insight__meta">
+						{activitySummary.completedTaskCount} completed in total
+					</p>
+				</div>
+			</section>
+
+			<section class="kainbu-dashboard__activity-band">
+				<div class="min-w-0">
+					<h3 class="kainbu-dashboard__section-label">
+						Daily activity
+						<span class="kainbu-dashboard__section-count">{activitySummary.activityToday}</span>
+					</h3>
+					<p class="mt-1 text-xs text-app-subtext">
+						Latest recorded task and people events from today.
+					</p>
+				</div>
+				{#if dailyActivity.length}
+					<div class="kainbu-activity-strip kainbu-scrollbar-hidden">
+						{#each dailyActivity as event (event.id)}
+							<button
+								type="button"
+								class="kainbu-activity-pill"
+								on:click={() =>
+									event.boardId
+										? onOpenBoard(event.projectId, event.boardId)
+										: onOpenProject(event.projectId)}
+							>
+								<span class="kainbu-activity-pill__kind">{event.title}</span>
+								<span class="truncate">{event.detail}</span>
+								<span class="kainbu-activity-pill__time">{formatActivityTime(event.timestamp)}</span
+								>
+							</button>
 						{/each}
 					</div>
-				</div>
-			{/if}
+				{:else}
+					<p class="text-sm text-app-subtext">No fresh activity yet today.</p>
+				{/if}
+			</section>
 
-			<div class="flex flex-col gap-7">
-				<section class="kainbu-dashboard__insights">
-					<div class="kainbu-insight">
-						<p class="kainbu-insight__label">Today</p>
-						<p class="kainbu-insight__value">{activitySummary.activityToday}</p>
-						<p class="kainbu-insight__meta">workspace actions</p>
-					</div>
-					<div class="kainbu-insight">
-						<p class="kainbu-insight__label">This week</p>
-						<p class="kainbu-insight__value">{activitySummary.activityLast7d}</p>
-						<p class={`kainbu-insight__meta ${formatDeltaTone(activitySummary.activityDelta)}`}>
-							{summarizeActivityDelta(activitySummary.activityDelta)}
-						</p>
-					</div>
-					<div class="kainbu-insight">
-						<p class="kainbu-insight__label">Created</p>
-						<p class="kainbu-insight__value">{activitySummary.createdLast7d}</p>
-						<p class="kainbu-insight__meta">new tasks this week</p>
-					</div>
-					<div class="kainbu-insight">
-						<p class="kainbu-insight__label">Completed</p>
-						<p class="kainbu-insight__value">{activitySummary.completedLast7d}</p>
-						<p class="kainbu-insight__meta">{activitySummary.completedTaskCount} total</p>
-					</div>
-				</section>
-
-				<section class="kainbu-dashboard__activity-band">
-					<div class="min-w-0">
-						<h3 class="kainbu-dashboard__section-label">
-							Daily activity
-							<span class="kainbu-dashboard__section-count">{dailyActivity.length}</span>
-						</h3>
-						<p class="mt-1 text-xs text-app-subtext">Human workspace events from today (local calendar day).</p>
-					</div>
-					{#if dailyActivity.length}
-						<div class="kainbu-activity-strip kainbu-scrollbar-hidden">
-							{#each dailyActivity as event (event.id)}
-								<button
-									type="button"
-									class="kainbu-activity-pill"
-									on:click={() => onOpenProject(event.projectId)}
+			{#if activityProjectFilter !== 'all' && groupedWorkspaceActivity.length}
+				<section class="kainbu-dashboard__activity-log">
+					<div class="flex flex-wrap items-start justify-between gap-3">
+						<div>
+							<h3 class="kainbu-dashboard__section-label">
+								Workspace activity
+								<span class="kainbu-dashboard__section-count"
+									>{groupedWorkspaceActivity.reduce((n, g) => n + g.totalCount, 0)}</span
 								>
-									<span class="kainbu-activity-pill__kind">{event.title}</span>
-									<span class="truncate">{event.detail}</span>
-									<span class="kainbu-activity-pill__time">{formatActivityTime(event.timestamp)}</span>
-								</button>
-							{/each}
+							</h3>
+							<p class="mt-1 text-xs text-app-subtext">
+								Recorded task and people events for the selected project.
+							</p>
 						</div>
-					{:else}
-						<p class="text-sm text-app-subtext">No fresh activity yet today.</p>
-					{/if}
-				</section>
-
-				{#if activityProjectFilter !== 'all' && groupedWorkspaceActivity.length}
-					<section class="kainbu-dashboard__activity-log">
-						<div class="flex flex-wrap items-start justify-between gap-3">
+						<div class="flex flex-wrap items-center gap-2">
+							<select
+								class="kainbu-activity-filter__button text-xs"
+								bind:value={activityProjectFilter}
+								aria-label="Project filter"
+							>
+								<option value="all">All projects</option>
+								{#each projects as project (project.id)}
+									<option value={project.id}>{project.name}</option>
+								{/each}
+							</select>
+							<div class="kainbu-activity-filter" aria-label="Time window">
+								{#each ['7d', '30d', 'all'] as window}
+									<button
+										type="button"
+										class:kainbu-activity-filter__button--active={activityTimeWindow === window}
+										class="kainbu-activity-filter__button"
+										on:click={() => (activityTimeWindow = window)}
+									>
+										{window}
+									</button>
+								{/each}
+							</div>
+							<div class="kainbu-activity-filter" aria-label="Activity filter">
+								{#each ['all', 'task', 'people'] as filter}
+									<button
+										type="button"
+										class:kainbu-activity-filter__button--active={activityFilter === filter}
+										class="kainbu-activity-filter__button"
+										on:click={() => (activityFilter = filter as WorkspaceActivityGroup | 'all')}
+									>
+										{filter}
+									</button>
+								{/each}
+							</div>
+						</div>
+					</div>
+					<div class="mt-3 space-y-4">
+						{#each groupedWorkspaceActivity as group (group.projectId)}
 							<div>
-								<h3 class="kainbu-dashboard__section-label">
-									Workspace activity
-									<span class="kainbu-dashboard__section-count">{groupedWorkspaceActivity.reduce((n, g) => n + g.totalCount, 0)}</span>
-								</h3>
-								<p class="mt-1 text-xs text-app-subtext">Chronological human events for the selected board.</p>
-							</div>
-							<div class="flex flex-wrap items-center gap-2">
-								<select
-									class="kainbu-activity-filter__button text-xs"
-									bind:value={activityProjectFilter}
-									aria-label="Project filter"
-								>
-									<option value="all">All projects</option>
-									{#each projects as project (project.id)}
-										<option value={project.id}>{project.name}</option>
-									{/each}
-								</select>
-								<div class="kainbu-activity-filter" aria-label="Time window">
-									{#each ['7d', '30d', 'all'] as window}
-										<button
-											type="button"
-											class:kainbu-activity-filter__button--active={activityTimeWindow === window}
-											class="kainbu-activity-filter__button"
-											on:click={() => (activityTimeWindow = window)}
-										>
-											{window}
-										</button>
-									{/each}
+								<div class="kainbu-activity-project-header">
+									<span class="kainbu-activity-row__dot" data-group="project"></span>
+									<button
+										type="button"
+										class="text-base font-bold text-app-text transition hover:text-app-primary"
+										on:click={() => onOpenProject(group.projectId)}
+									>
+										{group.projectName}
+									</button>
+									<span class="text-xs text-app-subtext">{group.totalCount}</span>
 								</div>
-								<div class="kainbu-activity-filter" aria-label="Activity filter">
-									{#each ['all', 'task', 'people'] as filter}
+								<div class="divide-y divide-app-border/50">
+									{#each group.visibleEvents as event (event.id)}
 										<button
 											type="button"
-											class:kainbu-activity-filter__button--active={activityFilter === filter}
-											class="kainbu-activity-filter__button"
-											on:click={() => (activityFilter = filter as WorkspaceActivityGroup | 'all')}
+											class="kainbu-activity-row"
+											on:click={() =>
+												event.boardId
+													? onOpenBoard(event.projectId, event.boardId)
+													: onOpenProject(event.projectId)}
 										>
-											{filter}
-										</button>
-									{/each}
-								</div>
-							</div>
-						</div>
-						<div class="mt-3 space-y-4">
-							{#each groupedWorkspaceActivity as group (group.projectId)}
-								<div>
-									<div class="kainbu-activity-project-header">
-										<span class="kainbu-activity-row__dot" data-group="project"></span>
-										<button
-											type="button"
-											class="text-base font-bold text-app-text transition hover:text-app-primary"
-											on:click={() => onOpenProject(group.projectId)}
-										>
-											{group.projectName}
-										</button>
-										<span class="text-xs text-app-subtext">{group.totalCount}</span>
-									</div>
-									<div class="divide-y divide-app-border/50">
-										{#each group.visibleEvents as event (event.id)}
-											<button
-												type="button"
-												class="kainbu-activity-row"
-												on:click={() => onOpenProject(event.projectId)}
+											<span class="kainbu-activity-row__dot" data-group={event.group}></span>
+											<span class="min-w-0 flex-1">
+												<span class="block truncate text-sm font-medium text-app-text"
+													>{event.title}</span
+												>
+												<span class="block truncate text-xs text-app-subtext">{event.detail}</span>
+											</span>
+											<span class="shrink-0 text-[11px] text-app-subtext"
+												>{formatActivityTime(event.timestamp)}</span
 											>
-												<span class="kainbu-activity-row__dot" data-group={event.group}></span>
-												<span class="min-w-0 flex-1">
-													<span class="block truncate text-sm font-medium text-app-text">{event.title}</span>
-													<span class="block truncate text-xs text-app-subtext">{event.detail}</span>
-												</span>
-												<span class="shrink-0 text-[11px] text-app-subtext">{formatActivityTime(event.timestamp)}</span>
-											</button>
-										{/each}
-									</div>
-									{#if group.totalPages > 1}
-										<div class="mt-2 flex items-center justify-center gap-1 w-full">
-											<button
-												type="button"
-												class="kainbu-activity-filter__button text-xs"
-												disabled={group.currentPage <= 1}
-												on:click={() => { activityPages = { ...activityPages, [group.projectId]: group.currentPage - 1 }; }}
-											>
-												←
-											</button>
-											{#each pageButtons(group.currentPage, group.totalPages) as btn}
-												{#if btn === '...'}
-													<span class="px-1 text-xs text-app-subtext">…</span>
-												{:else}
-													<button
-														type="button"
-														class="kainbu-activity-filter__button text-xs"
-														class:kainbu-activity-filter__button--active={group.currentPage === btn}
-														on:click={() => { activityPages = { ...activityPages, [group.projectId]: btn }; }}
-													>
-														{btn}
-													</button>
-												{/if}
-											{/each}
-											<button
-												type="button"
-												class="kainbu-activity-filter__button text-xs"
-												disabled={group.currentPage >= group.totalPages}
-												on:click={() => { activityPages = { ...activityPages, [group.projectId]: group.currentPage + 1 }; }}
-											>
-												→
-											</button>
-										</div>
-									{/if}
-								</div>
-							{/each}
-						</div>
-					</section>
-				{:else if workspaceFlatActivity && workspaceFlatActivity.totalCount > 0}
-					<section class="kainbu-dashboard__activity-log">
-						<div class="flex flex-wrap items-start justify-between gap-3">
-							<div>
-								<h3 class="kainbu-dashboard__section-label">
-									Workspace activity
-									<span class="kainbu-dashboard__section-count">{workspaceFlatActivity.totalCount}</span>
-								</h3>
-								<p class="mt-1 text-xs text-app-subtext">Chronological human events across your boards.</p>
-							</div>
-							<div class="flex flex-wrap items-center gap-2">
-								<select
-									class="kainbu-activity-filter__button text-xs"
-									bind:value={activityProjectFilter}
-									aria-label="Project filter"
-								>
-									<option value="all">All projects</option>
-									{#each projects as project (project.id)}
-										<option value={project.id}>{project.name}</option>
-									{/each}
-								</select>
-								<div class="kainbu-activity-filter" aria-label="Time window">
-									{#each ['7d', '30d', 'all'] as window}
-										<button
-											type="button"
-											class:kainbu-activity-filter__button--active={activityTimeWindow === window}
-											class="kainbu-activity-filter__button"
-											on:click={() => (activityTimeWindow = window)}
-										>
-											{window}
 										</button>
 									{/each}
 								</div>
-								<div class="kainbu-activity-filter" aria-label="Activity filter">
-									{#each ['all', 'task', 'people'] as filter}
-										<button
-											type="button"
-											class:kainbu-activity-filter__button--active={activityFilter === filter}
-											class="kainbu-activity-filter__button"
-											on:click={() => (activityFilter = filter as WorkspaceActivityGroup | 'all')}
-										>
-											{filter}
-										</button>
-									{/each}
-								</div>
-							</div>
-						</div>
-						<div class="mt-3 divide-y divide-app-border/50">
-							{#each workspaceFlatActivity.events as event (event.id)}
-								<button
-									type="button"
-									class="kainbu-activity-row"
-									on:click={() => onOpenProject(event.projectId)}
-								>
-									<span class="kainbu-activity-row__dot" data-group={event.group}></span>
-									<span class="min-w-0 flex-1">
-										<span class="block truncate text-sm font-medium text-app-text">{event.title}</span>
-										<span class="block truncate text-xs text-app-subtext">{event.projectName} · {event.detail}</span>
-									</span>
-									<span class="shrink-0 text-[11px] text-app-subtext">{formatActivityTime(event.timestamp)}</span>
-								</button>
-							{/each}
-						</div>
-						{#if workspaceFlatActivity.totalPages > 1}
-							<div class="mt-3 flex items-center justify-center gap-1 w-full">
-								<button
-									type="button"
-									class="kainbu-activity-filter__button text-xs"
-									disabled={workspaceFlatActivity.currentPage <= 1}
-									on:click={() => { workspaceActivityPage = workspaceFlatActivity.currentPage - 1; }}
-								>
-									←
-								</button>
-								{#each pageButtons(workspaceFlatActivity.currentPage, workspaceFlatActivity.totalPages) as btn}
-									{#if btn === '...'}
-										<span class="px-1 text-xs text-app-subtext">…</span>
-									{:else}
+								{#if group.totalPages > 1}
+									<div class="mt-2 flex items-center justify-center gap-1 w-full">
 										<button
 											type="button"
 											class="kainbu-activity-filter__button text-xs"
-											class:kainbu-activity-filter__button--active={workspaceFlatActivity.currentPage === btn}
-											on:click={() => { workspaceActivityPage = btn; }}
+											disabled={group.currentPage <= 1}
+											on:click={() => {
+												activityPages = {
+													...activityPages,
+													[group.projectId]: group.currentPage - 1
+												};
+											}}
 										>
-											{btn}
+											←
 										</button>
-									{/if}
-								{/each}
-								<button
-									type="button"
-									class="kainbu-activity-filter__button text-xs"
-									disabled={workspaceFlatActivity.currentPage >= workspaceFlatActivity.totalPages}
-									on:click={() => { workspaceActivityPage = workspaceFlatActivity.currentPage + 1; }}
-								>
-									→
-								</button>
-							</div>
-						{/if}
-					</section>
-				{:else}
-					<section class="kainbu-dashboard__activity-log">
-						<div class="flex flex-wrap items-start justify-between gap-3">
-							<div>
-								<h3 class="kainbu-dashboard__section-label">Workspace activity</h3>
-								<p class="mt-1 text-xs text-app-subtext">Chronological human events across your boards.</p>
-							</div>
-							<div class="flex flex-wrap items-center gap-2">
-								<select
-									class="kainbu-activity-filter__button text-xs"
-									bind:value={activityProjectFilter}
-									aria-label="Project filter"
-								>
-									<option value="all">All projects</option>
-									{#each projects as project (project.id)}
-										<option value={project.id}>{project.name}</option>
-									{/each}
-								</select>
-								<div class="kainbu-activity-filter" aria-label="Time window">
-									{#each ['7d', '30d', 'all'] as window}
+										{#each pageButtons(group.currentPage, group.totalPages) as btn}
+											{#if btn === '...'}
+												<span class="px-1 text-xs text-app-subtext">…</span>
+											{:else}
+												<button
+													type="button"
+													class="kainbu-activity-filter__button text-xs"
+													class:kainbu-activity-filter__button--active={group.currentPage === btn}
+													on:click={() => {
+														activityPages = { ...activityPages, [group.projectId]: btn };
+													}}
+												>
+													{btn}
+												</button>
+											{/if}
+										{/each}
 										<button
 											type="button"
-											class:kainbu-activity-filter__button--active={activityTimeWindow === window}
-											class="kainbu-activity-filter__button"
-											on:click={() => (activityTimeWindow = window)}
+											class="kainbu-activity-filter__button text-xs"
+											disabled={group.currentPage >= group.totalPages}
+											on:click={() => {
+												activityPages = {
+													...activityPages,
+													[group.projectId]: group.currentPage + 1
+												};
+											}}
 										>
-											{window}
+											→
 										</button>
-									{/each}
-								</div>
+									</div>
+								{/if}
 							</div>
-						</div>
-						<div class="kainbu-dashboard-empty mt-3">
-							<p class="text-sm font-medium text-app-text">No activity yet</p>
-							<p class="max-w-sm text-sm leading-relaxed text-app-subtext">
-								Activity from your boards will appear here as you create and update tasks.
+						{/each}
+					</div>
+				</section>
+			{:else if workspaceFlatActivity && workspaceFlatActivity.totalCount > 0}
+				<section class="kainbu-dashboard__activity-log">
+					<div class="flex flex-wrap items-start justify-between gap-3">
+						<div>
+							<h3 class="kainbu-dashboard__section-label">
+								Workspace activity
+								<span class="kainbu-dashboard__section-count"
+									>{workspaceFlatActivity.totalCount}</span
+								>
+							</h3>
+							<p class="mt-1 text-xs text-app-subtext">
+								Recorded task and people events across your projects.
 							</p>
 						</div>
-					</section>
-				{/if}
-
-				{#if pinnedProjects.length}
-					<section>
-						<h3 class="kainbu-dashboard__section-label mb-3">
-							Pinned
-							<span class="kainbu-dashboard__section-count">{pinnedProjects.length}</span>
-						</h3>
-						<div class="kainbu-board-rail kainbu-scrollbar-hidden">
-							{#each pinnedProjects as project (project.id)}
-								{#if project.accessRole === 'owner'}
-									<article class={projectCardClass(project, true)}>
-										<div class="flex items-start justify-between gap-3">
-											<div class="min-w-0 flex-1">
-												{#if renamingId === project.id}
-													<input
-														bind:value={renameValue}
-														class="w-full rounded-md border border-app-primary/40 bg-app-bg px-2 py-1 text-sm font-semibold text-app-text outline-none"
-														on:keydown={(event) => {
-															if (event.key === 'Enter') commitRename();
-															if (event.key === 'Escape') renamingId = null;
-														}}
-														on:blur={commitRename}
-													/>
-												{:else}
-													<h4 class="kainbu-board-card__title truncate">
-														{project.name}
-													</h4>
-												{/if}
-												<p class="mt-0.5 text-[11px] text-app-subtext">
-													Updated {new Date(project.updatedAt).toLocaleDateString()}
-												</p>
-											</div>
-											<button
-												type="button"
-												class="kainbu-btn kainbu-btn--ghost kainbu-btn--compact"
-												on:click={() => onOpenProject(project.id)}
-											>
-												Open
-												<ArrowRight size={11} />
-											</button>
-										</div>
-
-										<div class="mt-3 flex items-center gap-1.5 text-[11px] text-app-subtext">
-											<Users size={11} />
-											<span>{memberLabel(project)}</span>
-											<div class="ml-1 flex flex-wrap gap-1">
-												{#each project.members.filter(m => !m.leftAt).slice(0, 4) as member (`pinned-${project.id}-${member.userId}`)}
-													<span class="inline-flex items-center gap-1 rounded-md bg-app-element/40 px-1.5 py-0.5 text-[10px] text-app-text/80">
-														<span class="max-w-24 truncate">{getMemberName(member)}</span>
-														{#if member.role !== 'owner'}
-															<button
-																type="button"
-																class="text-app-subtext/40 transition hover:text-rose-400"
-																on:click={() => onRemoveMember(project.id, member.userId)}
-															>
-																<X size={9} />
-															</button>
-														{/if}
-													</span>
-												{/each}
-											</div>
-										</div>
-
-										{#if project.invites.length}
-											<div class="mt-2 flex flex-wrap gap-1">
-												{#each project.invites as invite (`pinned-${project.id}-${invite.id}`)}
-													<button
-														type="button"
-														class="inline-flex items-center gap-1 rounded-md bg-app-element/30 px-1.5 py-0.5 text-[10px] text-app-subtext transition hover:text-rose-300"
-														on:click={() => onCancelInvite(invite.id)}
-													>
-														<span class="truncate max-w-24">{invite.inviteeEmail}</span>
-														<X size={9} />
-													</button>
-												{/each}
-											</div>
-										{/if}
-
-										<div class="kainbu-board-card__toolbar flex items-center gap-1.5">
-											<button
-												type="button"
-												class="rounded-md p-1.5 text-app-primary transition hover:text-app-primary-hover"
-												on:click={() => onToggleProjectPin(project.id, false)}
-												aria-label="Unpin board"
-												title="Unpin"
-											>
-												<PinOff size={13} />
-											</button>
-											<button
-												type="button"
-												class="rounded-md p-1.5 text-app-subtext/60 transition hover:text-app-primary"
-												on:click={() => startRename(project)}
-												aria-label="Rename"
-											>
-												<Pencil size={13} />
-											</button>
-											<button
-												type="button"
-												class="rounded-md p-1.5 text-app-subtext/60 transition hover:text-app-primary"
-												on:click={() =>
-													(inviteOpenFor = inviteOpenFor === project.id ? null : project.id)}
-												aria-label="Invite"
-											>
-												<Mail size={13} />
-											</button>
-											<button
-												type="button"
-												class="rounded-md p-1.5 text-app-subtext/60 transition hover:text-rose-400"
-												on:click={() => onDeleteProject(project.id)}
-												aria-label="Delete"
-											>
-												<Trash2 size={13} />
-											</button>
-										</div>
-
-										{#if inviteOpenFor === project.id}
-											<div class="mt-2 flex gap-2">
-												<input
-													value={inviteDrafts[project.id] || ''}
-													type="email"
-													placeholder="teammate@example.com"
-													class="min-w-0 flex-1 rounded-lg border border-app-border/50 bg-app-bg px-3 py-1.5 text-xs text-app-text outline-none transition focus:border-app-primary/40"
-													on:input={(event) =>
-														setInviteDraft(project.id, (event.currentTarget as HTMLInputElement).value)}
-													on:keydown={(event) => {
-														if (event.key === 'Enter') submitInvite(project.id);
-													}}
-												/>
-												<button
-													type="button"
-													class="kainbu-btn kainbu-btn--primary kainbu-btn--compact"
-													on:click={() => submitInvite(project.id)}
-												>
-													Send
-												</button>
-											</div>
-											{#if inviteFeedback?.projectId === project.id}
-												<p
-													class={`mt-1.5 text-xs ${inviteFeedback.kind === 'success' ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-500'}`}
-												>
-													{inviteFeedback.message}
-												</p>
-											{/if}
-										{/if}
-									</article>
+						<div class="flex flex-wrap items-center gap-2">
+							<select
+								class="kainbu-activity-filter__button text-xs"
+								bind:value={activityProjectFilter}
+								aria-label="Project filter"
+							>
+								<option value="all">All projects</option>
+								{#each projects as project (project.id)}
+									<option value={project.id}>{project.name}</option>
+								{/each}
+							</select>
+							<div class="kainbu-activity-filter" aria-label="Time window">
+								{#each ['7d', '30d', 'all'] as window}
+									<button
+										type="button"
+										class:kainbu-activity-filter__button--active={activityTimeWindow === window}
+										class="kainbu-activity-filter__button"
+										on:click={() => (activityTimeWindow = window)}
+									>
+										{window}
+									</button>
+								{/each}
+							</div>
+							<div class="kainbu-activity-filter" aria-label="Activity filter">
+								{#each ['all', 'task', 'people'] as filter}
+									<button
+										type="button"
+										class:kainbu-activity-filter__button--active={activityFilter === filter}
+										class="kainbu-activity-filter__button"
+										on:click={() => (activityFilter = filter as WorkspaceActivityGroup | 'all')}
+									>
+										{filter}
+									</button>
+								{/each}
+							</div>
+						</div>
+					</div>
+					<div class="mt-3 divide-y divide-app-border/50">
+						{#each workspaceFlatActivity.events as event (event.id)}
+							<button
+								type="button"
+								class="kainbu-activity-row"
+								on:click={() =>
+									event.boardId
+										? onOpenBoard(event.projectId, event.boardId)
+										: onOpenProject(event.projectId)}
+							>
+								<span class="kainbu-activity-row__dot" data-group={event.group}></span>
+								<span class="min-w-0 flex-1">
+									<span class="block truncate text-sm font-medium text-app-text">{event.title}</span
+									>
+									<span class="block truncate text-xs text-app-subtext"
+										>{event.projectName} · {event.detail}</span
+									>
+								</span>
+								<span class="shrink-0 text-[11px] text-app-subtext"
+									>{formatActivityTime(event.timestamp)}</span
+								>
+							</button>
+						{/each}
+					</div>
+					{#if workspaceFlatActivity.totalPages > 1}
+						<div class="mt-3 flex items-center justify-center gap-1 w-full">
+							<button
+								type="button"
+								class="kainbu-activity-filter__button text-xs"
+								disabled={workspaceFlatActivity.currentPage <= 1}
+								on:click={() => {
+									workspaceActivityPage = workspaceFlatActivity.currentPage - 1;
+								}}
+							>
+								←
+							</button>
+							{#each pageButtons(workspaceFlatActivity.currentPage, workspaceFlatActivity.totalPages) as btn}
+								{#if btn === '...'}
+									<span class="px-1 text-xs text-app-subtext">…</span>
 								{:else}
-									<article class={projectCardClass(project, true)}>
-										<div class="flex items-start justify-between gap-3">
-											<div class="min-w-0">
-												<h4 class="kainbu-board-card__title truncate">{project.name}</h4>
-												<p class="mt-0.5 text-[11px] text-app-subtext">
-													{memberLabel(project)}
-												</p>
-											</div>
-											<button
-												type="button"
-												class="kainbu-btn kainbu-btn--ghost kainbu-btn--compact"
-												on:click={() => onOpenProject(project.id)}
-											>
-												Open
-												<ArrowRight size={11} />
-											</button>
-										</div>
-										<div class="mt-2 flex flex-wrap gap-1">
-											{#each project.members.filter(m => !m.leftAt).slice(0, 5) as member (`pinned-shared-${project.id}-${member.userId}`)}
-												<span class="inline-flex rounded-md bg-app-element/40 px-1.5 py-0.5 text-[10px] text-app-text/80">
-													{getMemberName(member)}
-												</span>
-											{/each}
-										</div>
-										<div class="mt-3 flex items-center justify-between gap-2">
-											<div class="flex items-center gap-1.5">
-												<button
-													type="button"
-													class="rounded-md p-1.5 text-app-primary transition hover:text-app-primary-hover"
-													on:click={() => onToggleProjectPin(project.id, false)}
-													aria-label="Unpin board"
-													title="Unpin"
-												>
-													<PinOff size={13} />
-												</button>
-												<button
-													type="button"
-													class="inline-flex items-center gap-1 text-xs font-medium text-app-subtext transition hover:text-app-primary"
-													on:click={() => onOpenProject(project.id)}
-												>
-													Open board
-													<ArrowRight size={11} />
-												</button>
-											</div>
-											<button
-												type="button"
-												class="text-xs text-app-subtext/60 transition hover:text-rose-400"
-												on:click={() => onLeaveProject(project.id)}
-											>
-												Leave
-											</button>
-										</div>
-									</article>
+									<button
+										type="button"
+										class="kainbu-activity-filter__button text-xs"
+										class:kainbu-activity-filter__button--active={workspaceFlatActivity.currentPage ===
+											btn}
+										on:click={() => {
+											workspaceActivityPage = btn;
+										}}
+									>
+										{btn}
+									</button>
 								{/if}
 							{/each}
+							<button
+								type="button"
+								class="kainbu-activity-filter__button text-xs"
+								disabled={workspaceFlatActivity.currentPage >= workspaceFlatActivity.totalPages}
+								on:click={() => {
+									workspaceActivityPage = workspaceFlatActivity.currentPage + 1;
+								}}
+							>
+								→
+							</button>
 						</div>
-					</section>
-				{/if}
+					{/if}
+				</section>
+			{:else}
+				<section class="kainbu-dashboard__activity-log">
+					<div class="flex flex-wrap items-start justify-between gap-3">
+						<div>
+							<h3 class="kainbu-dashboard__section-label">Workspace activity</h3>
+							<p class="mt-1 text-xs text-app-subtext">
+								Recorded task and people events across your projects.
+							</p>
+						</div>
+						<div class="flex flex-wrap items-center gap-2">
+							<select
+								class="kainbu-activity-filter__button text-xs"
+								bind:value={activityProjectFilter}
+								aria-label="Project filter"
+							>
+								<option value="all">All projects</option>
+								{#each projects as project (project.id)}
+									<option value={project.id}>{project.name}</option>
+								{/each}
+							</select>
+							<div class="kainbu-activity-filter" aria-label="Time window">
+								{#each ['7d', '30d', 'all'] as window}
+									<button
+										type="button"
+										class:kainbu-activity-filter__button--active={activityTimeWindow === window}
+										class="kainbu-activity-filter__button"
+										on:click={() => (activityTimeWindow = window)}
+									>
+										{window}
+									</button>
+								{/each}
+							</div>
+						</div>
+					</div>
+					<div class="kainbu-dashboard-empty mt-3">
+						<p class="text-sm font-medium text-app-text">No activity yet</p>
+						<p class="max-w-sm text-sm leading-relaxed text-app-subtext">
+							Activity from your boards will appear here as you create and update tasks.
+						</p>
+					</div>
+				</section>
+			{/if}
 
+			{#if pinnedProjects.length}
 				<section>
 					<h3 class="kainbu-dashboard__section-label mb-3">
-						Your boards
-						<span class="kainbu-dashboard__section-count">{ownedProjects.length}</span>
+						Pinned
+						<span class="kainbu-dashboard__section-count">{pinnedProjects.length}</span>
 					</h3>
-
-					{#if ownedProjects.length}
-						<div class="kainbu-board-grid">
-							{#each ownedProjects as project (project.id)}
-								<article class={projectCardClass(project)}>
+					<div class="kainbu-board-rail kainbu-scrollbar-hidden">
+						{#each pinnedProjects as project (project.id)}
+							{#if project.accessRole === 'owner'}
+								<article class={projectCardClass(project, true)}>
 									<div class="flex items-start justify-between gap-3">
 										<div class="min-w-0 flex-1">
 											{#if renamingId === project.id}
@@ -893,8 +758,12 @@ $: workspaceFlatActivity = (() => {
 										<Users size={11} />
 										<span>{memberLabel(project)}</span>
 										<div class="ml-1 flex flex-wrap gap-1">
-											{#each project.members.filter(m => !m.leftAt).slice(0, 4) as member (`${project.id}-${member.userId}`)}
-												<span class="inline-flex items-center gap-1 rounded-md bg-app-element/40 px-1.5 py-0.5 text-[10px] text-app-text/80">
+											{#each project.members
+												.filter((m) => !m.leftAt)
+												.slice(0, 4) as member (`pinned-${project.id}-${member.userId}`)}
+												<span
+													class="inline-flex items-center gap-1 rounded-md bg-app-element/40 px-1.5 py-0.5 text-[10px] text-app-text/80"
+												>
 													<span class="max-w-24 truncate">{getMemberName(member)}</span>
 													{#if member.role !== 'owner'}
 														<button
@@ -912,7 +781,7 @@ $: workspaceFlatActivity = (() => {
 
 									{#if project.invites.length}
 										<div class="mt-2 flex flex-wrap gap-1">
-											{#each project.invites as invite (`${project.id}-${invite.id}`)}
+											{#each project.invites as invite (`pinned-${project.id}-${invite.id}`)}
 												<button
 													type="button"
 													class="inline-flex items-center gap-1 rounded-md bg-app-element/30 px-1.5 py-0.5 text-[10px] text-app-subtext transition hover:text-rose-300"
@@ -928,20 +797,12 @@ $: workspaceFlatActivity = (() => {
 									<div class="kainbu-board-card__toolbar flex items-center gap-1.5">
 										<button
 											type="button"
-											class={`rounded-md p-1.5 transition ${
-												isPinned(project)
-													? 'text-app-primary hover:text-app-primary-hover'
-													: 'text-app-subtext/60 hover:text-app-primary'
-											}`}
-											on:click={() => onToggleProjectPin(project.id, !isPinned(project))}
-											aria-label={isPinned(project) ? 'Unpin board' : 'Pin board'}
-											title={isPinned(project) ? 'Unpin' : 'Pin'}
+											class="rounded-md p-1.5 text-app-primary transition hover:text-app-primary-hover"
+											on:click={() => onToggleProjectPin(project.id, false)}
+											aria-label="Unpin project"
+											title="Unpin"
 										>
-											{#if isPinned(project)}
-												<PinOff size={13} />
-											{:else}
-												<Pin size={13} />
-											{/if}
+											<PinOff size={13} />
 										</button>
 										<button
 											type="button"
@@ -978,7 +839,10 @@ $: workspaceFlatActivity = (() => {
 												placeholder="teammate@example.com"
 												class="min-w-0 flex-1 rounded-lg border border-app-border/50 bg-app-bg px-3 py-1.5 text-xs text-app-text outline-none transition focus:border-app-primary/40"
 												on:input={(event) =>
-													setInviteDraft(project.id, (event.currentTarget as HTMLInputElement).value)}
+													setInviteDraft(
+														project.id,
+														(event.currentTarget as HTMLInputElement).value
+													)}
 												on:keydown={(event) => {
 													if (event.key === 'Enter') submitInvite(project.id);
 												}}
@@ -1000,36 +864,8 @@ $: workspaceFlatActivity = (() => {
 										{/if}
 									{/if}
 								</article>
-							{/each}
-						</div>
-					{:else}
-						<div class="kainbu-dashboard-empty">
-							<p class="text-sm font-medium text-app-text">No boards yet</p>
-							<p class="max-w-sm text-sm leading-relaxed text-app-subtext">
-								Create a board to start organizing tasks, notes, and invites in one place.
-							</p>
-							<button
-								type="button"
-								class="kainbu-btn kainbu-btn--ghost mt-1"
-								on:click={onCreateProject}
-							>
-								<FolderPlus size={14} />
-								Create your first board
-							</button>
-						</div>
-					{/if}
-				</section>
-
-				<section>
-					<h3 class="kainbu-dashboard__section-label mb-3">
-						Shared with you
-						<span class="kainbu-dashboard__section-count">{sharedProjects.length}</span>
-					</h3>
-
-					{#if sharedProjects.length}
-						<div class="kainbu-board-grid">
-							{#each sharedProjects as project (project.id)}
-								<article class={projectCardClass(project)}>
+							{:else}
+								<article class={projectCardClass(project, true)}>
 									<div class="flex items-start justify-between gap-3">
 										<div class="min-w-0">
 											<h4 class="kainbu-board-card__title truncate">{project.name}</h4>
@@ -1047,8 +883,12 @@ $: workspaceFlatActivity = (() => {
 										</button>
 									</div>
 									<div class="mt-2 flex flex-wrap gap-1">
-										{#each project.members.filter(m => !m.leftAt).slice(0, 5) as member (`shared-${project.id}-${member.userId}`)}
-											<span class="inline-flex rounded-md bg-app-element/40 px-1.5 py-0.5 text-[10px] text-app-text/80">
+										{#each project.members
+											.filter((m) => !m.leftAt)
+											.slice(0, 5) as member (`pinned-shared-${project.id}-${member.userId}`)}
+											<span
+												class="inline-flex rounded-md bg-app-element/40 px-1.5 py-0.5 text-[10px] text-app-text/80"
+											>
 												{getMemberName(member)}
 											</span>
 										{/each}
@@ -1057,20 +897,12 @@ $: workspaceFlatActivity = (() => {
 										<div class="flex items-center gap-1.5">
 											<button
 												type="button"
-												class={`rounded-md p-1.5 transition ${
-													isPinned(project)
-														? 'text-app-primary hover:text-app-primary-hover'
-														: 'text-app-subtext/60 hover:text-app-primary'
-												}`}
-												on:click={() => onToggleProjectPin(project.id, !isPinned(project))}
-												aria-label={isPinned(project) ? 'Unpin board' : 'Pin board'}
-												title={isPinned(project) ? 'Unpin' : 'Pin'}
+												class="rounded-md p-1.5 text-app-primary transition hover:text-app-primary-hover"
+												on:click={() => onToggleProjectPin(project.id, false)}
+												aria-label="Unpin project"
+												title="Unpin"
 											>
-												{#if isPinned(project)}
-													<PinOff size={13} />
-												{:else}
-													<Pin size={13} />
-												{/if}
+												<PinOff size={13} />
 											</button>
 											<button
 												type="button"
@@ -1090,93 +922,352 @@ $: workspaceFlatActivity = (() => {
 										</button>
 									</div>
 								</article>
-							{/each}
-						</div>
-					{:else}
-						<div class="kainbu-dashboard-empty">
-							<p class="text-sm font-medium text-app-text">Nothing shared yet</p>
-							<p class="max-w-sm text-sm leading-relaxed text-app-subtext">
-								When someone invites you to a board, it will appear here for quick access.
-							</p>
-						</div>
-					{/if}
-				</section>
-
-				<section>
-					<div class="mb-3 flex items-center justify-between gap-3">
-						<h3 class="kainbu-dashboard__section-label">
-							Due soon
-							<span class="kainbu-dashboard__section-count">{timedTasks.length}</span>
-						</h3>
-						<Clock3 size={14} class="text-app-subtext/70" />
+							{/if}
+						{/each}
 					</div>
+				</section>
+			{/if}
 
-					{#if timedTasks.length}
-						<div class="kainbu-board-grid kainbu-board-grid--compact">
-							{#each timedTasks as timed (`${timed.projectId}-${timed.task.id}`)}
-								<article class="kainbu-board-card kainbu-board-card--due">
-									<div class="flex items-start justify-between gap-3">
-										<div class="min-w-0">
-											<p class="kainbu-board-card__title break-words">{timed.task.title}</p>
-											<p class="mt-0.5 text-[11px] text-app-subtext">
-												{timed.projectName} / {timed.columnTitle}
-											</p>
-										</div>
-										<p class={`shrink-0 font-mono text-xs font-semibold tabular-nums ${timed.dueAt - tickNow <= 0 ? 'text-rose-400' : 'text-app-subtext'}`}>
-											{formatCountdown(timed.dueAt, tickNow)}
+			<section>
+				<h3 class="kainbu-dashboard__section-label mb-3">
+					Your projects
+					<span class="kainbu-dashboard__section-count">{ownedProjects.length}</span>
+				</h3>
+
+				{#if ownedProjects.length}
+					<div class="kainbu-board-grid">
+						{#each ownedProjects as project (project.id)}
+							<article class={projectCardClass(project)}>
+								<div class="flex items-start justify-between gap-3">
+									<div class="min-w-0 flex-1">
+										{#if renamingId === project.id}
+											<input
+												bind:value={renameValue}
+												class="w-full rounded-md border border-app-primary/40 bg-app-bg px-2 py-1 text-sm font-semibold text-app-text outline-none"
+												on:keydown={(event) => {
+													if (event.key === 'Enter') commitRename();
+													if (event.key === 'Escape') renamingId = null;
+												}}
+												on:blur={commitRename}
+											/>
+										{:else}
+											<h4 class="kainbu-board-card__title truncate">
+												{project.name}
+											</h4>
+										{/if}
+										<p class="mt-0.5 text-[11px] text-app-subtext">
+											Updated {new Date(project.updatedAt).toLocaleDateString()}
 										</p>
 									</div>
+									<button
+										type="button"
+										class="kainbu-btn kainbu-btn--ghost kainbu-btn--compact"
+										on:click={() => onOpenProject(project.id)}
+									>
+										Open
+										<ArrowRight size={11} />
+									</button>
+								</div>
 
-									<p class="mt-2 text-xs text-app-subtext">Due {formatDueDateValue(timed.dueAt)}</p>
+								<div class="mt-3 flex items-center gap-1.5 text-[11px] text-app-subtext">
+									<Users size={11} />
+									<span>{memberLabel(project)}</span>
+									<div class="ml-1 flex flex-wrap gap-1">
+										{#each project.members
+											.filter((m) => !m.leftAt)
+											.slice(0, 4) as member (`${project.id}-${member.userId}`)}
+											<span
+												class="inline-flex items-center gap-1 rounded-md bg-app-element/40 px-1.5 py-0.5 text-[10px] text-app-text/80"
+											>
+												<span class="max-w-24 truncate">{getMemberName(member)}</span>
+												{#if member.role !== 'owner'}
+													<button
+														type="button"
+														class="text-app-subtext/40 transition hover:text-rose-400"
+														on:click={() => onRemoveMember(project.id, member.userId)}
+													>
+														<X size={9} />
+													</button>
+												{/if}
+											</span>
+										{/each}
+									</div>
+								</div>
 
-									{#if timed.task.tags.length}
-										<div class="mt-2 flex flex-wrap gap-1">
-											{#each timed.task.tags.slice(0, 4) as tag (tag.id)}
-												<span class={getTagToneClasses(tag.color)}>
-													{tag.label}
-												</span>
-											{/each}
-										</div>
+								{#if project.invites.length}
+									<div class="mt-2 flex flex-wrap gap-1">
+										{#each project.invites as invite (`${project.id}-${invite.id}`)}
+											<button
+												type="button"
+												class="inline-flex items-center gap-1 rounded-md bg-app-element/30 px-1.5 py-0.5 text-[10px] text-app-subtext transition hover:text-rose-300"
+												on:click={() => onCancelInvite(invite.id)}
+											>
+												<span class="truncate max-w-24">{invite.inviteeEmail}</span>
+												<X size={9} />
+											</button>
+										{/each}
+									</div>
+								{/if}
+
+								<div class="kainbu-board-card__toolbar flex items-center gap-1.5">
+									<button
+										type="button"
+										class={`rounded-md p-1.5 transition ${
+											isPinned(project)
+												? 'text-app-primary hover:text-app-primary-hover'
+												: 'text-app-subtext/60 hover:text-app-primary'
+										}`}
+										on:click={() => onToggleProjectPin(project.id, !isPinned(project))}
+										aria-label={isPinned(project) ? 'Unpin project' : 'Pin project'}
+										title={isPinned(project) ? 'Unpin' : 'Pin'}
+									>
+										{#if isPinned(project)}
+											<PinOff size={13} />
+										{:else}
+											<Pin size={13} />
+										{/if}
+									</button>
+									<button
+										type="button"
+										class="rounded-md p-1.5 text-app-subtext/60 transition hover:text-app-primary"
+										on:click={() => startRename(project)}
+										aria-label="Rename"
+									>
+										<Pencil size={13} />
+									</button>
+									<button
+										type="button"
+										class="rounded-md p-1.5 text-app-subtext/60 transition hover:text-app-primary"
+										on:click={() =>
+											(inviteOpenFor = inviteOpenFor === project.id ? null : project.id)}
+										aria-label="Invite"
+									>
+										<Mail size={13} />
+									</button>
+									<button
+										type="button"
+										class="rounded-md p-1.5 text-app-subtext/60 transition hover:text-rose-400"
+										on:click={() => onDeleteProject(project.id)}
+										aria-label="Delete"
+									>
+										<Trash2 size={13} />
+									</button>
+								</div>
+
+								{#if inviteOpenFor === project.id}
+									<div class="mt-2 flex gap-2">
+										<input
+											value={inviteDrafts[project.id] || ''}
+											type="email"
+											placeholder="teammate@example.com"
+											class="min-w-0 flex-1 rounded-lg border border-app-border/50 bg-app-bg px-3 py-1.5 text-xs text-app-text outline-none transition focus:border-app-primary/40"
+											on:input={(event) =>
+												setInviteDraft(project.id, (event.currentTarget as HTMLInputElement).value)}
+											on:keydown={(event) => {
+												if (event.key === 'Enter') submitInvite(project.id);
+											}}
+										/>
+										<button
+											type="button"
+											class="kainbu-btn kainbu-btn--primary kainbu-btn--compact"
+											on:click={() => submitInvite(project.id)}
+										>
+											Send
+										</button>
+									</div>
+									{#if inviteFeedback?.projectId === project.id}
+										<p
+											class={`mt-1.5 text-xs ${inviteFeedback.kind === 'success' ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-500'}`}
+										>
+											{inviteFeedback.message}
+										</p>
 									{/if}
-									<div class="mt-3 flex items-center justify-between gap-3">
+								{/if}
+							</article>
+						{/each}
+					</div>
+				{:else}
+					<div class="kainbu-dashboard-empty">
+						<p class="text-sm font-medium text-app-text">No boards yet</p>
+						<p class="max-w-sm text-sm leading-relaxed text-app-subtext">
+							Create a board to start organizing tasks, notes, and invites in one place.
+						</p>
+						<button
+							type="button"
+							class="kainbu-btn kainbu-btn--ghost mt-1"
+							on:click={onCreateProject}
+						>
+							<FolderPlus size={14} />
+							Create your first board
+						</button>
+					</div>
+				{/if}
+			</section>
+
+			<section>
+				<h3 class="kainbu-dashboard__section-label mb-3">
+					Shared with you
+					<span class="kainbu-dashboard__section-count">{sharedProjects.length}</span>
+				</h3>
+
+				{#if sharedProjects.length}
+					<div class="kainbu-board-grid">
+						{#each sharedProjects as project (project.id)}
+							<article class={projectCardClass(project)}>
+								<div class="flex items-start justify-between gap-3">
+									<div class="min-w-0">
+										<h4 class="kainbu-board-card__title truncate">{project.name}</h4>
+										<p class="mt-0.5 text-[11px] text-app-subtext">
+											{memberLabel(project)}
+										</p>
+									</div>
+									<button
+										type="button"
+										class="kainbu-btn kainbu-btn--ghost kainbu-btn--compact"
+										on:click={() => onOpenProject(project.id)}
+									>
+										Open
+										<ArrowRight size={11} />
+									</button>
+								</div>
+								<div class="mt-2 flex flex-wrap gap-1">
+									{#each project.members
+										.filter((m) => !m.leftAt)
+										.slice(0, 5) as member (`shared-${project.id}-${member.userId}`)}
+										<span
+											class="inline-flex rounded-md bg-app-element/40 px-1.5 py-0.5 text-[10px] text-app-text/80"
+										>
+											{getMemberName(member)}
+										</span>
+									{/each}
+								</div>
+								<div class="mt-3 flex items-center justify-between gap-2">
+									<div class="flex items-center gap-1.5">
+										<button
+											type="button"
+											class={`rounded-md p-1.5 transition ${
+												isPinned(project)
+													? 'text-app-primary hover:text-app-primary-hover'
+													: 'text-app-subtext/60 hover:text-app-primary'
+											}`}
+											on:click={() => onToggleProjectPin(project.id, !isPinned(project))}
+											aria-label={isPinned(project) ? 'Unpin project' : 'Pin project'}
+											title={isPinned(project) ? 'Unpin' : 'Pin'}
+										>
+											{#if isPinned(project)}
+												<PinOff size={13} />
+											{:else}
+												<Pin size={13} />
+											{/if}
+										</button>
 										<button
 											type="button"
 											class="inline-flex items-center gap-1 text-xs font-medium text-app-subtext transition hover:text-app-primary"
-											on:click={() => onOpenProject(timed.projectId)}
+											on:click={() => onOpenProject(project.id)}
 										>
 											Open board
 											<ArrowRight size={11} />
 										</button>
-										{#if timed.dueAt <= tickNow}
-											<button
-												type="button"
-												class="text-xs font-semibold text-app-subtext transition hover:text-rose-300"
-												on:click={() =>
-													onClearTimedTaskDue(
-														timed.projectId,
-														timed.columnId,
-														timed.task.id
-													)}
-											>
-												Clear
-											</button>
-										{/if}
 									</div>
-								</article>
-							{/each}
-						</div>
-					{:else}
-						<div class="kainbu-dashboard-empty">
-							<p class="text-sm font-medium text-app-text">No due dates</p>
-							<p class="max-w-sm text-sm leading-relaxed text-app-subtext">
-								Tasks with due dates across your boards will show up here.
-							</p>
-						</div>
-					{/if}
-				</section>
-			</div>
+									<button
+										type="button"
+										class="text-xs text-app-subtext/60 transition hover:text-rose-400"
+										on:click={() => onLeaveProject(project.id)}
+									>
+										Leave
+									</button>
+								</div>
+							</article>
+						{/each}
+					</div>
+				{:else}
+					<div class="kainbu-dashboard-empty">
+						<p class="text-sm font-medium text-app-text">Nothing shared yet</p>
+						<p class="max-w-sm text-sm leading-relaxed text-app-subtext">
+							When someone invites you to a project, it will appear here for quick access.
+						</p>
+					</div>
+				{/if}
+			</section>
+
+			<section>
+				<div class="mb-3 flex items-center justify-between gap-3">
+					<h3 class="kainbu-dashboard__section-label">
+						Due soon
+						<span class="kainbu-dashboard__section-count">{timedTasks.length}</span>
+					</h3>
+					<Clock3 size={14} class="text-app-subtext/70" />
+				</div>
+
+				{#if timedTasks.length}
+					<div class="kainbu-board-grid kainbu-board-grid--compact">
+						{#each timedTasks as timed (`${timed.projectId}-${timed.task.id}`)}
+							<article class="kainbu-board-card kainbu-board-card--due">
+								<div class="flex items-start justify-between gap-3">
+									<div class="min-w-0">
+										<p class="kainbu-board-card__title break-words">{timed.task.title}</p>
+										<p class="mt-0.5 text-[11px] text-app-subtext">
+											{timed.projectName} / {timed.boardName} / {timed.columnTitle}
+										</p>
+									</div>
+									<p
+										class={`shrink-0 font-mono text-xs font-semibold tabular-nums ${timed.dueAt - tickNow <= 0 ? 'text-rose-400' : 'text-app-subtext'}`}
+									>
+										{formatCountdown(timed.dueAt, tickNow)}
+									</p>
+								</div>
+
+								<p class="mt-2 text-xs text-app-subtext">Due {formatDueDateValue(timed.dueAt)}</p>
+
+								{#if timed.task.tags.length}
+									<div class="mt-2 flex flex-wrap gap-1">
+										{#each timed.task.tags.slice(0, 4) as tag (tag.id)}
+											<span class={getTagToneClasses(tag.color)}>
+												{tag.label}
+											</span>
+										{/each}
+									</div>
+								{/if}
+								<div class="mt-3 flex items-center justify-between gap-3">
+									<button
+										type="button"
+										class="inline-flex items-center gap-1 text-xs font-medium text-app-subtext transition hover:text-app-primary"
+										on:click={() => onOpenBoard(timed.projectId, timed.boardId)}
+									>
+										Open board
+										<ArrowRight size={11} />
+									</button>
+									{#if timed.dueAt <= tickNow}
+										<button
+											type="button"
+											class="text-xs font-semibold text-app-subtext transition hover:text-rose-300"
+											on:click={() =>
+												onClearTimedTaskDue(
+													timed.projectId,
+													timed.columnId,
+													timed.task.id,
+													timed.boardId
+												)}
+										>
+											Clear
+										</button>
+									{/if}
+								</div>
+							</article>
+						{/each}
+					</div>
+				{:else}
+					<div class="kainbu-dashboard-empty">
+						<p class="text-sm font-medium text-app-text">No due dates</p>
+						<p class="max-w-sm text-sm leading-relaxed text-app-subtext">
+							Tasks with due dates across your boards will show up here.
+						</p>
+					</div>
+				{/if}
+			</section>
 		</div>
-	</section>
+	</div>
+</section>
 
 {#if shortcutsOpen}
 	<div class="kainbu-overlay fixed inset-0 z-[130]">
@@ -1192,7 +1283,9 @@ $: workspaceFlatActivity = (() => {
 			aria-label="Shortcuts &amp; cheatsheet"
 			class="absolute inset-x-0 bottom-0 z-10 flex max-h-[85vh] flex-col overflow-hidden rounded-t-2xl border border-app-border/60 bg-app-surface lg:inset-auto lg:left-1/2 lg:top-1/2 lg:max-h-[min(85vh,32rem)] lg:w-full lg:max-w-md lg:-translate-x-1/2 lg:-translate-y-1/2 lg:rounded-lg"
 		>
-			<div class="flex shrink-0 items-center justify-between border-b border-app-border/40 px-4 py-3">
+			<div
+				class="flex shrink-0 items-center justify-between border-b border-app-border/40 px-4 py-3"
+			>
 				<div>
 					<p class="text-sm font-semibold text-app-text">Shortcuts &amp; cheatsheet</p>
 					<p class="text-xs text-app-subtext">Tips for using Kainbu boards</p>
@@ -1212,13 +1305,18 @@ $: workspaceFlatActivity = (() => {
 							Hashtag auto-tagging
 						</h4>
 						<p class="leading-relaxed text-app-text/85">
-							Type <code class="rounded bg-app-element/60 px-1 py-0.5 font-mono text-[11px]">#tagname</code>
+							Type <code class="rounded bg-app-element/60 px-1 py-0.5 font-mono text-[11px]"
+								>#tagname</code
+							>
 							at the end of a task title to automatically create or apply a tag.
 						</p>
 						<p class="mt-1 text-xs text-app-subtext">
-							Example: &ldquo;Fix login bug <code class="rounded bg-app-element/60 px-1 py-0.5 font-mono text-[11px]">#urgent</code>
-							<code class="rounded bg-app-element/60 px-1 py-0.5 font-mono text-[11px]">#backend</code>&rdquo;
-							&rarr; title becomes &ldquo;Fix login bug&rdquo; with tags [urgent, backend]
+							Example: &ldquo;Fix login bug <code
+								class="rounded bg-app-element/60 px-1 py-0.5 font-mono text-[11px]">#urgent</code
+							>
+							<code class="rounded bg-app-element/60 px-1 py-0.5 font-mono text-[11px]"
+								>#backend</code
+							>&rdquo; &rarr; title becomes &ldquo;Fix login bug&rdquo; with tags [urgent, backend]
 						</p>
 					</section>
 
@@ -1227,10 +1325,26 @@ $: workspaceFlatActivity = (() => {
 							Markdown formatting
 						</h4>
 						<ul class="space-y-1 text-sm text-app-text/85">
-							<li><code class="rounded bg-app-element/60 px-1 py-0.5 font-mono text-[11px]">**bold**</code> &mdash; bold text</li>
-							<li><code class="rounded bg-app-element/60 px-1 py-0.5 font-mono text-[11px]">*italic*</code> &mdash; italic text</li>
-							<li><code class="rounded bg-app-element/60 px-1 py-0.5 font-mono text-[11px]">`code`</code> &mdash; inline code</li>
-							<li><code class="rounded bg-app-element/60 px-1 py-0.5 font-mono text-[11px]">- [ ] todo</code> &mdash; checkbox</li>
+							<li>
+								<code class="rounded bg-app-element/60 px-1 py-0.5 font-mono text-[11px]"
+									>**bold**</code
+								> &mdash; bold text
+							</li>
+							<li>
+								<code class="rounded bg-app-element/60 px-1 py-0.5 font-mono text-[11px]"
+									>*italic*</code
+								> &mdash; italic text
+							</li>
+							<li>
+								<code class="rounded bg-app-element/60 px-1 py-0.5 font-mono text-[11px]"
+									>`code`</code
+								> &mdash; inline code
+							</li>
+							<li>
+								<code class="rounded bg-app-element/60 px-1 py-0.5 font-mono text-[11px]"
+									>- [ ] todo</code
+								> &mdash; checkbox
+							</li>
 						</ul>
 					</section>
 
@@ -1239,22 +1353,49 @@ $: workspaceFlatActivity = (() => {
 							Kanban board shortcuts
 						</h4>
 						<ul class="space-y-1 text-sm text-app-text/85">
-							<li><kbd class="rounded bg-app-element/70 px-1.5 py-0.5 font-mono text-[11px] text-app-text">Ctrl+F</kbd> &mdash; Search board tasks</li>
-							<li><kbd class="rounded bg-app-element/70 px-1.5 py-0.5 font-mono text-[11px] text-app-text">Esc</kbd> &mdash; Close menus / search / link view</li>
-							<li><kbd class="rounded bg-app-element/70 px-1.5 py-0.5 font-mono text-[11px] text-app-text">Enter</kbd> &mdash; Save inline-edited title</li>
-							<li><kbd class="rounded bg-app-element/70 px-1.5 py-0.5 font-mono text-[11px] text-app-text">Shift+Enter</kbd> &mdash; New line in title edit</li>
-							<li><kbd class="rounded bg-app-element/70 px-1.5 py-0.5 font-mono text-[11px] text-app-text">Double-click</kbd> &mdash; Edit task title inline</li>
+							<li>
+								<kbd
+									class="rounded bg-app-element/70 px-1.5 py-0.5 font-mono text-[11px] text-app-text"
+									>Ctrl+F</kbd
+								> &mdash; Search board tasks
+							</li>
+							<li>
+								<kbd
+									class="rounded bg-app-element/70 px-1.5 py-0.5 font-mono text-[11px] text-app-text"
+									>Esc</kbd
+								> &mdash; Close menus / search / link view
+							</li>
+							<li>
+								<kbd
+									class="rounded bg-app-element/70 px-1.5 py-0.5 font-mono text-[11px] text-app-text"
+									>Enter</kbd
+								> &mdash; Save inline-edited title
+							</li>
+							<li>
+								<kbd
+									class="rounded bg-app-element/70 px-1.5 py-0.5 font-mono text-[11px] text-app-text"
+									>Shift+Enter</kbd
+								> &mdash; New line in title edit
+							</li>
+							<li>
+								<kbd
+									class="rounded bg-app-element/70 px-1.5 py-0.5 font-mono text-[11px] text-app-text"
+									>Double-click</kbd
+								> &mdash; Edit task title inline
+							</li>
 						</ul>
 					</section>
 
 					<section>
-						<h4 class="mb-1.5 text-xs font-bold uppercase tracking-wider text-app-subtext">
-							Tips
-						</h4>
+						<h4 class="mb-1.5 text-xs font-bold uppercase tracking-wider text-app-subtext">Tips</h4>
 						<ul class="space-y-1 text-sm text-app-text/85">
 							<li>Drag tasks between columns to reorganize</li>
 							<li>Click the checkbox icon to toggle task completion</li>
-							<li>Use <code class="rounded bg-app-element/60 px-1 py-0.5 font-mono text-[11px]">#tag</code> in the title to auto-tag</li>
+							<li>
+								Use <code class="rounded bg-app-element/60 px-1 py-0.5 font-mono text-[11px]"
+									>#tag</code
+								> in the title to auto-tag
+							</li>
 							<li>Link tasks to show relationships on the board</li>
 						</ul>
 					</section>

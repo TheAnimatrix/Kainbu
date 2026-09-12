@@ -9,6 +9,18 @@ import {
 } from '../src/lib/kainbu/workspaceUrl';
 
 describe('workspaceUrl', () => {
+	it('makes the dashboard route override a remembered board or legacy query', () => {
+		expect(
+			parseWorkspaceLocation('/dashboard', new URLSearchParams('project=p1&view=kanban&board=b1'))
+		).toEqual({ view: 'dashboard', legacyQuery: false });
+		expect(
+			buildWorkspacePath({
+				projectId: 'p1',
+				boardId: 'b1',
+				...parseWorkspaceLocation('/dashboard')
+			})
+		).toBe('/dashboard');
+	});
 	it('round-trips board links', () => {
 		const state = {
 			projectId: 'proj-1',
@@ -30,18 +42,36 @@ describe('workspaceUrl', () => {
 
 	it('round-trips dedicated board, page, and chat routes', () => {
 		expect(parseWorkspaceLocation('/projects/p%2F1/boards/b-2')).toMatchObject({
-			projectId: 'p/1', boardId: 'b-2', view: 'kanban', legacyQuery: false
+			projectId: 'p/1',
+			boardId: 'b-2',
+			view: 'kanban',
+			legacyQuery: false
 		});
-		expect(parseWorkspaceLocation('/projects/p1/pages/n1')).toMatchObject({ projectId: 'p1', pageId: 'n1', view: 'scratchpad' });
-		expect(parseWorkspaceLocation('/projects/p1/chat')).toMatchObject({ projectId: 'p1', view: 'chat' });
-		expect(buildWorkspacePath({ projectId: 'p1', boardId: 'b1', view: 'kanban' })).toBe('/projects/p1/boards/b1');
-		expect(buildWorkspacePath({ projectId: 'p1', pageId: 'n1', view: 'scratchpad' })).toBe('/projects/p1/pages/n1');
+		expect(parseWorkspaceLocation('/projects/p1/pages/n1')).toMatchObject({
+			projectId: 'p1',
+			pageId: 'n1',
+			view: 'scratchpad'
+		});
+		expect(parseWorkspaceLocation('/projects/p1/chat')).toMatchObject({
+			projectId: 'p1',
+			view: 'chat'
+		});
+		expect(buildWorkspacePath({ projectId: 'p1', boardId: 'b1', view: 'kanban' })).toBe(
+			'/projects/p1/boards/b1'
+		);
+		expect(buildWorkspacePath({ projectId: 'p1', pageId: 'n1', view: 'scratchpad' })).toBe(
+			'/projects/p1/pages/n1'
+		);
 		expect(buildWorkspacePath({ projectId: 'p1', view: 'chat' })).toBe('/projects/p1/chat');
 	});
 
 	it('marks old root query links for migration', () => {
-		expect(parseWorkspaceLocation('/', new URLSearchParams('project=p1&view=kanban&board=b1'))).toMatchObject({
-			projectId: 'p1', boardId: 'b1', legacyQuery: true
+		expect(
+			parseWorkspaceLocation('/', new URLSearchParams('project=p1&view=kanban&board=b1'))
+		).toMatchObject({
+			projectId: 'p1',
+			boardId: 'b1',
+			legacyQuery: true
 		});
 	});
 });

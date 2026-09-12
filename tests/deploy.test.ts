@@ -12,6 +12,8 @@
 import { describe, it, expect } from 'vitest';
 
 const BASE = process.env.KAINBU_TEST_BASE || 'http://127.0.0.1:8789';
+const ALLOWED_ORIGIN =
+	process.env.KAINBU_TEST_CORS_ORIGIN || process.env.KAINBU_PUBLIC_URL || 'http://localhost:3000';
 const TOKEN = process.env.KAINBU_TEST_TOKEN ?? '';
 const PROJECT_ID = process.env.KAINBU_TEST_PROJECT_ID ?? '';
 let modelIdPromise: Promise<string> | null = null;
@@ -28,21 +30,22 @@ function authHeaders(): HeadersInit {
 
 async function getServerModelId() {
 	if (!modelIdPromise) {
-		modelIdPromise = fetch(`${BASE}/api/models`)
-			.then(async (res) => {
-				if (!res.ok) {
-					throw new Error(`Unable to load /api/models: ${res.status}`);
-				}
+		modelIdPromise = fetch(`${BASE}/api/models`).then(async (res) => {
+			if (!res.ok) {
+				throw new Error(`Unable to load /api/models: ${res.status}`);
+			}
 
-				const body = (await res.json()) as { models?: Array<{ id?: string }> } | Array<{ id?: string }>;
-				const models = Array.isArray(body) ? body : body.models;
-				const modelId = models?.[0]?.id;
-				if (!modelId) {
-					throw new Error('No model ids were returned from /api/models.');
-				}
+			const body = (await res.json()) as
+				| { models?: Array<{ id?: string }> }
+				| Array<{ id?: string }>;
+			const models = Array.isArray(body) ? body : body.models;
+			const modelId = models?.[0]?.id;
+			if (!modelId) {
+				throw new Error('No model ids were returned from /api/models.');
+			}
 
-				return modelId;
-			});
+			return modelId;
+		});
 	}
 
 	return modelIdPromise;
@@ -84,19 +87,37 @@ describe('Health & Discovery', () => {
 
 describe('CORS', () => {
 	it('OPTIONS /api/workspace-ai returns CORS headers', async () => {
-		const res = await fetch(`${BASE}/api/workspace-ai`, { method: 'OPTIONS' });
-		expect(res.headers.get('access-control-allow-origin')).toBe('*');
+		const res = await fetch(`${BASE}/api/workspace-ai`, {
+			method: 'OPTIONS',
+			headers: {
+				Origin: ALLOWED_ORIGIN,
+				'Access-Control-Request-Headers': 'Authorization, Content-Type'
+			}
+		});
+		expect(res.headers.get('access-control-allow-origin')).toBe(ALLOWED_ORIGIN);
 		expect(res.headers.get('access-control-allow-headers')).toMatch(/authorization/i);
 	});
 
 	it('OPTIONS /api/workspace-ai/stream returns CORS headers', async () => {
-		const res = await fetch(`${BASE}/api/workspace-ai/stream`, { method: 'OPTIONS' });
-		expect(res.headers.get('access-control-allow-origin')).toBe('*');
+		const res = await fetch(`${BASE}/api/workspace-ai/stream`, {
+			method: 'OPTIONS',
+			headers: {
+				Origin: ALLOWED_ORIGIN,
+				'Access-Control-Request-Headers': 'Authorization, Content-Type'
+			}
+		});
+		expect(res.headers.get('access-control-allow-origin')).toBe(ALLOWED_ORIGIN);
 	});
 
 	it('OPTIONS /api/workspace/projects/touch returns CORS headers', async () => {
-		const res = await fetch(`${BASE}/api/workspace/projects/touch`, { method: 'OPTIONS' });
-		expect(res.headers.get('access-control-allow-origin')).toBe('*');
+		const res = await fetch(`${BASE}/api/workspace/projects/touch`, {
+			method: 'OPTIONS',
+			headers: {
+				Origin: ALLOWED_ORIGIN,
+				'Access-Control-Request-Headers': 'Authorization, Content-Type'
+			}
+		});
+		expect(res.headers.get('access-control-allow-origin')).toBe(ALLOWED_ORIGIN);
 	});
 });
 
@@ -500,7 +521,13 @@ describe('Invalid token handling', () => {
 describe.runIf(hasAuth)('API key auth (kbu_ tokens)', () => {
 	const list = async () => {
 		const res = await fetch(`${BASE}/api/me/api-keys`, { headers: authHeaders() });
-		return { res, body: (await res.json().catch(() => ({}))) as { items?: Array<{ id: string; prefix: string; revoked_at: string | null }>; error?: string } };
+		return {
+			res,
+			body: (await res.json().catch(() => ({}))) as {
+				items?: Array<{ id: string; prefix: string; revoked_at: string | null }>;
+				error?: string;
+			}
+		};
 	};
 	const create = async (name: string) => {
 		const res = await fetch(`${BASE}/api/me/api-keys`, {

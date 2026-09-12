@@ -25,7 +25,10 @@ describe('boardPreferences', () => {
 	it('resolves the Done column by title when no explicit target is set', () => {
 		expect(findDefaultDoneColumnId(sampleBoard)).toBe('done');
 		expect(
-			resolveCheckedMoveTargetColumnId(sampleBoard, normalizeBoardPreferences({ moveCheckedTasks: true }))
+			resolveCheckedMoveTargetColumnId(
+				sampleBoard,
+				normalizeBoardPreferences({ moveCheckedTasks: true })
+			)
 		).toBe('done');
 	});
 
@@ -55,10 +58,10 @@ describe('boardPreferences', () => {
 		).toBeNull();
 	});
 
-	it('keeps customized local preferences when remote only has defaults', () => {
+	it('accepts a remote reset to defaults when there are no pending preferences', () => {
 		const local = normalizeBoardPreferences({ moveCheckedTasks: false });
 		const remote = normalizeBoardPreferences(undefined);
 
-		expect(mergeBoardPreferences(local, remote, false)).toEqual(local);
+		expect(mergeBoardPreferences(local, remote, false)).toEqual(remote);
 	});
 });

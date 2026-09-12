@@ -4,7 +4,6 @@ import { normalizeBoardPreferences } from '../src/lib/kainbu/boardPreferences.js
 import { createShareSlug, isValidShareSlug } from '../src/lib/kainbu/shareSlug.js';
 import type {
 	BackgroundTheme,
-	BoardPreferences,
 	KanbanData,
 	ProjectColumnRow,
 	ProjectTaskRow,
@@ -15,7 +14,6 @@ import {
 	getProjectPbId,
 	getProjectRecord,
 	pbEscapeFilter,
-	projectClientFilter,
 	projectRelationFilter,
 	resolveProjectClientId
 } from './pbWorkspace.js';
@@ -69,7 +67,7 @@ const getMembership = async (admin: PocketBase, projectId: string, userId: strin
 		return await admin
 			.collection('project_memberships')
 			.getFirstListItem(
-				`${projectRelationFilter(projectPbId)} && user = "${pbEscapeFilter(userId)}"`
+				`${projectRelationFilter(projectPbId)} && user = "${pbEscapeFilter(userId)}" && left_at = ""`
 			);
 	} catch {
 		return null;
@@ -91,7 +89,10 @@ const mapTaskRow = (row: ProjectTaskRow): Task => ({
 	...(row.color ? { color: row.color } : {}),
 	tags: Array.isArray(row.tags)
 		? row.tags.flatMap((tag) =>
-				tag && typeof tag === 'object' && typeof tag.id === 'string' && typeof tag.label === 'string'
+				tag &&
+				typeof tag === 'object' &&
+				typeof tag.id === 'string' &&
+				typeof tag.label === 'string'
 					? [
 							{
 								id: tag.id,
@@ -141,9 +142,7 @@ const buildKanbanData = (columns: ProjectColumnRow[], tasks: ProjectTaskRow[]): 
 };
 
 const buildBoardClientIdByPbId = (boardRecords: Array<Record<string, unknown>>) =>
-	new Map(
-		boardRecords.map((record) => [String(record.id), String(record.client_id || record.id)])
-	);
+	new Map(boardRecords.map((record) => [String(record.id), String(record.client_id || record.id)]));
 
 const resolveBoardClientIdForRecord = (
 	record: Record<string, unknown>,
@@ -189,6 +188,7 @@ const mapPbTask = (
 	has_checkbox: Boolean(record.has_checkbox),
 	checked: Boolean(record.checked),
 	completed_at: typeof record.completed_at === 'number' ? record.completed_at : null,
+	deleted_at: typeof record.deleted_at === 'number' ? record.deleted_at : null,
 	countdown_at: typeof record.countdown_at === 'number' ? record.countdown_at : null,
 	alarm_at: typeof record.alarm_at === 'number' ? record.alarm_at : null,
 	assigned_to: record.assigned_to ? relationId(record.assigned_to) : null,
@@ -240,9 +240,9 @@ const allocateShareSlug = async (admin: PocketBase) => {
 	for (let attempt = 0; attempt < 8; attempt += 1) {
 		const slug = createShareSlug();
 		try {
-			await admin.collection('project_boards').getFirstListItem(
-				`share_slug = "${pbEscapeFilter(slug)}"`
-			);
+			await admin
+				.collection('project_boards')
+				.getFirstListItem(`share_slug = "${pbEscapeFilter(slug)}"`);
 		} catch (error) {
 			if (error instanceof ClientResponseError && error.status === 404) {
 				return slug;
@@ -263,9 +263,9 @@ const getBoardByShareSlug = async (admin: PocketBase, slug: string) => {
 	}
 
 	try {
-		return await admin.collection('project_boards').getFirstListItem(
-			`share_slug = "${pbEscapeFilter(slug)}"`
-		);
+		return await admin
+			.collection('project_boards')
+			.getFirstListItem(`share_slug = "${pbEscapeFilter(slug)}"`);
 	} catch (error) {
 		if (error instanceof ClientResponseError && error.status === 404) {
 			throw new ShareApiError(404, 'Shared board not found.');
@@ -277,9 +277,11 @@ const getBoardByShareSlug = async (admin: PocketBase, slug: string) => {
 const getBoardByClientId = async (admin: PocketBase, projectId: string, boardId: string) => {
 	const projectPbId = await getProjectPbId(admin, projectId);
 	try {
-		return await admin.collection('project_boards').getFirstListItem(
-			`${projectRelationFilter(projectPbId)} && client_id = "${pbEscapeFilter(boardId)}"`
-		);
+		return await admin
+			.collection('project_boards')
+			.getFirstListItem(
+				`${projectRelationFilter(projectPbId)} && client_id = "${pbEscapeFilter(boardId)}"`
+			);
 	} catch (error) {
 		if (error instanceof ClientResponseError && error.status === 404) {
 			throw new ShareApiError(404, 'Board not found.');
@@ -288,11 +290,7 @@ const getBoardByClientId = async (admin: PocketBase, projectId: string, boardId:
 	}
 };
 
-const loadBoardSnapshot = async (
-	admin: PocketBase,
-	projectId: string,
-	boardClientId: string
-) => {
+const loadBoardSnapshot = async (admin: PocketBase, projectId: string, boardClientId: string) => {
 	const projectPbId = await getProjectPbId(admin, projectId);
 	const [projectRecord, boardRecords, columnRecords, taskRecords] = await Promise.all([
 		getProjectRecord(admin, projectId),
@@ -327,8 +325,8 @@ const loadBoardSnapshot = async (
 
 	const boardPreferences = normalizeBoardPreferences(boardRecord.preferences);
 	const kanbanData = buildKanbanData(
-		columns.filter((column) => (column.board_id || boardClientId) === boardClientId),
-		tasks.filter((task) => (task.board_id || boardClientId) === boardClientId)
+		columns.filter((column) => column.board_id === boardClientId),
+		tasks.filter((task) => task.board_id === boardClientId && !task.deleted_at)
 	);
 
 	return {
@@ -345,9 +343,7 @@ const loadBoardSnapshot = async (
 
 export const toShareApiError = (error: unknown) => {
 	const mapped =
-		error instanceof ShareApiError
-			? error
-			: mapSharePocketBaseError(error, 'Unknown error');
+		error instanceof ShareApiError ? error : mapSharePocketBaseError(error, 'Unknown error');
 	return { status: mapped.status, message: mapped.message };
 };
 

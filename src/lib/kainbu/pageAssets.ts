@@ -99,7 +99,8 @@ export const deletePageAsset = async (asset: PageAsset) => {
 
 export const downloadPageAssetBlob = async (asset: PageAsset) => {
 	const record = await pocketbase.collection('page_assets').getOne(asset.id);
-	const url = pocketbase.files.getURL(record, record.file);
+	const token = await pocketbase.files.getToken();
+	const url = pocketbase.files.getURL(record, record.file, { token });
 	const response = await fetch(url, {
 		headers: {
 			Authorization: pocketbase.authStore.token ? `Bearer ${pocketbase.authStore.token}` : ''

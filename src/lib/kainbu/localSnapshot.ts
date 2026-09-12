@@ -73,12 +73,14 @@ export const loadWorkspaceSnapshot = (userId: string): LocalWorkspaceSnapshot | 
 };
 
 export const saveWorkspaceSnapshot = (snapshot: LocalWorkspaceSnapshot) => {
-	if (!isBrowser) return;
+	if (!isBrowser) return false;
 
 	try {
 		window.localStorage.setItem(getSnapshotKey(snapshot.userId), JSON.stringify(snapshot));
+		return true;
 	} catch (error) {
 		console.error(error);
+		return false;
 	}
 };
 

@@ -58,7 +58,21 @@ beforeAll(async () => {
 	} catch {
 		// User already exists from a prior test run.
 	}
-	const adminAuth = await adminClient.collection('users').authWithPassword(ADMIN_EMAIL, adminPassword);
+	// The test fixture verifies ownership using the local superuser; public signup cannot grant admin.
+	const fixtureAdmin = pb();
+	await fixtureAdmin
+		.collection('_superusers')
+		.authWithPassword(
+			process.env.POCKETBASE_ADMIN_EMAIL || 'admin@kainbu.local',
+			process.env.POCKETBASE_ADMIN_PASSWORD || 'kainbu-admin-change-me'
+		);
+	const candidate = await fixtureAdmin
+		.collection('users')
+		.getFirstListItem(fixtureAdmin.filter('email = {:email}', { email: ADMIN_EMAIL }));
+	await fixtureAdmin.collection('users').update(candidate.id, { verified: true });
+	const adminAuth = await adminClient
+		.collection('users')
+		.authWithPassword(ADMIN_EMAIL, adminPassword);
 	adminToken = adminAuth.token;
 	adminUserId = adminAuth.record.id;
 
@@ -69,7 +83,9 @@ beforeAll(async () => {
 		passwordConfirm: memberPassword
 	});
 	memberUserId = memberRecord.id;
-	const memberAuth = await memberClient.collection('users').authWithPassword(memberEmail, memberPassword);
+	const memberAuth = await memberClient
+		.collection('users')
+		.authWithPassword(memberEmail, memberPassword);
 	memberToken = memberAuth.token;
 });
 
@@ -113,9 +129,7 @@ describe('Local Docker — admin concurrency', () => {
 		];
 
 		for (let round = 0; round < 5; round += 1) {
-			const results = await Promise.all(
-				paths.map((path) => authJson(path, adminToken))
-			);
+			const results = await Promise.all(paths.map((path) => authJson(path, adminToken)));
 			for (const { response } of results) {
 				expect(response.status).toBe(200);
 			}
@@ -278,8 +292,12 @@ describe.skipIf(!hasOpenRouter)('Local Docker — admin usage with AI', () => {
 		expect(createResponse.status).toBe(200);
 		const createdProject = await createResponse.json();
 		const projectClientId = createdProject.id;
-		const project = await adminClient.collection('projects').getFirstListItem(`client_id = "${projectClientId}"`);
-		const boards = await adminClient.collection('project_boards').getFullList({ filter: `project = "${project.id}"` });
+		const project = await adminClient
+			.collection('projects')
+			.getFirstListItem(`client_id = "${projectClientId}"`);
+		const boards = await adminClient
+			.collection('project_boards')
+			.getFullList({ filter: `project = "${project.id}"` });
 		const board = boards[0];
 		expect(board?.id).toBeTruthy();
 		const boardClientId = board.client_id;

@@ -16,7 +16,9 @@ const cloneKanbanData = (kanbanData: KanbanData) => structuredClone(kanbanData |
 const fallbackBoardId = (projectId: string) => `__fallback_board__${projectId}`;
 const fallbackPageId = (projectId: string) => `__fallback_page__${projectId}`;
 
-const createFallbackBoard = (project: Pick<Project, 'id' | 'kanbanData' | 'createdAt' | 'updatedAt'>): ProjectBoard => ({
+const createFallbackBoard = (
+	project: Pick<Project, 'id' | 'kanbanData' | 'createdAt' | 'updatedAt'>
+): ProjectBoard => ({
 	id: fallbackBoardId(project.id),
 	projectId: project.id,
 	name: 'Board',
@@ -28,7 +30,9 @@ const createFallbackBoard = (project: Pick<Project, 'id' | 'kanbanData' | 'creat
 	updatedAt: project.updatedAt
 });
 
-const createFallbackPage = (project: Pick<Project, 'id' | 'scratchpadData' | 'createdAt' | 'updatedAt'>): ProjectPage => ({
+const createFallbackPage = (
+	project: Pick<Project, 'id' | 'scratchpadData' | 'createdAt' | 'updatedAt'>
+): ProjectPage => ({
 	id: fallbackPageId(project.id),
 	projectId: project.id,
 	name: 'Notes',
@@ -55,16 +59,26 @@ export const pageToScratchpadData = (
 	};
 };
 
-export const getProjectBoard = (project: Pick<Project, 'boards' | 'activeBoardId'>, boardId?: string | null) =>
-	project.boards.find((board) => board.id === (boardId || project.activeBoardId)) || project.boards[0] || null;
+export const getProjectBoard = (
+	project: Pick<Project, 'boards' | 'activeBoardId'>,
+	boardId?: string | null
+) =>
+	project.boards.find((board) => board.id === (boardId || project.activeBoardId)) ||
+	project.boards[0] ||
+	null;
 
 export const resolveProjectBoardId = (
 	project: Pick<Project, 'boards' | 'activeBoardId'>,
 	boardId?: string | null
 ) => getProjectBoard(project, boardId)?.id ?? null;
 
-export const getProjectPage = (project: Pick<Project, 'pages' | 'activePageId'>, pageId?: string | null) =>
-	project.pages.find((page) => page.id === (pageId || project.activePageId)) || project.pages[0] || null;
+export const getProjectPage = (
+	project: Pick<Project, 'pages' | 'activePageId'>,
+	pageId?: string | null
+) =>
+	project.pages.find((page) => page.id === (pageId || project.activePageId)) ||
+	project.pages[0] ||
+	null;
 
 export const normalizeProjectStructure = (project: Project): Project => {
 	const normalizedAiState = normalizeProjectAiState(project);
@@ -139,7 +153,11 @@ export const setProjectActivePage = (project: Project, pageId: string) => {
 	};
 };
 
-export const updateProjectBoardData = (project: Project, boardId: string, kanbanData: KanbanData) => {
+export const updateProjectBoardData = (
+	project: Project,
+	boardId: string,
+	kanbanData: KanbanData
+) => {
 	const nextBoards = project.boards.map((board) =>
 		board.id === boardId
 			? {
@@ -173,21 +191,17 @@ export const mergeProjectBoardsByUpdatedAt = (
 
 		if (localBoard && remoteBoard) {
 			const preferLocalBoard = preferLocalBoardIds.has(boardId);
-			const remoteIsNewer = remoteBoard.updatedAt > localBoard.updatedAt;
-			const winner = preferLocalBoard
-				? localBoard
-				: remoteIsNewer
-					? remoteBoard
-					: localBoard;
+			// Only a pending mutation can override the authoritative server copy.
+			const winner = preferLocalBoard ? localBoard : remoteBoard;
 
 			merged.push({
 				...winner,
 				preferences: mergeBoardPreferences(
 					localBoard.preferences,
 					remoteBoard.preferences,
-					preferLocalBoard || !remoteIsNewer
+					preferLocalBoard
 				),
-				updatedAt: Math.max(localBoard.updatedAt, remoteBoard.updatedAt)
+				updatedAt: winner.updatedAt
 			});
 			continue;
 		}
@@ -225,12 +239,11 @@ export const mergeProjectPagesByUpdatedAt = (
 
 		if (localPage && remotePage) {
 			const preferLocalPage = preferLocalPageIds.has(pageId);
-			const remoteIsNewer = remotePage.updatedAt > localPage.updatedAt;
-			const winner = preferLocalPage ? localPage : remoteIsNewer ? remotePage : localPage;
+			const winner = preferLocalPage ? localPage : remotePage;
 
 			merged.push({
 				...winner,
-				updatedAt: Math.max(localPage.updatedAt, remotePage.updatedAt)
+				updatedAt: winner.updatedAt
 			});
 			continue;
 		}

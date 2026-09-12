@@ -106,6 +106,22 @@ export const withAdminAuthRetry = <T extends PocketBase>(
 ): T =>
 	new Proxy(pb, {
 		get(target, prop, receiver) {
+			if (prop === 'send') {
+				return async (...args: Parameters<PocketBase['send']>) => {
+					try {
+						return await target.send(...args);
+					} catch (error) {
+						if (!isAdminAuthFailure(error)) throw error;
+						invalidateAdminPbAuth();
+						// Invalidate for the next request, but never replay an uncertain mutation.
+						const method = String(args[1]?.method || 'GET').toUpperCase();
+						if (method !== 'GET' && method !== 'HEAD') throw error;
+						const fresh = createFreshClient();
+						fresh.authStore.save(await resolveFreshToken(), null);
+						return fresh.send(...args);
+					}
+				};
+			}
 			if (prop !== 'collection') {
 				const value = Reflect.get(target, prop, receiver);
 				return typeof value === 'function' ? value.bind(target) : value;

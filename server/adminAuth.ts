@@ -23,7 +23,10 @@ export const isEmailOnAdminAllowlist = (email: string | undefined): boolean => {
 export const isUserAppAdmin = (record: RecordModel): boolean => {
 	if (record.disabled === true) return false;
 	if (record.is_admin === true) return true;
-	return isEmailOnAdminAllowlist(typeof record.email === 'string' ? record.email : undefined);
+	return (
+		record.verified === true &&
+		isEmailOnAdminAllowlist(typeof record.email === 'string' ? record.email : undefined)
+	);
 };
 
 export const maskApiKey = (key: string): string => {
@@ -35,7 +38,12 @@ export const maskApiKey = (key: string): string => {
 
 export const syncAdminFlag = async (record: RecordModel): Promise<RecordModel> => {
 	const email = typeof record.email === 'string' ? record.email : '';
-	if (!isEmailOnAdminAllowlist(email) || record.is_admin === true) {
+	if (
+		record.verified !== true ||
+		record.disabled === true ||
+		!isEmailOnAdminAllowlist(email) ||
+		record.is_admin === true
+	) {
 		return record;
 	}
 
@@ -71,7 +79,7 @@ export const getAdminMe = async (authorization: string | undefined) => {
 	const synced = await syncAdminFlag(record);
 	const email = typeof synced.email === 'string' ? synced.email : '';
 	return {
-		isAdmin: isUserAppAdmin(synced) || isEmailOnAdminAllowlist(email),
+		isAdmin: isUserAppAdmin(synced),
 		email,
 		userId: synced.id
 	};

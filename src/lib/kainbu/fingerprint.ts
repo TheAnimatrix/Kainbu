@@ -23,7 +23,9 @@ export const canonicalizeKanbanData = (kanbanData: KanbanData) =>
 			completedAt: task.completedAt ?? null,
 			countdownAt: task.countdownAt ?? null,
 			alarmAt: task.alarmAt ?? null,
-			assignedTo: task.assignedTo || null
+			assignedTo: task.assignedTo || null,
+			deletedAt: task.deletedAt || null,
+			linkedTaskIds: [...new Set(task.linkedTaskIds || [])].sort()
 		}))
 	}));
 

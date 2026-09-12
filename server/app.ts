@@ -9,7 +9,7 @@ import { invalidJsonAs400, rateLimit, requestBodyLimit, securityLimits } from '.
 import { getOpenRouterApiKey } from './openrouter-key.js';
 import { extractUsageFromResponse } from './workspace-ai/openrouter-stream.js';
 import { recordAiUsageEvent } from './ai-usage.js';
-import { getAuthenticatedUserId, resolveAuthenticatedUserId } from './pocketbase.js';
+import { resolveAuthenticatedUserId } from './pocketbase.js';
 import {
 	handleAdminGetAiSettings,
 	handleAdminGetAuthEmailSettings,
@@ -127,7 +127,10 @@ app.use(
 	'*',
 	cors({
 		origin: (origin) => {
-			const allowed = getEnv('KAINBU_CORS_ORIGINS', getEnv('KAINBU_PUBLIC_URL', 'http://localhost:3000'))
+			const allowed = getEnv(
+				'KAINBU_CORS_ORIGINS',
+				getEnv('KAINBU_PUBLIC_URL', 'http://localhost:3000')
+			)
 				.split(',')
 				.map((value) => value.trim().replace(/\/$/, ''))
 				.filter(Boolean);
@@ -141,11 +144,12 @@ app.use(
 app.use('*', invalidJsonAs400);
 app.use('*', async (c, next) => {
 	const path = c.req.path;
-	const limit = path === '/api/workspace-ai/transcribe-images'
-		? securityLimits.maxTranscriptionJsonBytes
-		: path.startsWith('/api/workspace-ai')
-			? securityLimits.maxAiJsonBytes
-			: securityLimits.maxJsonBytes;
+	const limit =
+		path === '/api/workspace-ai/transcribe-images'
+			? securityLimits.maxTranscriptionJsonBytes
+			: path.startsWith('/api/workspace-ai')
+				? securityLimits.maxAiJsonBytes
+				: securityLimits.maxJsonBytes;
 	return requestBodyLimit(limit)(c, next);
 });
 app.use('*', rateLimit());
@@ -160,7 +164,12 @@ app.get('/api/models', async (c: Context) => {
 	return c.json(getWorkspaceAiModelsResponse());
 });
 app.get('/api/auth/settings', handleGetAuthSettings);
-app.post('/api/auth/signup', requestBodyLimit(64 * 1024), rateLimit({ limit: 10 }), handleAuthSignup);
+app.post(
+	'/api/auth/signup',
+	requestBodyLimit(64 * 1024),
+	rateLimit({ limit: 10 }),
+	handleAuthSignup
+);
 
 const handleWorkspaceMutationError = (c: Context, error: unknown) => {
 	const { status, message } = toWorkspaceApiError(error);
@@ -271,205 +280,253 @@ const generateTaskTitle = async (
 	return normalizeUtilityModelText(parsed.choices?.[0]?.message?.content || '');
 };
 
-app.post('/api/workspace-ai', requestBodyLimit(securityLimits.maxAiJsonBytes), rateLimit({ limit: 20 }), async (c: Context) => {
-	try {
-		await loadAiModelCatalog();
-		const body = (await c.req.json()) as AiWorkspaceRequest;
-		const payload = await handleWorkspaceAiRequest(body, c.req.header('Authorization'));
-		return c.json(payload);
-	} catch (error) {
-		const message = error instanceof Error ? error.message : 'Unknown error';
-		const status =
-			error && typeof error === 'object' && 'status' in error && typeof error.status === 'number'
-				? (error.status as number)
-				: message === 'Unauthorized'
-					? 401
-					: 500;
-		return c.json({ error: message }, status as 400 | 401 | 403 | 404 | 409 | 500);
+app.post(
+	'/api/workspace-ai',
+	requestBodyLimit(securityLimits.maxAiJsonBytes),
+	rateLimit({ limit: 20 }),
+	async (c: Context) => {
+		try {
+			await loadAiModelCatalog();
+			const body = (await c.req.json()) as AiWorkspaceRequest;
+			const payload = await handleWorkspaceAiRequest(body, c.req.header('Authorization'));
+			return c.json(payload);
+		} catch (error) {
+			const message = error instanceof Error ? error.message : 'Unknown error';
+			const status =
+				error && typeof error === 'object' && 'status' in error && typeof error.status === 'number'
+					? (error.status as number)
+					: message === 'Unauthorized'
+						? 401
+						: 500;
+			return c.json({ error: message }, status as 400 | 401 | 403 | 404 | 409 | 500);
+		}
 	}
-});
+);
 app.get('/api/workspace-ai', methodNotAllowed);
 app.get('/api/workspace-ai/stream', methodNotAllowed);
 app.get('/api/workspace-ai/session-title', methodNotAllowed);
 app.get('/api/workspace-ai/task-title', methodNotAllowed);
 app.get('/api/workspace-ai/transcribe-images', methodNotAllowed);
 
-app.post('/api/workspace-ai/stream', requestBodyLimit(securityLimits.maxAiJsonBytes), rateLimit({ limit: 20 }), async (c: Context) => {
-	try {
-		await loadAiModelCatalog();
-		await resolveAuthenticatedUserId(c.req.header('Authorization'));
-	} catch (error) {
-		const message = error instanceof Error ? error.message : 'Unknown error';
-		const status =
-			error && typeof error === 'object' && 'status' in error && typeof error.status === 'number'
-				? (error.status as number)
-				: message === 'Unauthorized'
-					? 401
-					: 500;
-		return c.json({ error: message }, status as 400 | 401 | 500);
-	}
+app.post(
+	'/api/workspace-ai/stream',
+	requestBodyLimit(securityLimits.maxAiJsonBytes),
+	rateLimit({ limit: 20 }),
+	async (c: Context) => {
+		try {
+			await loadAiModelCatalog();
+			await resolveAuthenticatedUserId(c.req.header('Authorization'));
+		} catch (error) {
+			const message = error instanceof Error ? error.message : 'Unknown error';
+			const status =
+				error && typeof error === 'object' && 'status' in error && typeof error.status === 'number'
+					? (error.status as number)
+					: message === 'Unauthorized'
+						? 401
+						: 500;
+			return c.json({ error: message }, status as 400 | 401 | 500);
+		}
 
-	const body = (await c.req.json()) as AiWorkspaceRequest;
-	const authorization = c.req.header('Authorization');
-	const encoder = new TextEncoder();
+		const body = (await c.req.json()) as AiWorkspaceRequest;
+		const authorization = c.req.header('Authorization');
+		const encoder = new TextEncoder();
 
-	const stream = new ReadableStream({
-		async start(controller) {
-			const sendEvent = (event: AiWorkspaceStreamEvent) => {
+		const stream = new ReadableStream({
+			async start(controller) {
+				const sendEvent = (event: AiWorkspaceStreamEvent) => {
+					try {
+						controller.enqueue(
+							encoder.encode(`event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`)
+						);
+					} catch (error) {
+						// Ignore disconnected clients naturally
+					}
+				};
+
 				try {
-					controller.enqueue(
-						encoder.encode(`event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`)
-					);
-				} catch (error) {
-					// Ignore disconnected clients naturally
-				}
-			};
-
-			try {
-				const payload = await handleWorkspaceAiRequest(body, authorization, (progress) => {
-					sendEvent({
-						type: 'progress',
-						progress
+					const payload = await handleWorkspaceAiRequest(body, authorization, (progress) => {
+						sendEvent({
+							type: 'progress',
+							progress
+						});
 					});
-				});
 
-				sendEvent({
-					type: 'final',
-					response: payload
-				});
-			} catch (error) {
-				sendEvent({
-					type: 'error',
-					error: error instanceof Error ? error.message : 'Unknown error'
-				});
-			} finally {
-				controller.close();
+					sendEvent({
+						type: 'final',
+						response: payload
+					});
+				} catch (error) {
+					sendEvent({
+						type: 'error',
+						error: error instanceof Error ? error.message : 'Unknown error'
+					});
+				} finally {
+					controller.close();
+				}
 			}
-		}
-	});
-
-	return new Response(stream, {
-		headers: {
-			'Content-Type': 'text/event-stream; charset=utf-8',
-			'Cache-Control': 'no-cache, no-transform',
-			Connection: 'keep-alive'
-		}
-	});
-});
-
-app.post('/api/workspace-ai/session-title', requestBodyLimit(256 * 1024), rateLimit({ limit: 20 }), async (c: Context) => {
-	if (!c.req.header('Authorization')) {
-		return c.json({ error: 'Unauthorized' }, 401);
-	}
-
-	try {
-		const body = (await c.req.json()) as {
-			userMessage?: string;
-			assistantReply?: string;
-		};
-		const userMessage = typeof body.userMessage === 'string' ? body.userMessage.trim() : '';
-		const assistantReply =
-			typeof body.assistantReply === 'string' ? body.assistantReply.trim() : '';
-
-		if (!userMessage) {
-			return c.json({ error: 'userMessage is required' }, 400);
-		}
-
-		const { userId } = await resolveAuthenticatedUserId(c.req.header('Authorization'));
-		const title = await generateSessionTitle(userMessage, assistantReply, {
-			userId,
-			requestId: randomUUID()
 		});
-		if (!title || title.length > 60) {
+
+		return new Response(stream, {
+			headers: {
+				'Content-Type': 'text/event-stream; charset=utf-8',
+				'Cache-Control': 'no-cache, no-transform',
+				Connection: 'keep-alive'
+			}
+		});
+	}
+);
+
+app.post(
+	'/api/workspace-ai/session-title',
+	requestBodyLimit(256 * 1024),
+	rateLimit({ limit: 20 }),
+	async (c: Context) => {
+		if (!c.req.header('Authorization')) {
+			return c.json({ error: 'Unauthorized' }, 401);
+		}
+
+		try {
+			const body = (await c.req.json()) as {
+				userMessage?: string;
+				assistantReply?: string;
+			};
+			const userMessage = typeof body.userMessage === 'string' ? body.userMessage.trim() : '';
+			const assistantReply =
+				typeof body.assistantReply === 'string' ? body.assistantReply.trim() : '';
+
+			if (!userMessage) {
+				return c.json({ error: 'userMessage is required' }, 400);
+			}
+
+			const { userId } = await resolveAuthenticatedUserId(c.req.header('Authorization'));
+			const title = await generateSessionTitle(userMessage, assistantReply, {
+				userId,
+				requestId: randomUUID()
+			});
+			if (!title || title.length > 60) {
+				return c.json({ title: '' });
+			}
+
+			return c.json({ title });
+		} catch (error) {
+			console.error('Session title generation failed:', error);
 			return c.json({ title: '' });
 		}
-
-		return c.json({ title });
-	} catch (error) {
-		console.error('Session title generation failed:', error);
-		return c.json({ title: '' });
 	}
-});
+);
 
-app.post('/api/workspace-ai/task-title', requestBodyLimit(256 * 1024), rateLimit({ limit: 20 }), async (c: Context) => {
-	if (!c.req.header('Authorization')) {
-		return c.json({ error: 'Unauthorized' }, 401);
+app.post(
+	'/api/workspace-ai/task-title',
+	requestBodyLimit(256 * 1024),
+	rateLimit({ limit: 20 }),
+	async (c: Context) => {
+		if (!c.req.header('Authorization')) {
+			return c.json({ error: 'Unauthorized' }, 401);
+		}
+
+		try {
+			const body = (await c.req.json()) as {
+				title?: string;
+				description?: string;
+				columnTitle?: string;
+			};
+			const title = typeof body.title === 'string' ? body.title.trim() : '';
+			const description =
+				typeof body.description === 'string' ? body.description.trim().slice(0, 500) : '';
+			const columnTitle = typeof body.columnTitle === 'string' ? body.columnTitle.trim() : '';
+
+			if (!title) {
+				return c.json({ error: 'title is required' }, 400);
+			}
+
+			const { userId } = await resolveAuthenticatedUserId(c.req.header('Authorization'));
+			const rewritten = await generateTaskTitle(title, description, columnTitle, {
+				userId,
+				requestId: randomUUID()
+			});
+			if (!rewritten) {
+				return c.json({ error: 'AI did not return a rewritten title.' }, 502);
+			}
+			if (rewritten.length > TASK_TITLE_MAX_LENGTH) {
+				return c.json({ error: 'Rewritten title was too long.' }, 502);
+			}
+
+			return c.json({ title: rewritten });
+		} catch (error) {
+			console.error('Task title rewrite failed:', error);
+			const message = error instanceof Error ? error.message : 'Task title rewrite failed';
+			return c.json({ error: message, title: '' }, 502);
+		}
 	}
+);
 
-	try {
-		const body = (await c.req.json()) as {
-			title?: string;
-			description?: string;
-			columnTitle?: string;
-		};
-		const title = typeof body.title === 'string' ? body.title.trim() : '';
-		const description =
-			typeof body.description === 'string' ? body.description.trim().slice(0, 500) : '';
-		const columnTitle = typeof body.columnTitle === 'string' ? body.columnTitle.trim() : '';
-
-		if (!title) {
-			return c.json({ error: 'title is required' }, 400);
+app.post(
+	'/api/workspace-ai/transcribe-images',
+	requestBodyLimit(securityLimits.maxTranscriptionJsonBytes),
+	rateLimit({ limit: 10 }),
+	async (c: Context) => {
+		if (!c.req.header('Authorization')) {
+			return c.json({ error: 'Unauthorized' }, 401);
 		}
 
-		const { userId } = await resolveAuthenticatedUserId(c.req.header('Authorization'));
-		const rewritten = await generateTaskTitle(title, description, columnTitle, {
-			userId,
-			requestId: randomUUID()
-		});
-		if (!rewritten) {
-			return c.json({ error: 'AI did not return a rewritten title.' }, 502);
-		}
-		if (rewritten.length > TASK_TITLE_MAX_LENGTH) {
-			return c.json({ error: 'Rewritten title was too long.' }, 502);
-		}
+		try {
+			const body = (await c.req.json()) as {
+				images?: Array<{ id?: string; name?: string; content?: string }>;
+			};
+			const rawImages = body.images;
+			if (!Array.isArray(rawImages) || rawImages.length === 0) {
+				return c.json({ error: 'images is required' }, 400);
+			}
+			if (
+				rawImages.length > 8 ||
+				rawImages.some(
+					(image) =>
+						!image ||
+						typeof image !== 'object' ||
+						typeof image?.content !== 'string' ||
+						(typeof image.content === 'string' && image.content.length > 8_000_000) ||
+						(image.name !== undefined && typeof image.name !== 'string')
+				)
+			) {
+				return c.json(
+					{ error: 'images contains malformed or oversized entries.' },
+					rawImages.length > 8 ||
+						rawImages.some(
+							(image) => typeof image?.content === 'string' && image.content.length > 8_000_000
+						)
+						? 413
+						: 400
+				);
+			}
+			const images: Array<{ id: string; name: string; content: string }> = rawImages
+				.map((image, index) => ({
+					id: typeof image.id === 'string' && image.id.trim() ? image.id.trim() : `image-${index}`,
+					name: typeof image.name === 'string' ? image.name.trim().slice(0, 256) : 'image',
+					content: typeof image.content === 'string' ? image.content.trim() : ''
+				}))
+				.filter(
+					(image): image is { id: string; name: string; content: string } =>
+						image.content.length > 0
+				);
 
-		return c.json({ title: rewritten });
-	} catch (error) {
-		console.error('Task title rewrite failed:', error);
-		const message = error instanceof Error ? error.message : 'Task title rewrite failed';
-		return c.json({ error: message, title: '' }, 502);
+			if (!images.length) {
+				return c.json({ error: 'images is required' }, 400);
+			}
+
+			await resolveAuthenticatedUserId(c.req.header('Authorization'));
+			// Populate the model catalog cache so the vision fallback config resolves;
+			// every other AI route does this before reading model configs.
+			await loadAiModelCatalog();
+			const transcriptions = await transcribeVisionImages(images);
+			return c.json({ transcriptions });
+		} catch (error) {
+			console.error('Image transcription failed:', error);
+			const message = error instanceof Error ? error.message : 'Image transcription failed';
+			const status = message.includes('not configured') ? 503 : 502;
+			return c.json({ error: message }, status);
+		}
 	}
-});
-
-app.post('/api/workspace-ai/transcribe-images', requestBodyLimit(securityLimits.maxTranscriptionJsonBytes), rateLimit({ limit: 10 }), async (c: Context) => {
-	if (!c.req.header('Authorization')) {
-		return c.json({ error: 'Unauthorized' }, 401);
-	}
-
-	try {
-		const body = (await c.req.json()) as { images?: Array<{ id?: string; name?: string; content?: string }> };
-		const rawImages = body.images;
-		if (!Array.isArray(rawImages) || rawImages.length === 0) {
-			return c.json({ error: 'images is required' }, 400);
-		}
-		if (rawImages.length > 8 || rawImages.some((image) => !image || typeof image !== 'object' || typeof image?.content !== 'string' || (typeof image.content === 'string' && image.content.length > 8_000_000) || (image.name !== undefined && typeof image.name !== 'string'))) {
-			return c.json({ error: 'images contains malformed or oversized entries.' }, rawImages.length > 8 || rawImages.some((image) => typeof image?.content === 'string' && image.content.length > 8_000_000) ? 413 : 400);
-		}
-		const images: Array<{ id: string; name: string; content: string }> = rawImages
-			.map((image, index) => ({
-				id: typeof image.id === 'string' && image.id.trim() ? image.id.trim() : `image-${index}`,
-				name: typeof image.name === 'string' ? image.name.trim().slice(0, 256) : 'image',
-				content: typeof image.content === 'string' ? image.content.trim() : ''
-			}))
-			.filter((image): image is { id: string; name: string; content: string } => image.content.length > 0);
-
-		if (!images.length) {
-			return c.json({ error: 'images is required' }, 400);
-		}
-
-		await resolveAuthenticatedUserId(c.req.header('Authorization'));
-		// Populate the model catalog cache so the vision fallback config resolves;
-		// every other AI route does this before reading model configs.
-		await loadAiModelCatalog();
-		const transcriptions = await transcribeVisionImages(images);
-		return c.json({ transcriptions });
-	} catch (error) {
-		console.error('Image transcription failed:', error);
-		const message = error instanceof Error ? error.message : 'Image transcription failed';
-		const status = message.includes('not configured') ? 503 : 502;
-		return c.json({ error: message }, status);
-	}
-});
+);
 
 app.post('/api/workspace/projects/touch', async (c: Context) => {
 	try {
@@ -515,10 +572,7 @@ app.post('/api/workspace/boards/share', async (c: Context) => {
 		return c.json(payload);
 	} catch (error) {
 		const mapped = toShareApiError(error);
-		return c.json(
-			{ error: mapped.message },
-			mapped.status as 400 | 401 | 403 | 404 | 500 | 503
-		);
+		return c.json({ error: mapped.message }, mapped.status as 400 | 401 | 403 | 404 | 500 | 503);
 	}
 });
 
@@ -812,9 +866,24 @@ app.onError((error, c) => {
 	return c.json({ error: message }, status as 400 | 401 | 403 | 404 | 409 | 500);
 });
 
-app.post('/api/cli/device/start', requestBodyLimit(32 * 1024), rateLimit({ limit: 10 }), handleCliDeviceStart);
-app.post('/api/cli/device/poll', requestBodyLimit(32 * 1024), rateLimit({ limit: 30 }), handleCliDevicePoll);
-app.post('/api/cli/device/exchange', requestBodyLimit(32 * 1024), rateLimit({ limit: 10 }), handleCliDeviceExchange);
+app.post(
+	'/api/cli/device/start',
+	requestBodyLimit(32 * 1024),
+	rateLimit({ limit: 10 }),
+	handleCliDeviceStart
+);
+app.post(
+	'/api/cli/device/poll',
+	requestBodyLimit(32 * 1024),
+	rateLimit({ limit: 30 }),
+	handleCliDevicePoll
+);
+app.post(
+	'/api/cli/device/exchange',
+	requestBodyLimit(32 * 1024),
+	rateLimit({ limit: 10 }),
+	handleCliDeviceExchange
+);
 app.post('/api/cli/device/approve', async (c: Context) => {
 	try {
 		return await handleCliDeviceApprove(c);

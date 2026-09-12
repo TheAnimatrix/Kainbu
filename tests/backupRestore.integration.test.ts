@@ -14,8 +14,7 @@ import { setWorkspaceApiConfig } from '../src/lib/kainbu/workspaceApi';
 
 const PB = process.env.KAINBU_TEST_PB || 'http://127.0.0.1:8090';
 const API = process.env.KAINBU_TEST_BASE || 'http://127.0.0.1:8788';
-const BACKUP_PATH =
-	process.env.KAINBU_TEST_BACKUP || 'k:/Downloads/kainbu-backup-2026-05-25.json';
+const BACKUP_PATH = process.env.KAINBU_TEST_BACKUP || 'tests/fixtures/workspace-backup.json';
 
 class MockFile {
 	constructor(private content: string) {}
@@ -25,7 +24,7 @@ class MockFile {
 	}
 }
 
-describe.runIf(process.env.KAINBU_TEST_PB || true)('backup restore integration', () => {
+describe.runIf(Boolean(process.env.KAINBU_TEST_PB))('backup restore integration', () => {
 	const email = `restore-${Date.now()}@kainbu.test`;
 	const password = 'testpass123456';
 	let userId = '';
@@ -77,28 +76,24 @@ describe.runIf(process.env.KAINBU_TEST_PB || true)('backup restore integration',
 		expect(restored?.boards.map((board) => board.name).sort()).toEqual(['Board', 'Board 2']);
 	});
 
-	it(
-		'restores every project from a full workspace backup',
-		async () => {
-			const raw = readFileSync(BACKUP_PATH, 'utf8');
-			const imported = await parseProjectsImport(new MockFile(raw) as unknown as File, userId);
-			expect(imported).toHaveLength(8);
+	it('restores every project from a full workspace backup', async () => {
+		const raw = readFileSync(BACKUP_PATH, 'utf8');
+		const imported = await parseProjectsImport(new MockFile(raw) as unknown as File, userId);
+		expect(imported).toHaveLength(8);
 
-			const createdIds: string[] = [];
-			for (const project of imported) {
-				const created = await createProject(userId, project.name, project, {
-					skipWorkspaceFetch: true
-				});
-				createdIds.push(created.id);
-				expect(created.boards.length).toBe(project.boards.length);
-			}
+		const createdIds: string[] = [];
+		for (const project of imported) {
+			const created = await createProject(userId, project.name, project, {
+				skipWorkspaceFetch: true
+			});
+			createdIds.push(created.id);
+			expect(created.boards.length).toBe(project.boards.length);
+		}
 
-			const workspace = await fetchWorkspace(userId, { fresh: true });
-			for (let index = 0; index < createdIds.length; index += 1) {
-				const restored = workspace.projects.find((project) => project.id === createdIds[index]);
-				expect(restored?.boards.length).toBe(imported[index]?.boards.length);
-			}
-		},
-		60_000
-	);
+		const workspace = await fetchWorkspace(userId, { fresh: true });
+		for (let index = 0; index < createdIds.length; index += 1) {
+			const restored = workspace.projects.find((project) => project.id === createdIds[index]);
+			expect(restored?.boards.length).toBe(imported[index]?.boards.length);
+		}
+	}, 60_000);
 });

@@ -1,6 +1,7 @@
 import type { Context } from 'hono';
 import { createAdminPb, resolveAuthenticatedUserId } from './pocketbase.js';
 import { loadWorkspaceFromPb } from '../src/lib/kainbu/loadWorkspaceFromRemote.js';
+import { getPublicPocketBaseUrl } from './publicUrls.js';
 
 /**
  * Server-side equivalent of the client-side `fetchWorkspace` in
@@ -23,12 +24,17 @@ export const handleWorkspaceSnapshot = async (c: Context) => {
 			const self = await pb.collection('users').getOne<Record<string, unknown>>(userId, {
 				fields: 'id,email,username,avatar'
 			});
-			authEmail = String(self.email || '').trim().toLowerCase();
+			authEmail = String(self.email || '')
+				.trim()
+				.toLowerCase();
 		} catch {
 			// No-op: invites-by-email won't match, but the rest still works.
 		}
 
-		const snapshot = await loadWorkspaceFromPb(pb, userId, { authEmail });
+		const snapshot = await loadWorkspaceFromPb(pb, userId, {
+			authEmail,
+			avatarBaseUrl: getPublicPocketBaseUrl()
+		});
 		return c.json(snapshot);
 	} catch (error) {
 		const message = error instanceof Error ? error.message : 'Workspace snapshot failed.';

@@ -19,13 +19,14 @@ import { isPocketBaseNotFound, isProjectPagesStrayIdFieldError } from '$lib/pock
 import { syncBoardWithPb } from '$lib/kainbu/boardSyncCore';
 import { normalizeDueTimestamp } from '$lib/kainbu/timing';
 import { getPb } from '$lib/kainbu/pocketbaseContext';
-import { mapMembershipRow, mapInviteRow, compareProjects, findProjectName } from '$lib/kainbu/workspaceMapping';
-import { fetchSharedMemberProfiles } from '$lib/kainbu/memberProfiles';
 import {
-	getProjectPbId,
-	listByProjectIds,
-	upsertProjectChild
-} from '$lib/kainbu/pbHelpers';
+	mapMembershipRow,
+	mapInviteRow,
+	compareProjects,
+	findProjectName
+} from '$lib/kainbu/workspaceMapping';
+import { fetchSharedMemberProfiles } from '$lib/kainbu/memberProfiles';
+import { getProjectPbId, listByProjectIds, upsertProjectChild } from '$lib/kainbu/pbHelpers';
 import {
 	mapAiSessionRecord,
 	mapBoardRecord,
@@ -600,7 +601,9 @@ export const createProject = async (
 	}>('/api/workspace/projects/create', {
 		body: { name: normalizedSeed.name, seedProject: normalizedSeed }
 	});
-	const createdProject = result.project ? normalizeProjectStructure(result.project) : normalizedSeed;
+	const createdProject = result.project
+		? normalizeProjectStructure(result.project)
+		: normalizedSeed;
 	invalidateWorkspaceFetch(userId);
 
 	if (options?.skipWorkspaceFetch) {
@@ -661,14 +664,6 @@ export const syncProjectBoard = async (
 	next: Project['kanbanData']
 ) => {
 	await syncBoardWithPb(getPb(), projectId, boardId, previous, next);
-};
-
-export const replaceProjectBoard = async (
-	projectId: string,
-	boardId: string,
-	next: Project['kanbanData']
-) => {
-	await syncBoardWithPb(getPb(), projectId, boardId, [], next);
 };
 
 export const createProjectBoard = async (projectId: string, name: string, position: number) => {
@@ -791,13 +786,33 @@ export const sanitizeProjectPageContent = (content: unknown) => {
 export const updateProjectPageContent = async (
 	projectId: string,
 	pageId: string,
-	content: string
+	content: string,
+	previousContent?: string
 ) => {
-	// Use upsert so that if a page with the same client_id already exists we
-	// update it, and if it doesn't (e.g. the record was never created or has
-	// a stray‐id schema mismatch) we create it instead of failing.
-	await upsertProjectChild('project_pages', projectId, pageId, {
-		content: sanitizeProjectPageContent(content)
+	if (previousContent === undefined) {
+		const pb = getPb();
+		const projectPbId = await getProjectPbId(projectId);
+		let record;
+		try {
+			record = await pb
+				.collection('project_pages')
+				.getFirstListItem(
+					`project = "${pbEscapeFilter(projectPbId)}" && client_id = "${pbEscapeFilter(pageId)}"`
+				);
+		} catch (error) {
+			if (!isPocketBaseNotFound(error)) throw error;
+			await upsertProjectChild('project_pages', projectId, pageId, {
+				name: 'Page',
+				content: sanitizeProjectPageContent(content)
+			});
+			return;
+		}
+		previousContent = String(record.content || '');
+	}
+	await getPb().send('/api/kainbu/page', {
+		method: 'POST',
+		body: { projectId, pageId, content: sanitizeProjectPageContent(content), previousContent },
+		requestKey: null
 	});
 };
 

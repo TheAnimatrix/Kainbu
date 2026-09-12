@@ -1,6 +1,8 @@
 type AvatarRecord = {
 	id: string;
 	avatar?: string | string[] | null;
+	collectionId?: string;
+	collectionName?: string;
 };
 
 export const resolveAvatarFilename = (record: AvatarRecord) => {
@@ -21,11 +23,18 @@ export const resolveAvatarFilename = (record: AvatarRecord) => {
  * singleton.
  */
 export const getAvatarUrlFromClient = (
-	client: { files: { getURL: (record: { id: string }, filename: string) => string } },
+	client: { files: { getURL: (record: AvatarRecord, filename: string) => string } },
 	record: AvatarRecord,
-	filename?: string | null
+	filename?: string | null,
+	publicBaseUrl?: string
 ) => {
 	const avatar = filename ?? resolveAvatarFilename(record);
 	if (!avatar) return null;
-	return client.files.getURL(record, avatar);
+	if (publicBaseUrl !== undefined) {
+		return `${publicBaseUrl.replace(/\/+$/, '')}/api/files/users/${encodeURIComponent(record.id)}/${encodeURIComponent(avatar)}`;
+	}
+	return client.files.getURL(
+		{ ...record, collectionName: record.collectionName || 'users' },
+		avatar
+	);
 };

@@ -1,10 +1,7 @@
 import type PocketBase from 'pocketbase';
-import { pbNoAutoCancel } from './pbRequest.js';
-import { pbEscapeFilter, projectClientFilter, projectRelationFilter } from './pbRecords.js';
 import { DEFAULT_COLUMN_WIDTH } from './constants.js';
 import { normalizeDueTimestamp } from './timing.js';
 import { isPocketBaseRecordId } from './recordIds.js';
-import { isPocketBaseNotFound } from '../pocketbaseErrors.js';
 import type { Project, Tag, Task } from './types.js';
 
 /**
@@ -22,6 +19,24 @@ import type { Project, Tag, Task } from './types.js';
 type KanbanData = Project['kanbanData'];
 type KanbanColumn = KanbanData[number];
 
+/** Keep deletion state locally so undo and retries carry an explicit previous value. */
+export const retainDeletedTasks = (
+	previous: KanbanData,
+	next: KanbanData,
+	now = Date.now()
+): KanbanData => {
+	const nextIds = new Set(next.flatMap((column) => column.tasks.map((task) => task.id)));
+	return next.map((column) => ({
+		...column,
+		tasks: [
+			...column.tasks,
+			...(previous.find((old) => old.id === column.id)?.tasks || [])
+				.filter((task) => !nextIds.has(task.id))
+				.map((task) => ({ ...task, deletedAt: task.deletedAt || now }))
+		]
+	}));
+};
+
 const normalizeLinkedTaskIds = (value: unknown): string[] => {
 	if (!Array.isArray(value)) return [];
 	return [
@@ -36,6 +51,7 @@ const linkSignature = (ids: string[] | undefined) => [...new Set(ids || [])].sor
 
 const areTasksEqual = (left: Task, right: Task) => {
 	if (left.title !== right.title) return false;
+	if ((left.deletedAt || 0) !== (right.deletedAt || 0)) return false;
 	if ((left.description || '') !== (right.description || '')) return false;
 	if ((left.color || '') !== (right.color || '')) return false;
 	if ((left.hasCheckbox || false) !== (right.hasCheckbox || false)) return false;
@@ -94,10 +110,14 @@ const mapTaskUpsertRow = (
 });
 
 export type BoardMutations = {
-	upsertColumns: ReturnType<typeof mapColumnUpsertRow>[];
-	upsertTasks: ReturnType<typeof mapTaskUpsertRow>[];
-	deleteColumnIds: string[];
-	deleteTaskIds: string[];
+	upsertColumns: Array<
+		ReturnType<typeof mapColumnUpsertRow> & { previous?: ReturnType<typeof mapColumnUpsertRow> }
+	>;
+	upsertTasks: Array<
+		ReturnType<typeof mapTaskUpsertRow> & { previous?: ReturnType<typeof mapTaskUpsertRow> }
+	>;
+	deleteColumns: ReturnType<typeof mapColumnUpsertRow>[];
+	deleteTasks: ReturnType<typeof mapTaskUpsertRow>[];
 };
 
 /**
@@ -110,8 +130,8 @@ export const deriveBoardMutations = (
 	previous: KanbanData,
 	next: KanbanData
 ): BoardMutations => {
-	const upsertColumns: ReturnType<typeof mapColumnUpsertRow>[] = [];
-	const upsertTasks: ReturnType<typeof mapTaskUpsertRow>[] = [];
+	const upsertColumns: BoardMutations['upsertColumns'] = [];
+	const upsertTasks: BoardMutations['upsertTasks'] = [];
 	const deleteColumnIds: string[] = [];
 	const deleteTaskIds: string[] = [];
 	const previousColumns = new Map(previous.map((column, index) => [column.id, { column, index }]));
@@ -142,7 +162,19 @@ export const deriveBoardMutations = (
 			(previousColumn.column.width ?? DEFAULT_COLUMN_WIDTH) !==
 				(column.width ?? DEFAULT_COLUMN_WIDTH)
 		) {
-			upsertColumns.push(mapColumnUpsertRow(projectId, boardId, column, index));
+			upsertColumns.push({
+				...mapColumnUpsertRow(projectId, boardId, column, index),
+				...(previousColumn
+					? {
+							previous: mapColumnUpsertRow(
+								projectId,
+								boardId,
+								previousColumn.column,
+								previousColumn.index
+							)
+						}
+					: {})
+			});
 		}
 
 		for (const [taskIndex, task] of column.tasks.entries()) {
@@ -154,7 +186,20 @@ export const deriveBoardMutations = (
 				previousTask.position !== taskIndex ||
 				!areTasksEqual(previousTask.task, task)
 			) {
-				upsertTasks.push(mapTaskUpsertRow(projectId, boardId, column.id, task, taskIndex));
+				upsertTasks.push({
+					...mapTaskUpsertRow(projectId, boardId, column.id, task, taskIndex),
+					...(previousTask
+						? {
+								previous: mapTaskUpsertRow(
+									projectId,
+									boardId,
+									previousTask.columnId,
+									previousTask.task,
+									previousTask.position
+								)
+							}
+						: {})
+				});
 			}
 		}
 	}
@@ -165,178 +210,40 @@ export const deriveBoardMutations = (
 		}
 	}
 
-	for (const [taskId, previousTask] of previousTasks.entries()) {
+	for (const taskId of previousTasks.keys()) {
 		if (!nextTaskIds.has(taskId)) {
-			upsertTasks.push(mapTaskUpsertRow(
-				projectId, boardId, previousTask.columnId,
-				{ ...previousTask.task, deletedAt: Date.now() },
-				previousTask.position
-			));
+			deleteTaskIds.push(taskId);
 		}
 	}
 
-	return { upsertColumns, upsertTasks, deleteColumnIds, deleteTaskIds };
-};
-
-const getProjectPbId = async (pb: PocketBase, projectClientId: string) => {
-	const record = await pb
-		.collection('projects')
-		.getFirstListItem(projectClientFilter(projectClientId));
-	return String(record.id);
-};
-
-const getBoardPbId = async (pb: PocketBase, projectPbId: string, boardClientId: string) => {
-	const record = await pb
-		.collection('project_boards')
-		.getFirstListItem(
-			`${projectRelationFilter(projectPbId)} && client_id = "${pbEscapeFilter(boardClientId)}"`
-		);
-	return String(record.id);
-};
-
-const upsertProjectChild = async (
-	pb: PocketBase,
-	collection: string,
-	projectPbId: string,
-	clientId: string,
-	body: Record<string, unknown>
-) => {
-	const filter = `${projectRelationFilter(projectPbId)} && client_id = "${pbEscapeFilter(clientId)}"`;
-	try {
-		const existing = await pb.collection(collection).getFirstListItem(filter);
-		await pb.collection(collection).update(existing.id, body);
-	} catch (error) {
-		if (!isPocketBaseNotFound(error)) throw error;
-		await pb.collection(collection).create({
-			...body,
-			project: projectPbId,
-			client_id: clientId
-		});
-	}
-};
-
-const deleteByClientIds = async (
-	pb: PocketBase,
-	collection: string,
-	projectPbId: string,
-	clientIds: string[]
-) => {
-	if (!clientIds.length) return;
-	const records = await pb.collection(collection).getFullList({
-		filter: `${projectRelationFilter(projectPbId)} && (${clientIds
-			.map((id) => `client_id = "${pbEscapeFilter(id)}"`)
-			.join(' || ')})`,
-		...pbNoAutoCancel
-	});
-	await Promise.all(records.map((record) => pb.collection(collection).delete(record.id)));
-};
-
-const upsertProjectTasks = async (
-	pb: PocketBase,
-	projectPbId: string,
-	rows: ReturnType<typeof mapTaskUpsertRow>[],
-	resolveBoardPbId: (boardClientId: string) => Promise<string>
-) => {
-	for (const row of rows) {
-		const filter = `${projectRelationFilter(projectPbId)} && client_id = "${pbEscapeFilter(row.id)}"`;
-		const boardPbId = row.board_id ? await resolveBoardPbId(row.board_id) : '';
-		const body = {
-			board: boardPbId,
-			column_id: row.column_id,
-			title: row.title,
-			description: row.description,
-			color: row.color,
-			tags: row.tags,
-			has_checkbox: row.has_checkbox,
-			checked: row.checked,
-			completed_at: row.completed_at,
-			countdown_at: row.countdown_at,
-			alarm_at: row.alarm_at,
-			assigned_to: row.assigned_to || '',
-			linked_task_ids: row.linked_task_ids,
-			position: row.position
-		};
-		if (row.deleted_at != null) {
-			(body as Record<string, unknown>).deleted_at = row.deleted_at;
-		}
-
-		try {
-			const existing = await pb.collection('project_tasks').getFirstListItem(filter);
-			await pb.collection('project_tasks').update(existing.id, body);
-		} catch (error) {
-			if (!isPocketBaseNotFound(error)) throw error;
-			await pb.collection('project_tasks').create({
-				...body,
-				project: projectPbId,
-				client_id: row.id
-			});
-		}
-	}
-};
-
-const applyBoardMutations = async (
-	pb: PocketBase,
-	projectId: string,
-	mutations: BoardMutations
-) => {
-	const projectPbId = await getProjectPbId(pb, projectId);
-	const boardPbIdCache = new Map<string, string>();
-
-	const resolveBoardPbId = async (boardClientId: string) => {
-		if (!boardClientId) return '';
-		const cached = boardPbIdCache.get(boardClientId);
-		if (cached) return cached;
-		const boardPbId = await getBoardPbId(pb, projectPbId, boardClientId);
-		boardPbIdCache.set(boardClientId, boardPbId);
-		return boardPbId;
+	return {
+		upsertColumns,
+		upsertTasks,
+		deleteColumns: deleteColumnIds.map((id) => {
+			const old = previousColumns.get(id)!;
+			return mapColumnUpsertRow(projectId, boardId, old.column, old.index);
+		}),
+		deleteTasks: deleteTaskIds.map((id) => {
+			const old = previousTasks.get(id)!;
+			return mapTaskUpsertRow(projectId, boardId, old.columnId, old.task, old.position);
+		})
 	};
-
-	for (const row of mutations.upsertColumns) {
-		const boardPbId = row.board_id ? await resolveBoardPbId(row.board_id) : '';
-		await upsertProjectChild(pb, 'project_columns', projectPbId, row.id, {
-			board: boardPbId,
-			title: row.title,
-			color: row.color,
-			width: row.width,
-			position: row.position
-		});
-	}
-
-	if (mutations.upsertTasks.length) {
-		await upsertProjectTasks(pb, projectPbId, mutations.upsertTasks, resolveBoardPbId);
-
-		// Bump board timestamps for any board that had soft-deleted tasks,
-		// so the merge logic picks the local (more recent) state.
-		const softDeletedBoardIds = new Set<string>();
-		for (const row of mutations.upsertTasks) {
-			if (row.deleted_at != null && row.board_id) {
-				softDeletedBoardIds.add(row.board_id);
-			}
-		}
-		for (const boardClientId of softDeletedBoardIds) {
-			try {
-				const boardPbId = await resolveBoardPbId(boardClientId);
-				if (boardPbId) await pb.collection('project_boards').update(boardPbId, {});
-			} catch (error) {
-				// A board can be absent during first sync, but real update failures
-				// must not be hidden after the task soft-delete has been persisted.
-				if (!isPocketBaseNotFound(error)) throw error;
-			}
-		}
-	}
-
-	if (mutations.deleteColumnIds.length) {
-		await deleteByClientIds(pb, 'project_columns', projectPbId, mutations.deleteColumnIds);
-	}
 };
 
-/** Diff `previous` → `next` for one board and apply the result with `pb`. */
+/** Apply field-level changes and conflict checks atomically inside PocketBase. */
 export const syncBoardWithPb = async (
 	pb: PocketBase,
 	projectId: string,
 	boardId: string,
 	previous: KanbanData,
-	next: KanbanData
+	next: KanbanData,
+	userId?: string
 ) => {
-	await applyBoardMutations(pb, projectId, deriveBoardMutations(projectId, boardId, previous, next));
+	const mutations = deriveBoardMutations(projectId, boardId, previous, next);
+	if (!Object.values(mutations).some((rows) => rows.length)) return;
+	await pb.send('/api/kainbu/board-sync', {
+		method: 'POST',
+		body: { projectId, boardId, mutations, ...(userId ? { userId } : {}) },
+		requestKey: null
+	});
 };

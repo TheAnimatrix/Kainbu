@@ -1,14 +1,17 @@
 import type PocketBase from 'pocketbase';
 import { createAdminPb } from './pocketbase.js';
 
-/** Must match pocketbase/pb_migrations/1730000010_admin_panel.js */
+/** Must match pocketbase/pb_migrations/1730000038_security_integrity.js. */
 export const USERS_COLLECTION_API_RULES = {
-	listRule: '@request.auth.is_admin = true || @request.auth.id = id',
-	viewRule: '@request.auth.is_admin = true || @request.auth.id = id',
-	updateRule: '@request.auth.id = id',
-	deleteRule: '@request.auth.id = id',
-	/** Never use `verified = true` here — it breaks API access for logged-in unverified users. */
-	authRule: ''
+	createRule: '@request.body.is_admin:isset = false && @request.body.disabled:isset = false',
+	listRule:
+		'@request.auth.id != "" && @request.auth.disabled != true && (@request.auth.is_admin = true || @request.auth.id = id)',
+	viewRule:
+		'@request.auth.id != "" && @request.auth.disabled != true && (@request.auth.is_admin = true || @request.auth.id = id)',
+	updateRule:
+		'@request.auth.id != "" && @request.auth.disabled != true && @request.auth.id = id && @request.body.is_admin:changed = false && @request.body.disabled:changed = false',
+	deleteRule: '@request.auth.id != "" && @request.auth.disabled != true && @request.auth.id = id',
+	authRule: 'disabled = false'
 } as const;
 
 export type UsersCollectionRepairResult = {

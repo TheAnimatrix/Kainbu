@@ -29,7 +29,11 @@ const board = (
 	...overrides
 });
 
-const page = (id: string, updatedAt: number, overrides: Partial<ProjectPage> = {}): ProjectPage => ({
+const page = (
+	id: string,
+	updatedAt: number,
+	overrides: Partial<ProjectPage> = {}
+): ProjectPage => ({
 	id,
 	projectId: 'project-1',
 	name: id,
@@ -41,7 +45,7 @@ const page = (id: string, updatedAt: number, overrides: Partial<ProjectPage> = {
 });
 
 describe('mergeProjectBoardsByUpdatedAt', () => {
-	it('keeps the newer board copy for each id', () => {
+	it('uses the server copy when the local clock is ahead but no edit is pending', () => {
 		const localBoards = [
 			board('board-a', 200, {
 				preferences: {
@@ -61,16 +65,16 @@ describe('mergeProjectBoardsByUpdatedAt', () => {
 			})
 		];
 
-		expect(mergeProjectBoardsByUpdatedAt(localBoards, remoteBoards)).toEqual(localBoards);
+		expect(mergeProjectBoardsByUpdatedAt(localBoards, remoteBoards)).toEqual(remoteBoards);
 	});
 
 	it('includes remote-only boards and drops stale local-only boards by default', () => {
 		const localBoards = [board('local-only', 50)];
 		const remoteBoards = [board('remote-only', 50)];
 
-		expect(mergeProjectBoardsByUpdatedAt(localBoards, remoteBoards).map((entry) => entry.id)).toEqual([
-			'remote-only'
-		]);
+		expect(
+			mergeProjectBoardsByUpdatedAt(localBoards, remoteBoards).map((entry) => entry.id)
+		).toEqual(['remote-only']);
 	});
 
 	it('keeps local-only boards while their create/sync is pending', () => {
@@ -92,11 +96,9 @@ describe('mergeProjectBoardsByUpdatedAt', () => {
 			board('planning-board', 300)
 		];
 
-		expect(mergeProjectBoardsByUpdatedAt(localBoards, remoteBoards).map((entry) => entry.id)).toEqual([
-			'default-board',
-			'team-board',
-			'planning-board'
-		]);
+		expect(
+			mergeProjectBoardsByUpdatedAt(localBoards, remoteBoards).map((entry) => entry.id)
+		).toEqual(['default-board', 'team-board', 'planning-board']);
 	});
 
 	it('keeps local boards while preference sync is pending', () => {
@@ -120,8 +122,8 @@ describe('mergeProjectBoardsByUpdatedAt', () => {
 		];
 
 		expect(
-			mergeProjectBoardsByUpdatedAt(localBoards, remoteBoards, new Set(['board-a']))[0]
-				.preferences.moveCheckedTasks
+			mergeProjectBoardsByUpdatedAt(localBoards, remoteBoards, new Set(['board-a']))[0].preferences
+				.moveCheckedTasks
 		).toBe(false);
 	});
 

@@ -24,7 +24,12 @@ import { normalizeScratchpadData } from './scratchpad.js';
 import { normalizeUsernameValue } from './usernames.js';
 import { normalizeDueTimestamp } from './timing.js';
 import { fetchSharedMemberProfiles } from './memberProfiles.js';
-import { mapMembershipRow, mapInviteRow, compareProjects, findProjectName } from './workspaceMapping.js';
+import {
+	mapMembershipRow,
+	mapInviteRow,
+	compareProjects,
+	findProjectName
+} from './workspaceMapping.js';
 import type {
 	Project,
 	ProjectAiSession,
@@ -41,6 +46,7 @@ import type {
 
 export type LoadWorkspaceOptions = {
 	authEmail?: string;
+	avatarBaseUrl?: string;
 };
 
 const DEFAULT_COLUMN_WIDTH = 240;
@@ -192,7 +198,7 @@ export const loadWorkspaceFromPb = async (
 	const ownMembershipRecords = await pb
 		.collection('project_memberships')
 		.getFullList<Record<string, unknown>>({
-			filter: `user = "${pbEscapeFilter(userId)}"`,
+			filter: `user = "${pbEscapeFilter(userId)}" && left_at = ""`,
 			sort: '-last_opened_at',
 			expand: 'project',
 			...pbNoAutoCancel
@@ -381,7 +387,8 @@ export const loadWorkspaceFromPb = async (
 					id: profileId,
 					avatar: profile.avatar as string | null
 				},
-				null
+				null,
+				options.avatarBaseUrl
 			);
 			const mapped = mapProfileRecord(profile, profileId, avatarUrl);
 			profileRows.push({
@@ -420,7 +427,8 @@ export const loadWorkspaceFromPb = async (
 					id: selfId,
 					avatar: selfRecord.avatar as string | null
 				},
-				null
+				null,
+				options.avatarBaseUrl
 			);
 			const selfProfile = profileRows.find((row) => row.user_id === userId);
 			if (selfProfile) {
@@ -429,9 +437,7 @@ export const loadWorkspaceFromPb = async (
 				profileRows.push({
 					user_id: userId,
 					email: typeof selfRecord.email === 'string' ? selfRecord.email : null,
-					username: normalizeUsernameValue(
-						selfRecord.username as string | null | undefined
-					),
+					username: normalizeUsernameValue(selfRecord.username as string | null | undefined),
 					avatar_url: selfAvatarUrl
 				});
 			}
@@ -536,16 +542,15 @@ export const loadWorkspaceFromPb = async (
 				(left, right) =>
 					left.position - right.position || left.created_at.localeCompare(right.created_at)
 			);
-			const fallbackBoard = projectBoards[0]?.id || '';
 			const boards = projectBoards.length
 				? projectBoards.map((boardRow) =>
 						mapBoardRow(
 							boardRow,
 							(columnsByProjectId.get(row.id) || []).filter(
-								(columnRow) => (columnRow.board_id || fallbackBoard) === boardRow.id
+								(columnRow) => columnRow.board_id === boardRow.id
 							),
 							(tasksByProjectId.get(row.id) || []).filter(
-								(taskRow) => (taskRow.board_id || fallbackBoard) === boardRow.id
+								(taskRow) => taskRow.board_id === boardRow.id
 							)
 						)
 					)
