@@ -1,0 +1,1 @@
+{"source":"Full WorkspaceShell Svelte SSR with offline fixture state","components":["WorkspaceShell.svelte","KanbanBoard.svelte","PagePane.svelte","ChatPane.svelte"],"example":"Morrow, isolated local fixtures","duration":18,"desktop":[1440,864],"phone":[720,1200]}

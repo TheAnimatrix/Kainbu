@@ -1,0 +1,4 @@
+.capture/
+renders/
+features/*/check.json
+features/*/snapshots/

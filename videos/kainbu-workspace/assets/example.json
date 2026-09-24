@@ -1,0 +1,107 @@
+{
+  "columns": [
+    {
+      "id": "todo",
+      "title": "To do",
+      "width": 244,
+      "tasks": [
+        {
+          "id": "story",
+          "title": "Write the launch story",
+          "description": "A few honest words about the things we make.\n\n- Introduce the new collection\n- Keep it short and personal",
+          "tags": [
+            {
+              "id": "writing",
+              "label": "Writing",
+              "color": "tone:blue"
+            }
+          ],
+          "hasCheckbox": true
+        },
+        {
+          "id": "small-screens",
+          "title": "Give the small screens some care",
+          "description": "Check the navigation, type, and all the little details.",
+          "tags": [
+            {
+              "id": "review",
+              "label": "Review",
+              "color": "tone:purple"
+            }
+          ],
+          "hasCheckbox": true
+        }
+      ]
+    },
+    {
+      "id": "progress",
+      "title": "In progress",
+      "width": 244,
+      "tasks": [
+        {
+          "id": "homepage",
+          "title": "Design the homepage",
+          "description": "Let the work speak for itself.\n\nA clear introduction, a little atmosphere, and room to explore.",
+          "tags": [
+            {
+              "id": "design",
+              "label": "Design",
+              "color": "tone:green"
+            }
+          ],
+          "hasCheckbox": true
+        },
+        {
+          "id": "navigation",
+          "title": "Build the navigation",
+          "description": "Make every next step feel natural.",
+          "tags": [
+            {
+              "id": "engineering",
+              "label": "Engineering",
+              "color": "tone:blue"
+            }
+          ],
+          "hasCheckbox": true
+        }
+      ]
+    },
+    {
+      "id": "done",
+      "title": "Done",
+      "width": 244,
+      "tasks": [
+        {
+          "id": "brief",
+          "title": "Agree on the brief",
+          "description": "A smaller, better website for Kainbu.",
+          "tags": [
+            {
+              "id": "planning",
+              "label": "Planning",
+              "color": "tone:yellow"
+            }
+          ],
+          "hasCheckbox": true,
+          "checked": true
+        },
+        {
+          "id": "references",
+          "title": "Collect the references",
+          "description": "Good type. Clear thinking. Thoughtful details.",
+          "tags": [
+            {
+              "id": "research",
+              "label": "Research",
+              "color": "tone:purple"
+            }
+          ],
+          "hasCheckbox": true,
+          "checked": true
+        }
+      ]
+    }
+  ],
+  "brief": "# A smaller, better Kainbu website.\n\nA place for our work to speak for itself. Clear writing, useful details, and nothing that gets in the way.\n\n## What we’re making\n\nA new home for Kainbu — a calm place to organize tasks, notes, and the work around them.\n\n## The approach\n\n- Lead with the work, and give it room.\n- Keep the story close to the details.\n- Make the next step clear on every screen.\n\n## Before we go live\n\n- [x] Agree on the brief\n- [x] Collect the references\n- [ ] Finish the homepage and navigation\n- [ ] Read every line out loud\n- [ ] Check the small screens\n\n> A little less to look at. A little more to notice.",
+  "pageDocument": "<div class=\"tiptap ProseMirror markdown-editor__prosemirror kainbu-prose task-editor-prose block-editor-prose text-sm\"><h1>A smaller, better Kainbu website.</h1><p>A place for our work to speak for itself. Clear writing, useful details, and nothing that gets in the way.</p><h2>What we’re making</h2><p>A new home for Kainbu — a calm place to organize tasks, notes, and the work around them.</p><h2>The approach</h2><ul><li><p>Lead with the work, and give it room.</p></li><li><p>Keep the story close to the details.</p></li><li><p>Make the next step clear on every screen.</p></li></ul><h2>Before we go live</h2><ul data-type=\"taskList\"><li data-checked=\"true\" data-type=\"taskItem\"><label><input type=\"checkbox\" checked=\"checked\"><span></span></label><div><p>Agree on the brief</p></div></li><li data-checked=\"true\" data-type=\"taskItem\"><label><input type=\"checkbox\" checked=\"checked\"><span></span></label><div><p>Collect the references</p></div></li><li data-checked=\"false\" data-type=\"taskItem\"><label><input type=\"checkbox\"><span></span></label><div><p>Finish the homepage and navigation</p></div></li><li data-checked=\"false\" data-type=\"taskItem\"><label><input type=\"checkbox\"><span></span></label><div><p>Read every line out loud</p></div></li><li data-checked=\"false\" data-type=\"taskItem\"><label><input type=\"checkbox\"><span></span></label><div><p>Check the small screens</p></div></li></ul><blockquote><p>A little less to look at. A little more to notice.</p></blockquote></div>"
+}

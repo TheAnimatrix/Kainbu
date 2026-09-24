@@ -1,0 +1,9 @@
+assets/
+index.html
+renders/
+snapshots/
+check-result.json
+
+.capture/
+phone/
+check-*.json

@@ -1,0 +1,15 @@
+{
+  "name": "kainbu-workspace",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "npx --yes hyperframes@0.8.71 preview",
+    "check": "npx --yes hyperframes@0.8.71 check",
+    "render": "npx --yes hyperframes@0.8.71 render",
+    "publish": "npx --yes hyperframes@0.8.71 publish"
+  },
+  "devDependencies": {
+    "gsap": "^3.14.2",
+    "jsdom": "26.1.0"
+  }
+}
