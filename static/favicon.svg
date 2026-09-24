@@ -1,14 +1,5 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256">
-	<rect width="256" height="256" rx="56" fill="#2d2d2d" />
-	<g transform="translate(-163 -25) scale(0.727273)">
-		<polygon points="290,100 400,100 400,210" fill="#3b82f6" />
-		<polygon points="290,100 290,210 400,210" fill="#2563eb" />
-		<polygon points="400,100 510,100 400,210" fill="#636363" />
-		<polygon points="290,210 400,210 400,320" fill="#454545" />
-		<polygon points="290,210 290,320 400,320" fill="#3a3a3a" />
-		<polygon points="400,210 510,320 400,320" fill="#3b82f6" />
-		<polygon points="348,158 400,100 400,210" fill="#4a4a4a" />
-		<polygon points="452,262 400,210 400,320" fill="#1d4ed8" />
-		<polygon points="290,320 400,320 290,210" fill="#3a3a3a" opacity="0.3" />
-	</g>
-</svg>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><rect width="100" height="100" rx="22" fill="#262820"/><g transform="translate(16 16) scale(.68)" fill="#f4f0e7">
+  <path d="M40 4H77C87.5 4 96 12.5 96 23V60C96 77.3 70 77.3 70 60V41C70 34.9 65.1 30 59 30H40C22.7 30 22.7 4 40 4Z"/>
+  <path fill-rule="evenodd" d="M19.5 27.5L79 87C83 91 80.2 96 74.5 96H23C12.5 96 4 87.5 4 77V39C4 27 11.5 19.5 19.5 27.5ZM30 50V66C30 69.3 32.7 72 36 72H52L30 50Z"/>
+
+</g></svg>

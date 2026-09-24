@@ -1,7 +1,7 @@
 {
   "name": "Kainbu",
   "short_name": "Kainbu",
-  "description": "AI-Powered Kanban + Note editor",
+  "description": "Boards, pages, and AI. Good work, all together.",
   "start_url": "/",
   "display": "standalone",
   "background_color": "#0e0f11",
@@ -20,7 +20,7 @@
       "type": "image/png"
     },
     {
-      "src": "/icons/icon-512x512.png",
+      "src": "/icons/icon-maskable-512x512.png",
       "sizes": "512x512",
       "type": "image/png",
       "purpose": "maskable"

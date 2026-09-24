@@ -1,5 +1,5 @@
-const CACHE_NAME = 'kainbu-v1';
-const PRECACHE_URLS = ['/', '/manifest.json', '/icons/icon-192x192.png', '/icons/icon-512x512.png'];
+const CACHE_NAME = 'kainbu-join-v2';
+const PRECACHE_URLS = ['/', '/manifest.json', '/favicon.svg', '/icons/icon-192x192.png', '/icons/icon-512x512.png', '/icons/icon-maskable-512x512.png', '/icons/apple-touch-icon.png'];
 
 self.addEventListener('install', (event) => {
   event.waitUntil(

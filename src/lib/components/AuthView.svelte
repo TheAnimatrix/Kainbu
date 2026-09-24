@@ -83,14 +83,11 @@
 	class="relative flex min-h-[100dvh] items-center justify-center overflow-hidden bg-app-bg px-4 pt-[calc(1rem+var(--safe-top))] pb-[calc(1rem+var(--safe-bottom))] pl-[calc(1rem+var(--safe-left))] pr-[calc(1rem+var(--safe-right))] text-app-text"
 >
 	<div class="auth-backdrop pointer-events-none absolute inset-0 overflow-hidden" aria-hidden="true">
-		<div class="auth-backdrop__sweep absolute inset-[-25%]"></div>
-		<div class="auth-backdrop__dots absolute inset-0"></div>
 		<div class="auth-backdrop__vignette absolute inset-0"></div>
-		<div class="auth-backdrop__scan absolute inset-x-0 top-0 h-px"></div>
 	</div>
 
 	<div
-		class="relative z-10 w-full max-w-sm rounded-lg border border-app-border bg-app-surface/90 p-5 shadow-kainbu-xl backdrop-blur-xl sm:p-6"
+		class="auth-card relative z-10 w-full max-w-sm rounded-lg border border-app-border bg-app-surface/90 p-5 backdrop-blur-xl sm:p-6"
 	>
 		<div class="mb-5 flex items-center gap-3">
 			<BrandMark size={40} alt={`${BRAND_NAME} icon`} />
@@ -228,92 +225,75 @@
 </div>
 
 <style>
-	.auth-backdrop {
+	.auth-card::before {
+		content: '';
+		position: absolute;
+		inset: -1px;
+		padding: 1px;
+		border-radius: inherit;
+		pointer-events: none;
 		background:
 			radial-gradient(
-				ellipse 80% 60% at 20% 0%,
-				color-mix(in oklab, var(--color-app-primary) 22%, transparent),
-				transparent 70%
+				ellipse 65% 95% at 100% 12%,
+				rgba(255, 194, 139, 0.72),
+				transparent 75%
 			),
 			radial-gradient(
-				ellipse 70% 50% at 100% 100%,
-				color-mix(in oklab, var(--color-app-primary) 14%, transparent),
-				transparent 70%
-			),
-			var(--color-app-bg);
+				ellipse 55% 90% at 0% 68%,
+				rgba(121, 163, 211, 0.34),
+				transparent 78%
+			);
+		background-size: 125% 125%, 120% 125%;
+		-webkit-mask:
+			linear-gradient(#fff 0 0) content-box,
+			linear-gradient(#fff 0 0);
+		-webkit-mask-composite: xor;
+		mask:
+			linear-gradient(#fff 0 0) content-box,
+			linear-gradient(#fff 0 0);
+		mask-composite: exclude;
+		animation: auth-border-wind 9s ease-in-out infinite;
 	}
 
-	.auth-backdrop__dots {
-		background-image: radial-gradient(rgba(255, 255, 255, 0.12) 1px, transparent 1px);
-		background-size: 24px 24px;
-		mask-image: radial-gradient(ellipse at center, black 30%, transparent 85%);
-		-webkit-mask-image: radial-gradient(ellipse at center, black 30%, transparent 85%);
-		opacity: 0.6;
+	@keyframes auth-border-wind {
+		0%,
+		100% {
+			background-position: 50% 48%, 50% 52%;
+			opacity: 0.78;
+		}
+		22% {
+			background-position: 55% 44%, 47% 56%;
+			opacity: 1;
+		}
+		43% {
+			background-position: 47% 53%, 54% 48%;
+			opacity: 0.68;
+		}
+		68% {
+			background-position: 53% 46%, 46% 54%;
+			opacity: 0.94;
+		}
+		84% {
+			background-position: 49% 51%, 52% 47%;
+			opacity: 0.72;
+		}
 	}
 
-	.auth-backdrop__sweep {
-		background: conic-gradient(
-			from 0deg at 50% 50%,
-			transparent 0deg,
-			color-mix(in oklab, var(--color-app-primary) 100%, transparent) 50deg,
-			transparent 130deg,
-			transparent 230deg,
-			color-mix(in oklab, #6366f1 100%, transparent) 310deg,
-			transparent 360deg
-		);
-		opacity: 0.28;
-		filter: blur(80px);
-		animation: auth-sweep 60s linear infinite;
+	@media (prefers-reduced-motion: reduce) {
+		.auth-card::before {
+			animation: none;
+		}
+	}
+
+	.auth-backdrop {
+		background: #172232 url('/auth-lake-dusk.webp') center / cover no-repeat;
 	}
 
 	.auth-backdrop__vignette {
 		background: radial-gradient(
 			ellipse at center,
-			transparent 35%,
-			rgba(0, 0, 0, 0.55) 100%
+			transparent 40%,
+			rgba(0, 0, 0, 0.3) 100%
 		);
-	}
-
-	.auth-backdrop__scan {
-		background: linear-gradient(
-			to right,
-			transparent,
-			color-mix(in oklab, var(--color-app-primary) 70%, transparent),
-			transparent
-		);
-		opacity: 0;
-		box-shadow: 0 0 12px color-mix(in oklab, var(--color-app-primary) 50%, transparent);
-		animation: auth-scan 16s ease-in-out infinite;
-	}
-
-	@keyframes auth-sweep {
-		from {
-			transform: rotate(0deg);
-		}
-		to {
-			transform: rotate(360deg);
-		}
-	}
-
-	@keyframes auth-scan {
-		0%,
-		100% {
-			transform: translateY(0);
-			opacity: 0;
-		}
-		50% {
-			transform: translateY(100vh);
-			opacity: 0.5;
-		}
-	}
-
-	@media (prefers-reduced-motion: reduce) {
-		.auth-backdrop__sweep,
-		.auth-backdrop__scan {
-			animation: none;
-		}
-		.auth-backdrop__scan {
-			opacity: 0;
-		}
 	}
 </style>
