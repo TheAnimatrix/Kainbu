@@ -1,21 +1,21 @@
 <script lang="ts">
-	import LandingTopGlow from '$lib/components/landing/LandingTopGlow.svelte';
-
+	import { page } from '$app/state';
+	import LandingDesignSwitcher from '$lib/components/marketing/LandingDesignSwitcher.svelte';
+	import '$lib/components/marketing/landing.css';
 	let { children } = $props();
+	const direction = $derived(
+		page.url.pathname.endsWith('/studio')
+			? 'studio'
+			: page.url.pathname.endsWith('/mono')
+				? 'mono'
+				: page.url.pathname.endsWith('/focus')
+					? 'focus'
+					: 'index'
+	);
 </script>
 
-<div class="landing-root relative isolate min-h-[100dvh] overflow-x-clip bg-app-bg text-app-text">
-	<LandingTopGlow />
-	<div class="relative z-[1]">
-		{@render children()}
-	</div>
+<div class="landing-root" data-direction={direction}>
+	<a class="landing-skip" href="#main">Skip to content</a>
+	{@render children()}
+	<LandingDesignSwitcher />
 </div>
-
-<style>
-	:global(html:has(.landing-root)),
-	:global(body:has(.landing-root)) {
-		height: auto;
-		min-height: 100%;
-		overflow: auto;
-	}
-</style>
