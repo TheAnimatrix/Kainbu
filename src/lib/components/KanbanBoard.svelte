@@ -59,8 +59,6 @@
 	import {
 		areKanbanTasksEqualForDiff,
 		computeKanbanDiff,
-		diffWords,
-		formatDiffTaskSnapshot,
 		type DiffColumn,
 		type DiffTask
 	} from '$lib/kainbu/diff';
@@ -243,7 +241,6 @@
 	let boardScrollViewport: HTMLDivElement | null = null;
 	let taskDragInProgress = false;
 	let boardDataAtDragStart: KanbanData | null = null;
-	let expandedDiffTaskId: string | null = null;
 	let boardLayoutMode: BoardLayoutMode = 'columns';
 	let linkViewAnchorId: string | null = null;
 	let boardSearchInput: HTMLInputElement | null = null;
@@ -478,9 +475,6 @@
 		cancelTaskTitleEdit();
 		linkViewAnchorId = null;
 		boardLayoutMode = 'columns';
-	}
-	$: if (!isDiffMode) {
-		expandedDiffTaskId = null;
 	}
 	$: if (openColumnMenu && !boardData.some((column) => column.id === openColumnMenu?.columnId)) {
 		openColumnMenu = null;
@@ -2024,64 +2018,6 @@
 		return result;
 	};
 
-	const toggleDiffTaskDetails = (taskId: string) => {
-		expandedDiffTaskId = expandedDiffTaskId === taskId ? null : taskId;
-	};
-
-	const taskHasDescriptionDiff = (task: DiffTask) =>
-		(task._originalTask?.description || '').trim() !== (task.description || '').trim();
-
-	const taskDescriptionChangeLabel = (task: DiffTask) => {
-		const previous = (task._originalTask?.description || '').trim();
-		const next = (task.description || '').trim();
-		if (!previous && next) return 'Description added';
-		if (previous && !next) return 'Description removed';
-		return 'Description changed';
-	};
-
-	const taskDescriptionDiffParts = (task: DiffTask) =>
-		diffWords(task._originalTask?.description || '', task.description || '');
-
-	const diffStatusLabel = (task: DiffTask) => {
-		if (task._status === 'added') return 'Inserted card';
-		if (task._status === 'removed') return 'Deleted card';
-		if (taskHasVisibleProposalDiff(task)) return 'Edited card';
-		return '';
-	};
-
-	const diffStatusClasses = (task: DiffTask) => {
-		if (task._status === 'added') {
-			return 'border-emerald-500/30 bg-emerald-500/10 text-emerald-200';
-		}
-
-		if (task._status === 'removed') {
-			return 'border-rose-500/30 bg-rose-500/10 text-rose-200';
-		}
-
-		if (taskHasVisibleProposalDiff(task)) {
-			return 'border-amber-500/30 bg-amber-500/10 text-amber-100';
-		}
-
-		return 'border-app-border bg-app-element/70 text-app-subtext';
-	};
-
-	const formatProposalTaskSnapshot = (task: Task | undefined) => {
-		if (!task) return formatDiffTaskSnapshot(task);
-
-		const lines = formatDiffTaskSnapshot(task).split('\n');
-		if (task.assignedTo) {
-			const assignedMember = members.find((member) => member.userId === task.assignedTo);
-			const assignee = assignedMember
-				? getProjectMemberDisplayName(assignedMember)
-				: task.assignedTo;
-			lines[4] = `Assignee: ${assignee}`;
-		}
-		if (getTaskDueAt(task) !== null) {
-			lines[5] = `Due: ${formatTimingLabel(task)}`;
-		}
-		return lines.join('\n');
-	};
-
 	const formatDate = (timestamp?: number) =>
 		timestamp
 			? new Date(timestamp).toLocaleDateString(undefined, {
@@ -2766,21 +2702,11 @@
 								<div class="kainbu-scrollbar-hidden min-h-0 flex-auto overflow-y-auto p-2.5">
 									<div class="flex flex-col gap-2.5">
 										{#each column.tasks as task (task.id)}
-											<button
-												type="button"
-												class={`${cardClasses(task)} w-full text-left ${
-													taskHasDescriptionDiff(task)
-														? 'cursor-pointer hover:border-app-primary/35'
-														: 'cursor-default'
-												}`}
+											<div
+												class={`${cardClasses(task)} w-full cursor-default text-left`}
 												style={getTaskStyle(task)}
-												onclick={() => {
-													if (taskHasDescriptionDiff(task)) {
-														toggleDiffTaskDetails(task.id);
-													}
-												}}
 											>
-												<div class="mb-3 flex items-start gap-3">
+												<div class="flex items-start gap-2">
 													{#if task.hasCheckbox}
 														<div class="mt-0.5 text-app-subtext">
 															{#if task.checked}
@@ -2791,33 +2717,44 @@
 														</div>
 													{/if}
 													<div class="min-w-0 flex-1">
-														{#if diffStatusLabel(task)}
-															<div class="mb-2">
-																<span
-																	class={`inline-flex rounded-full border px-2.5 py-1 text-[9px] font-bold uppercase tracking-[0.18em] ${diffStatusClasses(task)}`}
-																>
-																	{diffStatusLabel(task)}
-																</span>
-															</div>
+														{#if task._status === 'added'}
+															<span class="sr-only">Inserted card: </span>
+														{:else if task._status === 'removed'}
+															<span class="sr-only">Deleted card: </span>
+														{:else if taskHasVisibleProposalDiff(task)}
+															<span class="sr-only">Edited card: </span>
 														{/if}
-														<RichText
-															value={getRenderedTaskTitle(task)}
-															className={`kainbu-prose prose-tight text-sm font-medium ${task.checked ? 'opacity-70' : ''}`}
-														/>
-														{#if taskHasDescriptionDiff(task)}
-															<div
-																class="mt-1 inline-flex items-center gap-1 text-[10px] text-app-subtext"
-															>
-																<FileText size={13} />
-																<span>{taskDescriptionChangeLabel(task)}. Click to inspect.</span>
+														<div class="flex min-w-0 items-start gap-1">
+															<div class="min-w-0 flex-1">
+																<RichText
+																	value={getRenderedTaskTitle(task)}
+																	className={`kainbu-prose prose-tight text-sm font-medium ${task.checked ? 'opacity-70' : ''}`}
+																/>
 															</div>
-														{/if}
+															{#if task.description?.trim()}
+																<FileText
+																	size={13}
+																	class="mt-0.5 shrink-0 text-app-subtext/45"
+																	title="Has description"
+																	aria-label="Has description"
+																/>
+															{/if}
+														</div>
 													</div>
 												</div>
 
-												{#if task.tags?.length}
-													<div class="flex flex-wrap gap-1.5">
-														{#each task.tags as tag (tag.id)}
+												{#if task.tags?.length || getTaskLinkCount(task) > 0}
+													<div class="mt-1.5 flex flex-wrap gap-1">
+														{#if getTaskLinkCount(task) > 0}
+															<span
+																class="inline-flex items-center gap-0.5 rounded-md border border-app-primary/30 bg-app-primary/10 px-1 py-px text-[10px] font-medium leading-tight text-app-primary"
+															>
+																<Link2 size={10} />
+																{getTaskLinkCount(task)}
+																{getTaskLinkCount(task) === 1 ? 'link' : 'links'}
+															</span>
+														{/if}
+														{#each task.tags || [] as tag (tag.id)}
 															<span class={getTagToneClasses(tag.color)}>
 																{tag.label}
 															</span>
@@ -2826,74 +2763,16 @@
 												{/if}
 
 												{#if getTaskDueAt(task) !== null}
-													<div class="mt-2 flex flex-wrap gap-1.5">
+													<div class="mt-1.5 flex flex-wrap gap-1">
 														<span
-															class="inline-flex items-center gap-1.5 rounded-full border border-app-border bg-app-surface/80 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.18em] text-app-subtext"
+															class="inline-flex items-center gap-1 rounded-full border border-app-border bg-app-surface/80 px-2 py-0.5 text-[9px] font-semibold uppercase tracking-[0.16em] text-app-subtext"
 														>
-															<Clock3 size={11} />
+															<Clock3 size={12} />
 															{formatTimingLabel(task)}
 														</span>
 													</div>
 												{/if}
-
-												{#if taskHasVisibleProposalDiff(task)}
-													<div class="mt-3 grid gap-2 lg:grid-cols-2">
-														<div class="rounded-lg border border-app-border bg-app-bg/55 p-3">
-															<p
-																class="mb-2 text-[10px] font-bold uppercase tracking-[0.18em] text-app-subtext"
-															>
-																Before
-															</p>
-															<div
-																class="whitespace-pre-wrap font-mono text-[11px] leading-relaxed text-app-subtext"
-															>
-																{formatProposalTaskSnapshot(task._originalTask)}
-															</div>
-														</div>
-														<div class="rounded-lg border border-app-border bg-app-bg/55 p-3">
-															<p
-																class="mb-2 text-[10px] font-bold uppercase tracking-[0.18em] text-app-subtext"
-															>
-																After
-															</p>
-															<div
-																class="whitespace-pre-wrap font-mono text-[11px] leading-relaxed text-app-text"
-															>
-																{formatProposalTaskSnapshot(task)}
-															</div>
-														</div>
-													</div>
-												{/if}
-
-												{#if taskHasDescriptionDiff(task) && expandedDiffTaskId === task.id}
-													<div class="mt-3 rounded-lg border border-app-border bg-app-bg/60 p-3">
-														<p
-															class="mb-2 text-[10px] font-bold uppercase tracking-[0.18em] text-app-subtext"
-														>
-															Description Diff
-														</p>
-														<div
-															class="max-h-56 overflow-y-auto whitespace-pre-wrap font-mono text-xs leading-relaxed text-app-text"
-														>
-															{#each taskDescriptionDiffParts(task) as part}
-																{#if part.added}
-																	<span class="rounded bg-emerald-500/15 px-0.5 text-emerald-200">
-																		{part.value}
-																	</span>
-																{:else if part.removed}
-																	<span
-																		class="rounded bg-rose-500/15 px-0.5 text-rose-200 line-through opacity-70"
-																	>
-																		{part.value}
-																	</span>
-																{:else}
-																	<span>{part.value}</span>
-																{/if}
-															{/each}
-														</div>
-													</div>
-												{/if}
-											</button>
+											</div>
 										{/each}
 									</div>
 								</div>

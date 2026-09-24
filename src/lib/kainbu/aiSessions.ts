@@ -23,7 +23,10 @@ const normalizeProjectAiSession = (
 	const now = Date.now();
 	const createdAt = normalizeTimestamp(session.createdAt, now);
 	const history = cloneHistory(Array.isArray(session.history) ? session.history : undefined);
-	const lastMessageAt = normalizeTimestamp(session.lastMessageAt, history.at(-1)?.timestamp ?? createdAt);
+	const lastMessageAt = normalizeTimestamp(
+		session.lastMessageAt,
+		history.at(-1)?.timestamp ?? createdAt
+	);
 	return {
 		id: typeof session.id === 'string' && session.id.trim() ? session.id : createId(),
 		projectId,
@@ -87,8 +90,9 @@ export const getProjectAiSession = (
 	project.aiSessions[0] ||
 	null;
 
-export const getActiveProjectAiSession = (project: Pick<Project, 'aiSessions' | 'activeAiSessionId'>) =>
-	getProjectAiSession(project, project.activeAiSessionId);
+export const getActiveProjectAiSession = (
+	project: Pick<Project, 'aiSessions' | 'activeAiSessionId'>
+) => getProjectAiSession(project, project.activeAiSessionId);
 
 export const normalizeProjectAiState = (
 	project: Pick<Project, 'id' | 'chatHistory' | 'aiSessions' | 'activeAiSessionId'>
@@ -106,7 +110,8 @@ export const normalizeProjectAiState = (
 			project.activeAiSessionId
 		)?.id || aiSessions[0].id;
 	const chatHistory = cloneHistory(
-		getProjectAiSession({ aiSessions, activeAiSessionId: activeSessionId }, activeSessionId)?.history
+		getProjectAiSession({ aiSessions, activeAiSessionId: activeSessionId }, activeSessionId)
+			?.history
 	);
 	return {
 		aiSessions,
@@ -139,7 +144,8 @@ export const updateActiveProjectAiSession = (
 	project: Project,
 	updater: (session: ProjectAiSession) => ProjectAiSession
 ) => {
-	const activeSession = getActiveProjectAiSession(project) || createProjectAiSession({ projectId: project.id });
+	const activeSession =
+		getActiveProjectAiSession(project) || createProjectAiSession({ projectId: project.id });
 	const nextSessions = (project.aiSessions.length ? project.aiSessions : [activeSession]).map(
 		(session, index) =>
 			session.id === activeSession.id
@@ -147,6 +153,21 @@ export const updateActiveProjectAiSession = (
 				: normalizeProjectAiSession(session, project.id, index)
 	);
 	return replaceProjectAiSessions(project, nextSessions, activeSession.id);
+};
+
+export const updateProjectAiSessionById = (
+	project: Project,
+	sessionId: string,
+	updater: (session: ProjectAiSession) => ProjectAiSession
+) => {
+	const targetSession = getProjectAiSession(project, sessionId);
+	if (!targetSession || targetSession.id !== sessionId) return project;
+	const nextSessions = project.aiSessions.map((session, index) =>
+		session.id === sessionId
+			? normalizeProjectAiSession(updater(session), project.id, index)
+			: normalizeProjectAiSession(session, project.id, index)
+	);
+	return replaceProjectAiSessions(project, nextSessions, project.activeAiSessionId);
 };
 
 export const addProjectAiSession = (project: Project, modelId = DEFAULT_AI_MODEL_ID) => {

@@ -4,16 +4,46 @@ import {
 	buildUserMessageContent,
 	formatTextAttachments
 } from '../server/workspace-ai/history-messages';
-import {
-	SESSION_CONTEXT_OPEN,
-	assembleWorkspaceMessages
-} from '../server/workspace-ai/prompt';
+import { SESSION_CONTEXT_OPEN, assembleWorkspaceMessages } from '../server/workspace-ai/prompt';
 import { WORKSPACE_AI_CACHE_BREAKPOINT_KEY } from '../server/workspace-ai/constants';
 import type { ChatAttachment, ChatMessage } from '../src/lib/kainbu/types';
 
 const imageDataUrl = 'data:image/png;base64,abc123';
 
 describe('workspace AI history messages', () => {
+	it('includes actual undo outcomes without exposing full workspace snapshots to the model', () => {
+		const history: ChatMessage[] = [
+			{
+				id: 'applied-message',
+				role: 'assistant',
+				text: '',
+				timestamp: 1,
+				appliedProposalChanges: [
+					{
+						id: 'change',
+						proposalId: 'proposal',
+						projectId: 'project',
+						sessionId: 'session',
+						messageId: 'applied-message',
+						target: 'kanban',
+						boardId: 'board',
+						summary: 'Added a release task',
+						appliedAt: 1,
+						status: 'undone',
+						beforeFingerprint: 'snapshot-before',
+						afterFingerprint: 'snapshot-after',
+						before: { kanbanData: [] },
+						after: { kanbanData: [] }
+					}
+				]
+			}
+		];
+		expect(buildHistoryMessages(history)[0].content).toBe(
+			'Workspace change undone: Added a release task'
+		);
+		expect(JSON.stringify(buildHistoryMessages(history))).not.toContain('snapshot-');
+	});
+
 	it('inlines text attachments into user message text', () => {
 		const attachments: ChatAttachment[] = [
 			{

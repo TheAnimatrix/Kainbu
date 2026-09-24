@@ -1,4 +1,5 @@
 import type { AiContextSummary, ChatMessage } from './types.js';
+import { formatAssistantHistoryText } from './history-messages.js';
 import {
 	WORKSPACE_AI_COMPACT_MODEL,
 	WORKSPACE_AI_CONTEXT_BUDGET_TOKENS,
@@ -73,11 +74,17 @@ const splitRecentTurns = (
 
 const formatTranscript = (messages: ChatMessage[]): string =>
 	messages
-		.map((m) => `${m.role.toUpperCase()} (${new Date(m.timestamp).toISOString()}):\n${m.text || '(empty)'}`)
+		.map(
+			(m) =>
+				`${m.role.toUpperCase()} (${new Date(m.timestamp).toISOString()}):\n${(m.role === 'assistant' ? formatAssistantHistoryText(m) : m.text) || '(empty)'}`
+		)
 		.join('\n\n');
 
 const parseSummary = (raw: string): AiContextSummary | string => {
-	const cleaned = raw.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
+	const cleaned = raw
+		.replace(/```json\n?/g, '')
+		.replace(/```\n?/g, '')
+		.trim();
 	try {
 		return JSON.parse(cleaned) as AiContextSummary;
 	} catch {
@@ -120,13 +127,14 @@ Return ONLY JSON with this shape:
 }
 
 Preserve task and column titles the user cares about, the status of any staged proposals, user
-preferences, unresolved asks, and the rule that staged changes are NOT applied until the user
-accepts them in the UI.`;
+preferences, unresolved asks, and the actual saved, failed, or undone status of edits. The chat
+client applies prepared changes automatically and offers Undo; tool success alone does not confirm a save.`;
 
 	const messages: OpenRouterMessage[] = [
 		{
 			role: 'system',
-			content: 'You compact chat context for a production kanban workspace assistant. Output valid JSON only.'
+			content:
+				'You compact chat context for a production kanban workspace assistant. Output valid JSON only.'
 		},
 		{ role: 'user', content: prompt }
 	];

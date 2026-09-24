@@ -28,6 +28,7 @@ import {
 	projectRelationFilter
 } from '../pbWorkspace.js';
 import { areKanbanTasksEqualForDiff } from '../../src/lib/kainbu/diff.js';
+import { getKanbanFingerprint } from '../../src/lib/kainbu/kanbanFingerprint.js';
 import type { BoardRefMap } from './kanban-ops.js';
 
 const CURRENT_BOARD_FILE = 'current-board.json';
@@ -250,34 +251,6 @@ const parseKanbanDocument = (content: string) => {
 
 	return normalizeKanbanData(parsed);
 };
-
-const canonicalizeKanbanData = (kanbanData: KanbanData) =>
-	kanbanData.map((column) => ({
-		id: column.id,
-		title: column.title,
-		color: column.color || null,
-		width: column.width ?? DEFAULT_COLUMN_WIDTH,
-		tasks: (column.tasks || []).map((task) => ({
-			id: task.id,
-			title: task.title,
-			description: task.description || '',
-			color: task.color || null,
-			tags: (task.tags || []).map((tag) => ({
-				id: tag.id,
-				label: tag.label,
-				color: tag.color || null
-			})),
-			hasCheckbox: Boolean(task.hasCheckbox),
-			checked: Boolean(task.checked),
-			completedAt: task.completedAt ?? null,
-			countdownAt: task.countdownAt ?? null,
-			alarmAt: task.alarmAt ?? null,
-			assignedTo: task.assignedTo || null
-		}))
-	}));
-
-const getKanbanFingerprint = (kanbanData: KanbanData) =>
-	JSON.stringify(canonicalizeKanbanData(kanbanData));
 
 export const buildScratchpadPreviewState = (
 	pageId: string,
@@ -1052,14 +1025,13 @@ const resolveKanbanScope = (
 
 const summarizeKanbanProposal = (boardName: string, safety: AiProposalSafety) => {
 	if (safety.touchedTaskIds.length === 1 && !safety.deleteCount && !safety.reorderCount) {
-		return `Review the board change in ${boardName}.`;
+		return `Board change in ${boardName}`;
 	}
 
-	return `Review the staged board changes for ${boardName}.`;
+	return `Board changes in ${boardName}`;
 };
 
-const summarizeScratchpadProposal = (pageName: string) =>
-	`Review the staged page changes for ${pageName}.`;
+const summarizeScratchpadProposal = (pageName: string) => `Page changes in ${pageName}`;
 
 const buildKanbanProposal = (
 	board: MaterializedBoard,
@@ -1073,6 +1045,7 @@ const buildKanbanProposal = (
 	return {
 		id: randomUUID(),
 		target: 'kanban',
+		boardId: board.id,
 		summary: summarizeKanbanProposal(board.name, proposalSafety),
 		scope: resolveKanbanScope(ops, proposalSafety),
 		editCallCount: Math.max(1, board.editCallCount),

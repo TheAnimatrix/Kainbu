@@ -20,7 +20,9 @@
 		Search,
 		Send,
 		SlidersHorizontal,
+		Sparkles,
 		Trash2,
+		Undo2,
 		Upload,
 		X,
 		XCircle
@@ -33,6 +35,7 @@
 		AiModelConfig,
 		AiModelId,
 		AiProgressEvent,
+		AppliedProposalChange,
 		ChatAttachment,
 		ChatMessage,
 		ChatTaskCard,
@@ -51,6 +54,7 @@
 	export let isProcessing = false;
 	export let processingEvents: AiProgressEvent[] = [];
 	export let pendingProposals: PendingProposal[] = [];
+	export let appliedProposalChanges: AppliedProposalChange[] = [];
 	export let proposalApplyErrors: Record<string, string> = {};
 	export let applyingProposalId: string | null = null;
 	export let activeProposalTarget: ProposalTarget | null = null;
@@ -76,6 +80,7 @@
 	export let onReviewProposal: ((target: ProposalTarget) => void) | null = null;
 	export let onAcceptProposal: (proposalId: string) => void;
 	export let onRejectProposal: (proposalId: string) => void;
+	export let onUndoProposal: (changeId: string) => void | Promise<void> = () => {};
 	export let onAnswerQuestion: (questionId: string, optionId?: string, text?: string) => void;
 	export let onAnswerQuestions: (
 		answers: { questionId: string; optionId?: string; text?: string }[]
@@ -103,6 +108,7 @@
 		processingEvents.at(-1)?.kind === 'assistant_draft';
 
 	let fileInput: HTMLInputElement | null = null;
+	let composerTextarea: HTMLTextAreaElement | null = null;
 	let historyViewport: HTMLDivElement | null = null;
 	let previewViewport: HTMLDivElement | null = null;
 	const COMPOSER_MIN_HEIGHT = 44;
@@ -129,6 +135,46 @@
 		'text-[10px] font-semibold uppercase tracking-[0.18em] text-app-subtext/70';
 	$: activeSession =
 		sessions.find((session) => session.id === activeSessionId) || sessions[0] || null;
+	let showEarlierAppliedChanges = false;
+	$: sessionAppliedProposalChanges = appliedProposalChanges.filter(
+		(change) => !activeSessionId || change.sessionId === activeSessionId
+	);
+	$: earlierAppliedChangeCount = Math.max(0, sessionAppliedProposalChanges.length - 3);
+	$: visibleAppliedProposalChanges = (
+		showEarlierAppliedChanges
+			? sessionAppliedProposalChanges
+			: sessionAppliedProposalChanges.slice(-3)
+	)
+		.slice()
+		.reverse();
+
+	const starterPrompts = [
+		{
+			label: 'Plan this board',
+			prompt: 'Review this board and suggest the most useful next steps.'
+		},
+		{
+			label: 'Find blockers',
+			prompt: 'Find blocked or at-risk work and explain what needs attention.'
+		},
+		{ label: 'Summarize progress', prompt: 'Summarize recent progress, open work, and priorities.' }
+	];
+
+	const useStarterPrompt = async (prompt: string) => {
+		onDraftChange(prompt);
+		await tick();
+		composerTextarea?.focus();
+	};
+
+	const appliedChangeStatus = (change: AppliedProposalChange) => {
+		if (change.status === 'undoing') return 'Undoing change…';
+		if (change.status === 'undone') return 'Change undone';
+		if (change.status === 'conflicted') return 'Could not undo safely';
+		if (change.error) return 'Needs attention';
+		return 'Applied automatically';
+	};
+
+	const proposalTargetLabel = (target: ProposalTarget) => (target === 'kanban' ? 'Board' : 'Page');
 
 	// Sidebar opens on the active session; use back to browse all sessions.
 	let showingSessionsList = false;
@@ -317,9 +363,7 @@
 		closeComposerMenu();
 	};
 
-	const selectComposerThinkingLevel = (
-		level: import('$lib/kainbu/types').AiThinkingLevel
-	) => {
+	const selectComposerThinkingLevel = (level: import('$lib/kainbu/types').AiThinkingLevel) => {
 		onThinkingLevelChange(level);
 		closeComposerMenu();
 	};
@@ -431,8 +475,7 @@
 		Boolean(stagedOptionByQuestion[questionId]) ||
 		Boolean((questionDrafts[questionId] || '').trim());
 	$: stagedQuestionCount = openQuestions.filter((question) => questionStaged(question.id)).length;
-	$: allQuestionsStaged =
-		openQuestions.length > 0 && stagedQuestionCount === openQuestions.length;
+	$: allQuestionsStaged = openQuestions.length > 0 && stagedQuestionCount === openQuestions.length;
 
 	$: if (!active && previewAttachment) {
 		previewAttachment = null;
@@ -725,7 +768,7 @@
 		value.length > maxLength ? `${value.slice(0, maxLength - 1).trimEnd()}…` : value;
 	const proposalStatusText = (proposal: PendingProposal) => {
 		if (proposal.stale) {
-			return 'Workspace changed since this was generated. Review the diff — you can still apply if it looks right.';
+			return 'The workspace changed after this was generated. Discard it and ask Kainbu to generate the change again.';
 		}
 
 		if (proposal.proposalSafety.outOfScope) {
@@ -875,10 +918,7 @@
 			node.style.overflowY = 'hidden';
 			return;
 		}
-		const nextHeight = Math.min(
-			COMPOSER_MAX_HEIGHT,
-			Math.max(minHeight, node.scrollHeight)
-		);
+		const nextHeight = Math.min(COMPOSER_MAX_HEIGHT, Math.max(minHeight, node.scrollHeight));
 		node.style.height = `${nextHeight}px`;
 		node.style.overflowY = node.scrollHeight > COMPOSER_MAX_HEIGHT ? 'auto' : 'hidden';
 	};
@@ -953,14 +993,10 @@
 
 		const viewportRect = historyViewport.getBoundingClientRect();
 		const messageRect = messageEl.getBoundingClientRect();
-		const messageTopInContent =
-			historyViewport.scrollTop + (messageRect.top - viewportRect.top);
+		const messageTopInContent = historyViewport.scrollTop + (messageRect.top - viewportRect.top);
 		const baseContentHeight = historyViewport.scrollHeight - pinnedSpacerHeight;
 		const needed =
-			historyViewport.clientHeight +
-			messageTopInContent -
-			USER_MESSAGE_PEEK_PX -
-			baseContentHeight;
+			historyViewport.clientHeight + messageTopInContent - USER_MESSAGE_PEEK_PX - baseContentHeight;
 
 		return Math.max(0, Math.ceil(needed));
 	};
@@ -973,10 +1009,7 @@
 		const viewportRect = historyViewport.getBoundingClientRect();
 		const messageTopInContent =
 			historyViewport.scrollTop + (messageEl.getBoundingClientRect().top - viewportRect.top);
-		const maxScrollTop = Math.max(
-			0,
-			historyViewport.scrollHeight - historyViewport.clientHeight
-		);
+		const maxScrollTop = Math.max(0, historyViewport.scrollHeight - historyViewport.clientHeight);
 		const nextScrollTop = Math.min(
 			Math.max(0, messageTopInContent - USER_MESSAGE_PEEK_PX),
 			maxScrollTop
@@ -1020,9 +1053,7 @@
 	const handleHistoryScroll = () => {
 		if (!pinnedTurnUserMessageId || isProcessing || !historyViewport) return;
 		const distanceFromBottom =
-			historyViewport.scrollHeight -
-			historyViewport.scrollTop -
-			historyViewport.clientHeight;
+			historyViewport.scrollHeight - historyViewport.scrollTop - historyViewport.clientHeight;
 		if (distanceFromBottom - pinnedSpacerHeight <= 4) {
 			clearPinnedTurn();
 		}
@@ -1033,8 +1064,7 @@
 		const historyChanged = historySignature !== previousHistorySignature;
 		const becameActive = active && !previousActive;
 		const lastMessage = history.at(-1);
-		const userMessageJustAdded =
-			active && historyChanged && lastMessage?.role === 'user';
+		const userMessageJustAdded = active && historyChanged && lastMessage?.role === 'user';
 		const finishedProcessing = !isProcessing && previousIsProcessing;
 		const sessionSwitched = becameActive || (historyChanged && !previousHistorySignature);
 
@@ -1097,9 +1127,7 @@
 <section
 	class:hidden={!active}
 	class={`absolute inset-0 flex flex-col overflow-hidden ${
-		isFramelessChrome
-			? 'bg-app-bg'
-			: 'rounded-lg border border-app-border bg-app-surface'
+		isFramelessChrome ? 'bg-app-bg' : 'rounded-lg border border-app-border bg-app-surface'
 	} ${isSidebar ? 'pb-1' : ''}`}
 >
 	{#if showingSessionsList && isSidebar}
@@ -1108,8 +1136,10 @@
 				isDesktopSidebar ? 'border-b border-app-border/40' : 'border-b border-app-border'
 			}`}
 		>
-			<span class={isDesktopSidebar ? sidebarSectionLabelClass : 'text-[11px] font-bold uppercase tracking-[0.28em] text-app-subtext'}
-				>Sessions</span
+			<span
+				class={isDesktopSidebar
+					? sidebarSectionLabelClass
+					: 'text-[11px] font-bold uppercase tracking-[0.28em] text-app-subtext'}>Sessions</span
 			>
 			<div class="flex items-center gap-1">
 				<button
@@ -1218,8 +1248,7 @@
 					<span
 						class={isDesktopSidebar
 							? sidebarSectionLabelClass
-							: 'text-[11px] font-bold uppercase tracking-[0.24em] text-app-subtext'}
-						>More</span
+							: 'text-[11px] font-bold uppercase tracking-[0.24em] text-app-subtext'}>More</span
 					>
 					<span class="text-xs text-app-subtext">{sessions.length}</span>
 				</button>
@@ -1252,67 +1281,67 @@
 					isDesktopSidebar ? 'border-b border-app-border/40' : 'border-b border-app-border'
 				} ${isMobileChrome ? 'px-3 py-2' : 'px-4 py-2.5'}`}
 			>
-			{#if isSidebar}
-				<button
-					type="button"
-					class="rounded-md p-1.5 text-app-subtext transition hover:text-app-text"
-					on:click={backToSessionsList}
-					title="Back to sessions"
-					aria-label="Back to sessions"
-				>
-					<ChevronLeft size={16} />
-				</button>
-			{/if}
-			<div class="relative min-w-0 flex-1">
-				<button
-					bind:this={sessionSwitcherTrigger}
-					type="button"
-					class={`inline-flex min-w-0 max-w-full items-center gap-1.5 rounded-lg border border-transparent px-2 py-1.5 text-left text-app-text transition hover:border-app-border hover:bg-app-element/60 ${
-						sessionSwitcherOpen ? 'border-app-border bg-app-element/60' : ''
-					} ${isMobileChrome ? 'max-w-[11rem] text-[12px]' : 'max-w-[15rem] text-sm'}`}
-					aria-haspopup="listbox"
-					aria-expanded={sessionSwitcherOpen}
-					aria-label="Switch chat"
-					on:click={toggleSessionSwitcher}
-				>
-					<span class="min-w-0 flex-1 truncate font-medium">
-						{activeSession?.title || 'New chat'}
-					</span>
-					<ChevronDown
-						size={14}
-						class={`shrink-0 text-app-subtext transition ${sessionSwitcherOpen ? 'rotate-180' : ''}`}
-					/>
-				</button>
-			</div>
+				{#if isSidebar}
+					<button
+						type="button"
+						class="rounded-md p-1.5 text-app-subtext transition hover:text-app-text"
+						on:click={backToSessionsList}
+						title="Back to sessions"
+						aria-label="Back to sessions"
+					>
+						<ChevronLeft size={16} />
+					</button>
+				{/if}
+				<div class="relative min-w-0 flex-1">
+					<button
+						bind:this={sessionSwitcherTrigger}
+						type="button"
+						class={`inline-flex min-w-0 max-w-full items-center gap-1.5 rounded-lg border border-transparent px-2 py-1.5 text-left text-app-text transition hover:border-app-border hover:bg-app-element/60 ${
+							sessionSwitcherOpen ? 'border-app-border bg-app-element/60' : ''
+						} ${isMobileChrome ? 'max-w-[11rem] text-[12px]' : 'max-w-[15rem] text-sm'}`}
+						aria-haspopup="listbox"
+						aria-expanded={sessionSwitcherOpen}
+						aria-label="Switch chat"
+						on:click={toggleSessionSwitcher}
+					>
+						<span class="min-w-0 flex-1 truncate font-medium">
+							{activeSession?.title || 'New chat'}
+						</span>
+						<ChevronDown
+							size={14}
+							class={`shrink-0 text-app-subtext transition ${sessionSwitcherOpen ? 'rotate-180' : ''}`}
+						/>
+					</button>
+				</div>
 
-			<div class={`ml-auto flex items-center ${isMobileChrome ? 'gap-1' : 'gap-1.5'}`}>
-				<button
-					type="button"
-					class={`rounded-md text-app-subtext transition hover:bg-app-element hover:text-app-text ${
-						isMobileChrome ? 'p-1' : 'p-1.5'
-					}`}
-					on:click={onCreateSession}
-					title="New chat"
-					aria-label="New chat"
-				>
-					<Plus size={16} />
-				</button>
-
-				{#if isSidebar && onCollapseSidebar}
-					<div class="mx-0.5 h-4 w-px bg-app-border"></div>
+				<div class={`ml-auto flex items-center ${isMobileChrome ? 'gap-1' : 'gap-1.5'}`}>
 					<button
 						type="button"
 						class={`rounded-md text-app-subtext transition hover:bg-app-element hover:text-app-text ${
 							isMobileChrome ? 'p-1' : 'p-1.5'
 						}`}
-						on:click={onCollapseSidebar}
-						title="Collapse AI sidebar"
-						aria-label="Collapse AI sidebar"
+						on:click={onCreateSession}
+						title="New chat"
+						aria-label="New chat"
 					>
-						<PanelRight size={16} />
+						<Plus size={16} />
 					</button>
-				{/if}
-			</div>
+
+					{#if isSidebar && onCollapseSidebar}
+						<div class="mx-0.5 h-4 w-px bg-app-border"></div>
+						<button
+							type="button"
+							class={`rounded-md text-app-subtext transition hover:bg-app-element hover:text-app-text ${
+								isMobileChrome ? 'p-1' : 'p-1.5'
+							}`}
+							on:click={onCollapseSidebar}
+							title="Collapse AI sidebar"
+							aria-label="Collapse AI sidebar"
+						>
+							<PanelRight size={16} />
+						</button>
+					{/if}
+				</div>
 			</header>
 		{/if}
 
@@ -1321,34 +1350,45 @@
 			use:observeHistoryViewport
 			on:scroll={handleHistoryScroll}
 			class={`min-h-0 flex-1 overflow-y-auto [overflow-anchor:none] ${
-				isMobileChrome ? 'kainbu-chat-history--top-fade px-4 py-4' : 'px-5 py-5'
+				isMobileChrome ? 'kainbu-chat-history--top-fade px-4 py-4' : 'px-5 py-6'
 			}`}
 		>
 			{#if !history.length}
-				<div class="flex h-full flex-col items-center justify-center text-center text-app-subtext">
-					<BrandMark
-						size={isDesktopSidebar ? 24 : isMobileChrome ? 52 : 60}
-						className="mb-3"
-						alt=""
-					/>
-					<p
-						class={isDesktopSidebar
-							? 'text-sm font-bold tracking-tight text-app-text'
-							: `font-display tracking-[0.18em] text-app-text ${isMobileChrome ? 'text-xl' : 'text-2xl'}`}
-					>
-						KAINBU AI
+				<div class="mx-auto flex h-full w-full max-w-md flex-col justify-center text-app-subtext">
+					<div class="flex items-center gap-2.5">
+						<BrandMark size={isDesktopSidebar ? 22 : 30} alt="" />
+						<span class="text-[11px] font-semibold uppercase tracking-[0.16em]">Kainbu AI</span>
+					</div>
+					<h2 class="mt-4 text-balance text-xl font-semibold tracking-[-0.025em] text-app-text">
+						What can I help you move forward?
+					</h2>
+					<p class="mt-1.5 max-w-sm text-sm leading-6">
+						Ask about the board, plan work, or make changes. Workspace edits are applied directly
+						and can be undone.
 					</p>
-					<p
-						class={isDesktopSidebar
-							? `mt-2 ${sidebarSectionLabelClass}`
-							: `mt-2 uppercase ${isMobileChrome ? 'text-[10px] tracking-[0.24em]' : 'text-[11px] tracking-[0.32em]'}`}
-					>
-						Awaiting instructions
-					</p>
+					<div class="mt-5 flex flex-col border-y border-app-border/70">
+						{#each starterPrompts as starter (starter.label)}
+							<button
+								type="button"
+								class="group flex items-center gap-3 border-b border-app-border/70 px-1 py-2.5 text-left text-[13px] text-app-text transition-colors last:border-b-0 hover:text-app-primary"
+								on:click={() => void useStarterPrompt(starter.prompt)}
+							>
+								<Sparkles
+									size={14}
+									class="shrink-0 text-app-subtext transition-colors group-hover:text-app-primary"
+								/>
+								<span>{starter.label}</span>
+								<ChevronRight
+									size={14}
+									class="ml-auto shrink-0 text-app-subtext/60 transition-transform group-hover:translate-x-0.5"
+								/>
+							</button>
+						{/each}
+					</div>
 				</div>
 			{/if}
 
-			<div class={`${isMobileChrome ? 'space-y-8' : 'space-y-10'}`}>
+			<div class={`${isMobileChrome ? 'space-y-7' : 'space-y-8'}`}>
 				{#each history as message (message.id)}
 					<div
 						data-chat-message-id={message.id}
@@ -1361,8 +1401,8 @@
 									{compactProgress}
 								</div>
 							{/if}
-						{:else if (message.progressEvents?.length || 0) > 0 && !message.text?.trim()}
-							<div class="mb-2">
+						{:else if (message.progressEvents?.length || 0) > 0}
+							<div class="mb-3 w-full max-w-[min(100%,46rem)]">
 								<AiActivityTrace events={message.progressEvents || []} />
 							</div>
 						{/if}
@@ -1384,7 +1424,7 @@
 									? `kainbu-chat-user-bubble${
 											imageOnlyBubble ? ' kainbu-chat-user-bubble--image-only' : ''
 										}`
-									: 'max-w-[min(100%,46rem)] text-app-text'}
+									: 'w-full max-w-[min(100%,46rem)] text-app-text'}
 							>
 								{#if message.taskCards?.length}
 									<div class="mb-3 flex gap-2 overflow-x-auto pb-1">
@@ -1541,12 +1581,15 @@
 										>
 											<Ellipsis size={15} strokeWidth={1.75} />
 										</button>
-										</div>
-										{#if responseDetailsMessageId === message.id}
-										<p id={`response-details-${message.id}`} class="mt-1 text-[10px] text-app-subtext">
+									</div>
+									{#if responseDetailsMessageId === message.id}
+										<p
+											id={`response-details-${message.id}`}
+											class="mt-1 text-[10px] text-app-subtext"
+										>
 											{messageActionDetails(message)}
 										</p>
-										{/if}
+									{/if}
 								{/if}
 
 								{#if uniqueCitations(message).length}
@@ -1710,7 +1753,7 @@
 							<span
 								class="rounded-full border border-app-border bg-app-element/70 px-3 py-1 text-app-subtext"
 							>
-								{pendingProposal.target}
+								{proposalTargetLabel(pendingProposal.target)}
 							</span>
 							{#if activeProposalTarget === pendingProposal.target}
 								<span
@@ -1728,7 +1771,7 @@
 							{/if}
 						</div>
 						{#if proposalApplyErrors[pendingProposal.id]}
-							<p class="mt-2 text-sm text-rose-300">{proposalApplyErrors[pendingProposal.id]}</p>
+							<p class="mt-2 text-sm text-app-text">{proposalApplyErrors[pendingProposal.id]}</p>
 						{/if}
 						<div class="mt-3 flex flex-wrap gap-2.5">
 							{#if onReviewProposal}
@@ -1743,17 +1786,26 @@
 							{/if}
 							<button
 								type="button"
-								disabled={applyingProposalId === pendingProposal.id}
+								disabled={pendingProposal.stale || isProcessing || Boolean(applyingProposalId)}
 								class="kainbu-btn kainbu-btn--primary inline-flex flex-1 disabled:cursor-not-allowed disabled:opacity-60"
+								title={pendingProposal.stale
+									? 'Regenerate this proposal against the latest workspace before applying.'
+									: 'Apply proposal'}
 								on:click={() => onAcceptProposal(pendingProposal.id)}
 							>
-								<Check size={16} />
-								{applyingProposalId === pendingProposal.id ? 'Applying…' : 'Apply'}
+								{#if applyingProposalId === pendingProposal.id}
+									<LoaderCircle size={16} class="animate-spin" />
+									Applying…
+								{:else}
+									<Check size={16} />
+									{proposalApplyErrors[pendingProposal.id] ? 'Retry' : 'Apply'}
+								{/if}
 							</button>
 							<button
 								type="button"
 								class="inline-flex flex-1 items-center justify-center gap-2 rounded-lg border border-app-border bg-app-element px-4 py-2 text-sm font-semibold text-app-text"
 								on:click={() => onRejectProposal(pendingProposal.id)}
+								disabled={isProcessing || Boolean(applyingProposalId)}
 							>
 								<XCircle size={16} />
 								Discard
@@ -1761,6 +1813,75 @@
 						</div>
 					</div>
 				{/each}
+
+				{#each visibleAppliedProposalChanges as change (change.id)}
+					{@const hasAppliedChangeIssue = change.status === 'conflicted' || Boolean(change.error)}
+					<div
+						role={hasAppliedChangeIssue ? 'alert' : 'status'}
+						class={`flex items-start gap-3 border-y px-1 py-3 ${
+							hasAppliedChangeIssue
+								? 'border-rose-500/30 bg-rose-500/[0.04] text-app-text'
+								: 'border-app-border/70 text-app-text'
+						}`}
+					>
+						<div
+							class={`mt-0.5 grid h-6 w-6 shrink-0 place-items-center rounded-md ${
+								hasAppliedChangeIssue
+									? 'border border-rose-500/30 bg-rose-500/10 text-app-text'
+									: 'border border-app-border bg-app-element text-app-text'
+							}`}
+						>
+							{#if change.status === 'undoing'}
+								<LoaderCircle size={14} class="animate-spin" />
+							{:else if change.status === 'conflicted'}
+								<Info size={14} />
+							{:else}
+								<Check size={14} />
+							{/if}
+						</div>
+						<div class="min-w-0 flex-1">
+							<div class="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
+								<p class="text-[13px] font-medium leading-5">{change.summary}</p>
+								<span
+									class="text-[10px] font-semibold uppercase tracking-[0.12em] text-app-subtext"
+								>
+									{proposalTargetLabel(change.target)}
+								</span>
+							</div>
+							<p class="mt-0.5 text-xs text-app-subtext">{appliedChangeStatus(change)}</p>
+							{#if change.error}
+								<p class="mt-1 text-xs leading-5 text-app-text">{change.error}</p>
+							{/if}
+						</div>
+						{#if change.status === 'applied'}
+							<button
+								type="button"
+								class="inline-flex shrink-0 items-center gap-1.5 rounded-md border border-app-border px-2.5 py-1.5 text-xs font-medium text-app-text transition hover:border-app-primary/40 hover:bg-app-element"
+								on:click={() => void onUndoProposal(change.id)}
+							>
+								<Undo2 size={13} />
+								Undo
+							</button>
+						{/if}
+					</div>
+				{/each}
+
+				{#if earlierAppliedChangeCount > 0}
+					<button
+						type="button"
+						class="flex w-full items-center justify-center gap-1.5 border-b border-app-border/70 py-2 text-xs font-medium text-app-subtext transition hover:bg-app-element/60 hover:text-app-text"
+						aria-expanded={showEarlierAppliedChanges}
+						on:click={() => (showEarlierAppliedChanges = !showEarlierAppliedChanges)}
+					>
+						<ChevronDown
+							size={13}
+							class={`transition-transform ${showEarlierAppliedChanges ? 'rotate-180' : ''}`}
+						/>
+						{showEarlierAppliedChanges
+							? 'Hide earlier changes'
+							: `Show ${earlierAppliedChangeCount} earlier ${earlierAppliedChangeCount === 1 ? 'change' : 'changes'}`}
+					</button>
+				{/if}
 
 				{#if pinnedSpacerHeight > 0}
 					<div aria-hidden="true" style:height={`${pinnedSpacerHeight}px`}></div>
@@ -1770,13 +1891,13 @@
 	{/if}
 
 	<div
-		class={`${
+		class={`shrink-0 ${
 			isDesktopSidebar
-				? 'border-t border-app-border/40'
+				? 'border-t border-app-border/40 bg-app-bg/95'
 				: isMobileChrome
 					? 'border-t border-app-border bg-app-surface/96'
-					: 'border-t border-app-border'
-		} px-0 py-0`}
+					: 'border-t border-app-border bg-app-bg/95'
+		} px-0 py-0 backdrop-blur`}
 	>
 		<form
 			class={isMobileChrome ? 'space-y-2' : 'space-y-0'}
@@ -1879,7 +2000,7 @@
 					class={`px-3 pb-2${queuedAttachments.length || queuedTaskCards.length ? '' : ' pt-2'}`}
 				>
 					<div
-						class="flex items-end gap-0.5 rounded-xl border border-app-border bg-app-element/35 px-1 py-0.5 transition focus-within:border-app-primary/35"
+						class="flex items-end gap-0.5 rounded-xl border border-app-border bg-app-surface px-1.5 py-1 shadow-sm transition focus-within:border-app-primary/45"
 					>
 						<label
 							class="relative flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-app-subtext transition hover:bg-app-element hover:text-app-text focus-within:bg-app-element focus-within:text-app-text"
@@ -1899,14 +2020,21 @@
 						</label>
 
 						<textarea
+							bind:this={composerTextarea}
+							data-chat-composer
 							use:autosizeComposer={draft}
 							rows={1}
 							class="min-w-0 flex-1 resize-none bg-transparent px-1 py-1.5 text-[13px] leading-5 text-app-text outline-none transition-[height] duration-200 ease-out placeholder:text-app-subtext/50"
 							placeholder={isProcessing ? 'Keep typing…' : 'Message'}
-							enterkeyhint="enter"
+							enterkeyhint="send"
 							bind:value={draft}
 							on:input={() => onDraftChange(draft)}
 							on:change={() => onDraftChange(draft)}
+							on:keydown={(event) => {
+								if (event.key !== 'Enter' || event.shiftKey || event.isComposing) return;
+								event.preventDefault();
+								submitComposer();
+							}}
 							on:paste={handleComposerPaste}
 						></textarea>
 
@@ -1914,9 +2042,7 @@
 							bind:this={settingsMenuTrigger}
 							type="button"
 							class={`inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-app-subtext transition hover:bg-app-element hover:text-app-text ${
-								composerMenu === 'settings'
-									? 'bg-app-element text-app-text'
-									: ''
+								composerMenu === 'settings' ? 'bg-app-element text-app-text' : ''
 							}`}
 							aria-haspopup="listbox"
 							aria-expanded={composerMenu === 'settings'}
@@ -1930,9 +2056,9 @@
 						<button
 							type="submit"
 							disabled={!canSend}
-							class={`inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg transition ${
+							class={`inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg transition active:scale-[0.96] ${
 								canSend
-									? 'text-app-primary hover:bg-app-element'
+									? 'bg-app-primary text-white shadow-sm hover:brightness-110'
 									: 'cursor-not-allowed text-app-subtext opacity-50'
 							}`}
 							title="Send message"
@@ -1947,11 +2073,15 @@
 					</div>
 				</div>
 			{:else}
-				<div class="flex flex-col gap-2">
+				<div
+					class="mx-3 mb-3 mt-2 flex flex-col gap-1 rounded-xl border border-app-border bg-app-surface p-1 shadow-sm transition focus-within:border-app-primary/45"
+				>
 					<textarea
+						bind:this={composerTextarea}
+						data-chat-composer
 						use:autosizeComposer={draft}
 						rows={1}
-						class="min-h-0 w-full resize-none bg-transparent px-4 py-3 text-[13px] leading-[1.55] text-app-text outline-none transition-[height] duration-200 ease-out placeholder:text-app-subtext/50"
+						class="min-h-0 w-full resize-none bg-transparent px-3 py-2.5 text-[13px] leading-[1.55] text-app-text outline-none transition-[height] duration-200 ease-out placeholder:text-app-subtext/55"
 						placeholder={isProcessing
 							? 'Keep typing while the current reply finishes…'
 							: 'Describe a task or problem to research'}
@@ -1967,7 +2097,7 @@
 						on:paste={handleComposerPaste}
 					></textarea>
 
-					<div class="flex items-center justify-between px-3">
+					<div class="flex items-center justify-between px-1.5 pb-1">
 						<div class="flex items-center gap-1.5">
 							<label
 								class="relative rounded-md p-1.5 text-app-subtext transition hover:bg-app-element hover:text-app-text focus-within:bg-app-element focus-within:text-app-text"
@@ -2032,9 +2162,9 @@
 							<button
 								type="submit"
 								disabled={!canSend}
-								class={`inline-flex items-center justify-center rounded-md p-1.5 text-app-subtext transition ${
+								class={`inline-flex h-8 w-8 items-center justify-center rounded-lg transition active:scale-[0.96] ${
 									canSend
-										? 'hover:text-app-text hover:bg-app-element'
+										? 'bg-app-primary text-white shadow-sm hover:brightness-110'
 										: 'cursor-not-allowed opacity-50'
 								}`}
 								title="Send message"
@@ -2071,9 +2201,7 @@
 					? 'Thinking level'
 					: 'AI settings'}
 			class="pointer-events-auto fixed overflow-hidden rounded-lg border border-app-border bg-app-surface shadow-kainbu-xl"
-			style={`${
-				composerMenuPosition.top != null ? `top:${composerMenuPosition.top}px;` : ''
-			}${
+			style={`${composerMenuPosition.top != null ? `top:${composerMenuPosition.top}px;` : ''}${
 				composerMenuPosition.bottom != null ? `bottom:${composerMenuPosition.bottom}px;` : ''
 			} left:${composerMenuPosition.left}px; width:${composerMenuPosition.width}px;`}
 			on:mousedown|stopPropagation
@@ -2086,7 +2214,9 @@
 				}`}
 			>
 				{#if composerMenu === 'settings'}
-					<p class="px-2.5 pb-1 pt-0.5 text-[10px] font-semibold uppercase tracking-[0.16em] text-app-subtext/80">
+					<p
+						class="px-2.5 pb-1 pt-0.5 text-[10px] font-semibold uppercase tracking-[0.16em] text-app-subtext/80"
+					>
 						Model
 					</p>
 					{#each modelOptions as option (option.id)}
@@ -2108,7 +2238,9 @@
 						</button>
 					{/each}
 					{#if showThinkingSelect}
-						<p class="mt-1 border-t border-app-border/60 px-2.5 pb-1 pt-2 text-[10px] font-semibold uppercase tracking-[0.16em] text-app-subtext/80">
+						<p
+							class="mt-1 border-t border-app-border/60 px-2.5 pb-1 pt-2 text-[10px] font-semibold uppercase tracking-[0.16em] text-app-subtext/80"
+						>
 							Thinking
 						</p>
 						{#each thinkingChoices as level (level)}
@@ -2292,9 +2424,7 @@
 		>
 			<div
 				class={`pointer-events-none absolute inset-x-0 top-0 z-20 flex items-start justify-end gap-1 ${
-					isMobileChrome
-						? 'p-3 pt-[max(0.75rem,var(--safe-top))]'
-						: 'p-4'
+					isMobileChrome ? 'p-3 pt-[max(0.75rem,var(--safe-top))]' : 'p-4'
 				}`}
 			>
 				<button

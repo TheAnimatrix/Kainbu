@@ -350,6 +350,9 @@ const normalizeChatHistory = (history: unknown): ChatMessage[] => {
 		const timestamp = toNumber(entry.timestamp) ?? Date.now() + index;
 		const toolActions = normalizeToolActions(entry.toolActions);
 		const stagedProposals = normalizeStagedProposals(entry.stagedProposals);
+		const appliedProposalChanges = Array.isArray(entry.appliedProposalChanges)
+			? entry.appliedProposalChanges.filter(isObject)
+			: [];
 		const progressEvents = normalizeProgressEvents(entry.progressEvents);
 		const attachments = normalizeAttachments(entry);
 		const taskCards = normalizeTaskCards(entry.taskCards);
@@ -385,6 +388,9 @@ const normalizeChatHistory = (history: unknown): ChatMessage[] => {
 				...(annotations.length ? { annotations } : {}),
 				...(toolActions.length ? { toolActions } : {}),
 				...(stagedProposals?.length ? { stagedProposals } : {}),
+				...(appliedProposalChanges.length
+					? { appliedProposalChanges: appliedProposalChanges as never }
+					: {}),
 				...(progressEvents.length ? { progressEvents } : {})
 			}
 		];
@@ -684,7 +690,7 @@ export const createProjectPage = async (
 	projectId: string,
 	name: string,
 	position: number,
-	options?: { clientId?: string; content?: string }
+	options?: { clientId?: string; content?: string; tolerateExisting?: boolean }
 ) => {
 	const pb = getPb();
 	const projectPbId = await getProjectPbId(projectId);
@@ -701,8 +707,26 @@ export const createProjectPage = async (
 	try {
 		data = await pb.collection('project_pages').create(body);
 	} catch (error) {
-		if (!isProjectPagesStrayIdFieldError(error)) throw error;
-		data = await pb.collection('project_pages').create({ ...body, id: clientId });
+		if (isProjectPagesStrayIdFieldError(error)) {
+			try {
+				data = await pb.collection('project_pages').create({ ...body, id: clientId });
+			} catch (fallbackError) {
+				if (!options?.tolerateExisting) throw fallbackError;
+				data = await pb
+					.collection('project_pages')
+					.getFirstListItem(
+						`${projectRelationFilter(projectPbId)} && client_id = "${pbEscapeFilter(clientId)}"`
+					);
+			}
+		} else if (options?.tolerateExisting) {
+			data = await pb
+				.collection('project_pages')
+				.getFirstListItem(
+					`${projectRelationFilter(projectPbId)} && client_id = "${pbEscapeFilter(clientId)}"`
+				);
+		} else {
+			throw error;
+		}
 	}
 
 	return mapPageRow(mapPageRecord(data, projectId));

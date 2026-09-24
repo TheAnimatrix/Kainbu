@@ -56,8 +56,14 @@ export const normalizeChatHistory = (history: unknown): ChatMessage[] => {
 
 		const toolActions = Array.isArray(entry.toolActions) ? entry.toolActions : undefined;
 		if (toolActions) message.toolActions = toolActions as never;
-		const stagedProposals = Array.isArray(entry.stagedProposals) ? entry.stagedProposals : undefined;
+		const stagedProposals = Array.isArray(entry.stagedProposals)
+			? entry.stagedProposals
+			: undefined;
 		if (stagedProposals) message.stagedProposals = stagedProposals as never;
+		const appliedProposalChanges = Array.isArray(entry.appliedProposalChanges)
+			? entry.appliedProposalChanges
+			: undefined;
+		if (appliedProposalChanges) message.appliedProposalChanges = appliedProposalChanges as never;
 		const progressEvents = Array.isArray(entry.progressEvents) ? entry.progressEvents : undefined;
 		if (progressEvents) message.progressEvents = progressEvents as never;
 		const taskCards = Array.isArray(entry.taskCards) ? entry.taskCards : undefined;

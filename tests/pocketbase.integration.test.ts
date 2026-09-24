@@ -373,6 +373,52 @@ describe.runIf(process.env.KAINBU_PB_INTEGRATION === '1')(
 				await cleanupMaterializedWorkspace(workspace);
 			}
 		});
+		it('restores persisted chat undo data and its updated outcome through workspace snapshots', async () => {
+			const change = {
+				id: 'undo-change',
+				proposalId: 'undo-proposal',
+				projectId: project.client_id,
+				sessionId: 'undo-session',
+				messageId: 'undo-message',
+				target: 'kanban',
+				boardId: board.client_id,
+				summary: 'Added release checklist',
+				appliedAt: Date.now(),
+				status: 'applied',
+				beforeFingerprint: 'before',
+				afterFingerprint: 'after',
+				before: { kanbanData: [] },
+				after: { kanbanData: [{ id: 'release-column', title: 'Release', tasks: [] }] }
+			};
+			const message = {
+				id: 'undo-message',
+				role: 'assistant',
+				text: '',
+				timestamp: Date.now(),
+				appliedProposalChanges: [change]
+			};
+			const session = await owner.collection('project_ai_sessions').create({
+				project: project.id,
+				user: owner.authStore.record!.id,
+				client_id: 'undo-session',
+				title: 'Undo test',
+				history: [message]
+			});
+			const readChange = async () => {
+				const response = await request('/api/workspace/snapshot', owner);
+				expect(response.status).toBe(200);
+				const snapshot = await response.json();
+				return snapshot.projects
+					.find((entry: Project) => entry.id === project.client_id)
+					.aiSessions.find((entry: { id: string }) => entry.id === 'undo-session').history[0]
+					.appliedProposalChanges[0];
+			};
+			expect(await readChange()).toEqual(change);
+			await owner.collection('project_ai_sessions').update(session.id, {
+				history: [{ ...message, appliedProposalChanges: [{ ...change, status: 'undone' }] }]
+			});
+			expect(await readChange()).toEqual({ ...change, status: 'undone' });
+		});
 		it('keeps private chat state private and protects page attachments', async () => {
 			for (const collection of ['project_user_state', 'project_ai_sessions']) {
 				const record = await owner.collection(collection).create({
@@ -441,15 +487,13 @@ describe.runIf(process.env.KAINBU_PB_INTEGRATION === '1')(
 					.collection('project_pages')
 					.create({ project: project.id, client_id: 'active-after-leave', name: 'Still editable' })
 			).resolves.toHaveProperty('id');
-			const invite = await admin
-				.collection('project_invites')
-				.create({
-					project: project.id,
-					invitee: former.authStore.record!.id,
-					invitee_email: 'former@kainbu.test',
-					invited_by: owner.authStore.record!.id,
-					status: 'pending'
-				});
+			const invite = await admin.collection('project_invites').create({
+				project: project.id,
+				invitee: former.authStore.record!.id,
+				invitee_email: 'former@kainbu.test',
+				invited_by: owner.authStore.record!.id,
+				status: 'pending'
+			});
 			expect(
 				(
 					await request('/api/workspace/invites/respond', former, 'POST', {

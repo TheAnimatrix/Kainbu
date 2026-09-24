@@ -230,11 +230,44 @@ export interface ChatMessage {
 	toolActions?: WorkspaceAction[];
 	/** Unapplied AI proposals tied to this assistant turn (restored after refresh). */
 	stagedProposals?: AiProposal[];
+	/** Workspace changes applied by this assistant turn, including durable undo data. */
+	appliedProposalChanges?: AppliedProposalChange[];
 	progressEvents?: AiProgressEvent[];
 	question?: AiQuestion;
 	usage?: AiUsage;
 	stoppedReason?: string;
 }
+
+export type AppliedProposalChangeStatus = 'applied' | 'undoing' | 'undone' | 'conflicted';
+
+export type AppliedProposalChange = {
+	id: string;
+	proposalId: string;
+	projectId: string;
+	sessionId: string;
+	messageId: string;
+	target: ProposalTarget;
+	summary: string;
+	appliedAt: number;
+	status: AppliedProposalChangeStatus;
+	error?: string;
+	/** Exact target fingerprint at the last completed undo step, used for safe retries. */
+	undoFingerprint?: string;
+	beforeFingerprint: string;
+	afterFingerprint: string;
+} & (
+	| {
+			target: 'kanban';
+			boardId: string;
+			before: { kanbanData: KanbanData };
+			after: { kanbanData: KanbanData };
+	  }
+	| {
+			target: 'scratchpad';
+			before: { pages: ProjectPage[]; activePageId: string };
+			after: { pages: ProjectPage[]; activePageId: string };
+	  }
+);
 
 export interface ProjectMembership {
 	projectId: string;
@@ -585,6 +618,8 @@ export interface AiProposalSafety {
 export interface AiKanbanProposal {
 	id: string;
 	target: 'kanban';
+	/** Board that was active when this proposal was generated. */
+	boardId?: string;
 	summary: string;
 	scope: Extract<ProposalScope, 'task' | 'column' | 'board'>;
 	editCallCount: number;
@@ -620,6 +655,7 @@ export type AiProposal = AiKanbanProposal | AiScratchpadProposal;
 export type PendingProposal =
 	| (AiKanbanProposal & {
 			projectId: string;
+			boardId: string;
 			stale: boolean;
 			originalKanbanData: KanbanData;
 	  })

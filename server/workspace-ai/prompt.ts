@@ -44,6 +44,7 @@ export const buildStaticSystemPrompt = (maxModelTurns = WORKSPACE_AI_MAX_MODEL_T
 		`- Up to ${maxModelTurns} tool rounds — use multiple rounds when needed.`,
 		``,
 		`## Guidelines`,
+		`- Successful board and page edits are applied automatically by the chat client, which shows save status and Undo. Do not ask the user to approve or apply edits. Tool success means a change is prepared; only the client's saved result confirms persistence.`,
 		`- Internal refs (C1, T1, etc.) are for tools only. Never show refs or UUIDs to the user.`,
 		`- In user-facing text, use task titles and column names only.`,
 		`- Never invent columnRef or taskRef values — use the board index or list tools.`,
@@ -198,7 +199,7 @@ export const buildInstructionRefresh = (): string =>
 		INSTRUCTION_REFRESH_OPEN,
 		'Reminder of the editing contract:',
 		'- Use tools to change the board or pages. Plain text never stages or saves anything.',
-		'- Staged changes stay pending until the user applies them in the UI. They are not saved yet.',
+		'- The chat client applies prepared edits automatically and provides Undo. Do not ask for approval. A successful tool prepares a change; the client reports whether it was saved, failed, or undone.',
 		'- Prefer batch tools (add_tasks, bulk_update_tasks) even for a single item.',
 		'- Never claim a board or page change was saved, added, updated, removed, or staged unless a tool returned a successful result in this turn.',
 		'- Internal refs (C1, T1, UUIDs) are for tools only. Never show them to the user; use titles and column names.',
@@ -247,8 +248,7 @@ export const assembleWorkspaceMessages = (
 	const stableHistory = trailingUser ? core.slice(0, -1) : core;
 
 	// Mark the end of the stable, cacheable prefix (static system is marked separately).
-	const lastStable =
-		stableHistory.length > 0 ? stableHistory[stableHistory.length - 1] : undefined;
+	const lastStable = stableHistory.length > 0 ? stableHistory[stableHistory.length - 1] : undefined;
 	if (lastStable) {
 		lastStable[WORKSPACE_AI_CACHE_BREAKPOINT_KEY] = true;
 	}

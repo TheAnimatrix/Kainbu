@@ -486,7 +486,7 @@ export const handleWorkspaceAiRequest = async (
 			appendInternalTurnNote(
 				messages,
 				turns,
-				'Summarize what you changed or reviewed. Tell the user to review staged changes in the UI if any.'
+				'Summarize what you prepared or reviewed. The chat client applies prepared changes automatically and displays save status and Undo. Do not ask the user to approve or apply them, or claim they are saved before the client confirms it.'
 			);
 			emitProgress('status', 'Summarizing…');
 			const streamed = await fetchCompletionStream(
@@ -520,12 +520,9 @@ export const handleWorkspaceAiRequest = async (
 		];
 
 		if (proposals.length > 0) {
-			const applyLine =
-				proposals.length === 1
-					? 'Review the staged change below, then apply it to save it to the project.'
-					: 'Review the staged changes below, then apply them to save them to the project.';
-			reply = reply.trim() ? `${reply.trim()}\n\n${applyLine}` : applyLine;
-			emitProgress('status', 'Changes are ready to review.');
+			reply =
+				reply.trim() || 'Your changes are ready. Chat will apply them and show their save status.';
+			emitProgress('status', 'Changes are ready to apply automatically.');
 		} else if (workspace.board.editCallCount > 0 || workspace.page.editCallCount > 0) {
 			const noStageLine = 'No board or page changes were staged to apply.';
 			reply = reply.trim() ? `${reply.trim()}\n\n${noStageLine}` : noStageLine;

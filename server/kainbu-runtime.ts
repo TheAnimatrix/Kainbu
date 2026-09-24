@@ -1,4 +1,5 @@
-import type { KanbanData, ScratchpadData, ScratchpadPad } from '../src/lib/kainbu/types.js';
+import type { ScratchpadData, ScratchpadPad } from '../src/lib/kainbu/types.js';
+export { getKanbanFingerprint } from '../src/lib/kainbu/kanbanFingerprint.js';
 
 const byteToHex = Array.from({ length: 256 }, (_, index) => index.toString(16).padStart(2, '0'));
 const SCRATCHPAD_STORAGE_PREFIX = '__KAINBU_SCRATCHPADS_V1__';
@@ -13,10 +14,7 @@ const formatUuidFromBytes = (bytes: Uint8Array) => {
 	bytes[8] = (bytes[8] & 0x3f) | 0x80;
 
 	return [
-		byteToHex[bytes[0]] +
-			byteToHex[bytes[1]] +
-			byteToHex[bytes[2]] +
-			byteToHex[bytes[3]],
+		byteToHex[bytes[0]] + byteToHex[bytes[1]] + byteToHex[bytes[2]] + byteToHex[bytes[3]],
 		byteToHex[bytes[4]] + byteToHex[bytes[5]],
 		byteToHex[bytes[6]] + byteToHex[bytes[7]],
 		byteToHex[bytes[8]] + byteToHex[bytes[9]],
@@ -185,34 +183,6 @@ export const deleteScratchpadPad = (value: ScratchpadData, padId: string): Scrat
 		pads
 	};
 };
-
-const canonicalizeKanbanData = (kanbanData: KanbanData) =>
-	kanbanData.map((column) => ({
-		id: column.id,
-		title: column.title,
-		color: column.color || null,
-		width: column.width ?? DEFAULT_COLUMN_WIDTH,
-		tasks: (column.tasks || []).map((task) => ({
-			id: task.id,
-			title: task.title,
-			description: task.description || '',
-			color: task.color || null,
-			tags: (task.tags || []).map((tag) => ({
-				id: tag.id,
-				label: tag.label,
-				color: tag.color || null
-			})),
-			hasCheckbox: Boolean(task.hasCheckbox),
-			checked: Boolean(task.checked),
-			completedAt: task.completedAt ?? null,
-			countdownAt: task.countdownAt ?? null,
-			alarmAt: task.alarmAt ?? null,
-			assignedTo: task.assignedTo || null
-		}))
-	}));
-
-export const getKanbanFingerprint = (kanbanData: KanbanData) =>
-	JSON.stringify(canonicalizeKanbanData(kanbanData));
 
 export const getScratchpadFingerprint = (scratchpadData: ScratchpadData) =>
 	JSON.stringify({

@@ -73,10 +73,14 @@
 		DESKTOP_CHAT_WIDTH
 	} from '$lib/kainbu/constants';
 	import {
+		canResumeAppliedProposalUndo,
+		collectAppliedProposalChangesFromHistory,
 		collectStagedProposalsFromHistory,
 		clearStagedProposalsForTargets,
+		recoverInterruptedScratchpadUndosInHistory,
 		removeStagedProposalFromHistory,
-		toPendingProposals
+		toPendingProposals,
+		updateAppliedProposalChangeInHistory
 	} from '$lib/kainbu/aiProposals';
 	import { fetchWorkspaceAiModels, generateSessionTitle, invokeWorkspaceAi } from '$lib/kainbu/ai';
 	import { prepareChatHistoryForModel } from '$lib/kainbu/aiVision';
@@ -97,7 +101,8 @@
 		resolveAiModelId,
 		setActiveProjectAiSession,
 		syncProjectAiModelIds,
-		updateActiveProjectAiSession
+		updateActiveProjectAiSession,
+		updateProjectAiSessionById
 	} from '$lib/kainbu/aiSessions';
 	import {
 		clearWorkspaceSnapshot,
@@ -178,6 +183,7 @@
 	import { formatTagsForAiContext } from '$lib/kainbu/tags';
 	import type {
 		AiModelConfig,
+		AppliedProposalChange,
 		AiVisionFallbackConfig,
 		AiModelId,
 		AiProposal,
@@ -290,6 +296,7 @@
 	let pendingProposals: PendingProposal[] = [];
 	let proposalApplyErrors: Record<string, string> = {};
 	let applyingProposalId: string | null = null;
+	let aiLockedPageKeys = new Set<string>();
 	let highlightedTaskIds: string[] = [];
 	let boardSearchActive = false;
 	let boardSearchQuery = '';
@@ -461,6 +468,9 @@
 	$: activePendingProposals = pendingProposals.filter(
 		(proposal) => proposal.projectId === currentProjectId
 	);
+	$: appliedProposalChanges = activeAiSession
+		? collectAppliedProposalChangesFromHistory(activeAiSession.history)
+		: [];
 	$: if (
 		proposalPreviewTarget &&
 		!activePendingProposals.some((proposal) => proposal.target === proposalPreviewTarget)
@@ -644,6 +654,18 @@
 		projectRevisions[projectId] || { kanban: 0, scratchpad: 0 };
 	const getBoardHistoryKey = (projectId: string, boardId: string) =>
 		`${projectId}::board::${boardId}`;
+	const getAiPageLockKey = (projectId: string, pageId: string) => `${projectId}::page::${pageId}`;
+	const setAiPageLocks = (projectId: string, pageIds: string[], locked: boolean) => {
+		const next = new Set(aiLockedPageKeys);
+		for (const pageId of pageIds) {
+			const key = getAiPageLockKey(projectId, pageId);
+			if (locked) next.add(key);
+			else next.delete(key);
+		}
+		aiLockedPageKeys = next;
+	};
+	const isAiPageLocked = (projectId: string, pageId: string) =>
+		aiLockedPageKeys.has(getAiPageLockKey(projectId, pageId));
 	const getPageSyncKey = (projectId: string, pageId: string) => `${projectId}::page::${pageId}`;
 	const hasKeyWithPrefix = (keys: Iterable<string>, prefix: string) => {
 		for (const key of keys) {
@@ -903,7 +925,8 @@
 	};
 	const isProposalStaleForProject = (proposal: PendingProposal, project: Project) => {
 		if (proposal.target === 'kanban') {
-			return getKanbanFingerprint(project.kanbanData) !== proposal.baseFingerprint;
+			const board = project.boards.find((entry) => entry.id === proposal.boardId);
+			return !board || getKanbanFingerprint(board.kanbanData) !== proposal.baseFingerprint;
 		}
 
 		return getProjectPagesFingerprint(project.pages) !== proposal.baseFingerprint;
@@ -1177,12 +1200,15 @@
 		options: {
 			recordHistory?: boolean;
 			syncDelay?: number;
+			boardId?: string;
 		} = {}
 	) => {
-		const boardId = project.activeBoardId;
+		const boardId = options.boardId || project.activeBoardId;
 		if (!boardId) return false;
 
-		const previousKanbanData = cloneKanbanData(project.kanbanData);
+		const targetBoard = project.boards.find((board) => board.id === boardId);
+		if (!targetBoard) return false;
+		const previousKanbanData = cloneKanbanData(targetBoard.kanbanData);
 		const normalizedNextKanbanData = normalizeKanbanAssignments(
 			project,
 			retainDeletedTasks(previousKanbanData, cloneKanbanData(nextKanbanData))
@@ -1192,9 +1218,11 @@
 			return false;
 		}
 
-		const updateResult = updateProjectLocal(project.id, (currentProject) =>
-			updateProjectBoardData(currentProject, boardId, normalizedNextKanbanData)
-		);
+		const updateResult = updateProjectLocal(project.id, (currentProject) => {
+			const activeBoardId = currentProject.activeBoardId;
+			const updated = updateProjectBoardData(currentProject, boardId, normalizedNextKanbanData);
+			return activeBoardId === boardId ? updated : setProjectActiveBoard(updated, activeBoardId);
+		});
 
 		if (!updateResult) return false;
 
@@ -1633,6 +1661,42 @@
 		scheduleSnapshotPersist();
 	};
 
+	const completeSyncedBoardUndos = (projectId: string, boardId: string) => {
+		const project = projects.find((entry) => entry.id === projectId);
+		const board = project?.boards.find((entry) => entry.id === boardId);
+		if (!project || !board) return;
+		const currentFingerprint = getKanbanFingerprint(board.kanbanData);
+		let changed = false;
+		const aiSessions = project.aiSessions.map((session) => ({
+			...session,
+			history: session.history.map((message) => {
+				if (!message.appliedProposalChanges?.length) return message;
+				const appliedProposalChanges = message.appliedProposalChanges.map((change) => {
+					if (change.target !== 'kanban' || change.boardId !== boardId) {
+						return change;
+					}
+					if (change.status === 'undoing' && change.beforeFingerprint === currentFingerprint) {
+						changed = true;
+						return { ...change, status: 'undone' as const, error: undefined };
+					}
+					if (
+						change.status === 'applied' &&
+						change.afterFingerprint === currentFingerprint &&
+						change.error?.startsWith('Applied locally, but sync failed:')
+					) {
+						changed = true;
+						return { ...change, error: undefined };
+					}
+					return change;
+				});
+				return changed ? { ...message, appliedProposalChanges } : message;
+			})
+		}));
+		if (!changed) return;
+		updateProjectLocal(projectId, (current) => ({ ...current, aiSessions }));
+		scheduleChatSync(projectId, 0);
+	};
+
 	const flushBoardSync = async (syncKey: string) => {
 		if (!user) return;
 		try {
@@ -1648,6 +1712,7 @@
 					'Unable to sync the board. Your local changes have been kept.'
 				);
 				lastProjectSyncAt = { ...lastProjectSyncAt, [pending.projectId]: Date.now() };
+				completeSyncedBoardUndos(pending.projectId, pending.boardId);
 			});
 		} finally {
 			if (!pendingBoardSyncs.errors.size && !pendingScratchpadSyncs.errors.size) clearSyncError();
@@ -1755,8 +1820,14 @@
 		}
 	};
 
+	// Chat state is saved as one whole-session snapshot. Keep one writer per project so an
+	// older request can never finish after, and overwrite, a newer snapshot.
+	const chatSyncVersions = new Map<string, number>();
+	const chatSyncWriters = new Map<string, Promise<void>>();
+
 	const scheduleChatSync = (projectId: string, delay = CHAT_SYNC_DEBOUNCE_MS) => {
 		pendingChatSyncs.add(projectId);
+		chatSyncVersions.set(projectId, (chatSyncVersions.get(projectId) || 0) + 1);
 		if (chatSyncTimeouts.has(projectId)) {
 			clearTimeout(chatSyncTimeouts.get(projectId));
 		}
@@ -1765,7 +1836,7 @@
 			projectId,
 			setTimeout(() => {
 				chatSyncTimeouts.delete(projectId);
-				void flushChatSync(projectId);
+				void flushChatSync(projectId).catch(console.error);
 			}, delay)
 		);
 
@@ -1775,29 +1846,45 @@
 
 	const flushChatSync = async (projectId: string) => {
 		if (!user || !pendingChatSyncs.has(projectId)) return;
+		const running = chatSyncWriters.get(projectId);
+		if (running) return running;
 		const currentUser = user;
-		const project = projects.find((entry) => entry.id === projectId);
-		if (!project) return;
+		const work = (async () => {
+			while (pendingChatSyncs.has(projectId)) {
+				const project = projects.find((entry) => entry.id === projectId);
+				if (!project) return;
+				const sentVersion = chatSyncVersions.get(projectId) || 0;
+
+				await runSyncAction(
+					() =>
+						saveProjectAiState(
+							projectId,
+							currentUser.id,
+							project.aiSessions,
+							project.activeAiSessionId
+						),
+					'Unable to sync your private chat right now.'
+				);
+				lastProjectSyncAt = {
+					...lastProjectSyncAt,
+					[projectId]: Date.now()
+				};
+
+				const timeout = chatSyncTimeouts.get(projectId);
+				if (timeout) clearTimeout(timeout);
+				chatSyncTimeouts.delete(projectId);
+				if ((chatSyncVersions.get(projectId) || 0) === sentVersion) {
+					pendingChatSyncs.delete(projectId);
+					chatSyncVersions.delete(projectId);
+				}
+			}
+		})();
+		chatSyncWriters.set(projectId, work);
 
 		try {
-			await runSyncAction(
-				() =>
-					saveProjectAiState(
-						projectId,
-						currentUser.id,
-						project.aiSessions,
-						project.activeAiSessionId
-					),
-				'Unable to sync your private chat right now.'
-			);
-			if (pendingChatSyncs.has(projectId) && !chatSyncTimeouts.has(projectId)) {
-				pendingChatSyncs.delete(projectId);
-			}
-			lastProjectSyncAt = {
-				...lastProjectSyncAt,
-				[projectId]: Date.now()
-			};
+			await work;
 		} finally {
+			if (chatSyncWriters.get(projectId) === work) chatSyncWriters.delete(projectId);
 			refreshSyncStatus(syncErrorMessage.length === 0 && !hasPendingLocalChanges());
 		}
 	};
@@ -2032,6 +2119,15 @@
 			syncUsernameDraftFromProfile(createFallbackUserProfile(currentUser));
 		}
 
+		const recoverInterruptedScratchpadUndos = (sourceProjects: Project[]) =>
+			sourceProjects.map((project) => ({
+				...project,
+				aiSessions: project.aiSessions.map((session) => ({
+					...session,
+					history: recoverInterruptedScratchpadUndosInHistory(session.history)
+				}))
+			}));
+
 		if (localSnapshot) {
 			for (const [key, pending] of localSnapshot.pendingBoardSyncs || [])
 				pendingBoardSyncs.set(key, pending);
@@ -2039,7 +2135,7 @@
 				pendingScratchpadSyncs.set(key, pending);
 			for (const key of localSnapshot.pendingChatSyncs || []) pendingChatSyncs.add(key);
 			applyWorkspaceState({
-				nextProjects: localSnapshot.projects,
+				nextProjects: recoverInterruptedScratchpadUndos(localSnapshot.projects),
 				preferredProjectId: localSnapshot.currentProjectId,
 				nextSettings: resolveColorModeForHydration(localSnapshot.settings),
 				nextDirtySettings: localSnapshot.dirtySettings,
@@ -2110,8 +2206,8 @@
 
 			applyWorkspaceState({
 				nextProjects: mergeRemoteProjects(
-					localSnapshot?.projects || projects,
-					workspaceResult.value.projects
+					localSnapshot ? recoverInterruptedScratchpadUndos(localSnapshot.projects) : projects,
+					recoverInterruptedScratchpadUndos(workspaceResult.value.projects)
 				),
 				nextIncomingInvites: workspaceResult.value.incomingInvites,
 				preferredProjectId:
@@ -3956,17 +4052,22 @@
 		refreshPendingProposalStaleness();
 	};
 
-	const buildProposalAppliedMessage = (proposal: PendingProposal): ChatMessage => ({
-		id: createId(),
+	const buildProposalAppliedMessage = (
+		proposal: PendingProposal,
+		change: AppliedProposalChange
+	): ChatMessage => ({
+		id: change.messageId,
 		role: 'assistant',
 		text: '',
 		timestamp: Date.now(),
+		appliedProposalChanges: [change],
 		progressEvents: [
 			{
 				id: createId(),
 				kind: 'status',
-				message:
-					proposal.target === 'kanban'
+				message: change.error
+					? change.error
+					: proposal.target === 'kanban'
 						? 'Board changes applied to the project.'
 						: 'Page changes applied to the project.',
 				timestamp: Date.now()
@@ -3989,10 +4090,16 @@
 		mobileTab = 'scratchpad';
 	};
 
-	const handleAcceptProposal = async (proposalId: string) => {
-		if (!currentProject) return;
-		const proposal = activePendingProposals.find((entry) => entry.id === proposalId);
-		if (!proposal) return;
+	const handleAcceptProposal = async (
+		proposalId: string,
+		projectId = currentProject?.id,
+		options: { navigateToTarget?: boolean; sessionId?: string } = {}
+	): Promise<boolean> => {
+		if (!projectId) return false;
+		const proposal = pendingProposals.find(
+			(entry) => entry.id === proposalId && entry.projectId === projectId
+		);
+		if (!proposal) return false;
 
 		applyingProposalId = proposalId;
 		const nextErrors = { ...proposalApplyErrors };
@@ -4000,11 +4107,11 @@
 		proposalApplyErrors = nextErrors;
 
 		refreshPendingProposalStaleness();
-		const nextProject = projects.find((entry) => entry.id === currentProject.id) || currentProject;
+		const nextProject = projects.find((entry) => entry.id === projectId);
 		const refreshedProposal = pendingProposals.find((entry) => entry.id === proposalId) || proposal;
 		if (!nextProject) {
 			applyingProposalId = null;
-			return;
+			return false;
 		}
 		if (refreshedProposal.stale) {
 			applyingProposalId = null;
@@ -4013,37 +4120,68 @@
 				[proposalId]:
 					'This proposal is stale because the workspace changed after it was generated. Review it again before applying.'
 			};
-			return;
+			return false;
 		}
 
 		let applied = false;
 		let applyError = '';
+		const beforeProject = structuredClone(nextProject);
+		let appliedKanbanSnapshot: Project['kanbanData'] | null = null;
+		let fullyAppliedScratchpad = false;
 
 		if (refreshedProposal.target === 'kanban') {
+			const proposalBoard = nextProject.boards.find(
+				(board) => board.id === refreshedProposal.boardId
+			);
 			logWorkspaceAiProposalDebug('accept:start', nextProject.id, refreshedProposal, {
-				currentFingerprint: getKanbanFingerprint(nextProject.kanbanData),
+				currentFingerprint: getKanbanFingerprint(proposalBoard?.kanbanData || []),
 				stale: refreshedProposal.stale
 			});
-			if (!nextProject.activeBoardId) {
-				applyError = 'No active board is selected for this project.';
+			if (!proposalBoard) {
+				applyError = 'The board targeted by this change no longer exists.';
 			} else {
 				applied = applyLocalKanbanChange(nextProject, refreshedProposal.preview.kanbanData, {
-					syncDelay: 0
+					syncDelay: 0,
+					boardId: refreshedProposal.boardId
 				});
 				if (!applied) {
 					applyError =
 						'Could not apply board changes. The board may already match the preview, or the change could not be saved.';
 				} else {
-					desktopWorkspaceTab = 'kanban';
-					mobileTab = 'kanban';
+					const locallyAppliedProject = projects.find((entry) => entry.id === nextProject.id);
+					const locallyAppliedBoard = locallyAppliedProject?.boards.find(
+						(board) => board.id === refreshedProposal.boardId
+					);
+					appliedKanbanSnapshot = cloneKanbanData(
+						locallyAppliedBoard?.kanbanData || refreshedProposal.preview.kanbanData
+					);
+					if (options.navigateToTarget !== false) {
+						desktopWorkspaceTab = 'kanban';
+						mobileTab = 'kanban';
+					}
+					const syncKey = getBoardHistoryKey(nextProject.id, refreshedProposal.boardId);
+					const timeout = boardSyncTimeouts.get(syncKey);
+					if (timeout) clearTimeout(timeout);
+					boardSyncTimeouts.delete(syncKey);
+					try {
+						await flushBoardSync(syncKey);
+					} catch (error) {
+						applyError =
+							error instanceof Error
+								? `Applied locally, but sync failed: ${error.message}`
+								: 'Applied locally, but the board could not be synced.';
+					}
 				}
 			}
 			const updatedProject = projects.find((entry) => entry.id === nextProject.id) || nextProject;
+			const updatedBoard = updatedProject.boards.find(
+				(board) => board.id === refreshedProposal.boardId
+			);
 			logWorkspaceAiProposalDebug('accept:finish', nextProject.id, refreshedProposal, {
 				applied,
-				resultFingerprint: getKanbanFingerprint(updatedProject.kanbanData),
+				resultFingerprint: getKanbanFingerprint(updatedBoard?.kanbanData || []),
 				resultMatchesPreview:
-					getKanbanFingerprint(updatedProject.kanbanData) ===
+					getKanbanFingerprint(updatedBoard?.kanbanData || []) ===
 					getKanbanFingerprint(refreshedProposal.preview.kanbanData)
 			});
 		} else if (refreshedProposal.target === 'scratchpad') {
@@ -4054,6 +4192,22 @@
 			if (!previewPads.length) {
 				applyError = 'Could not find any page changes to apply.';
 			} else {
+				const beforePageById = new Map(nextProject.pages.map((page) => [page.id, page]));
+				const previewPadById = new Map(previewPads.map((pad) => [pad.id, pad]));
+				const lockedPageIds = uniqueIds([
+					...previewPads
+						.filter((pad) => {
+							const beforePage = beforePageById.get(pad.id);
+							return (
+								!beforePage ||
+								beforePage.name !== pad.name ||
+								beforePage.content !== (pad.content || '')
+							);
+						})
+						.map((pad) => pad.id),
+					...nextProject.pages.filter((page) => !previewPadById.has(page.id)).map((page) => page.id)
+				]);
+				setAiPageLocks(nextProject.id, lockedPageIds, true);
 				logWorkspaceAiProposalDebug('accept:start', nextProject.id, refreshedProposal, {
 					currentFingerprint: getProjectPagesFingerprint(nextProject.pages),
 					targetPageId: targetPadId,
@@ -4129,8 +4283,10 @@
 					for (const pad of previewPads) {
 						const pageId = pad.id;
 						const nextContent = pad.content || '';
-						const pageExists = workingProject.pages.some((page) => page.id === pageId);
-						if (!pageExists) continue;
+						const existingPage = workingProject.pages.find((page) => page.id === pageId);
+						if (!existingPage) continue;
+						const beforePage = beforePageById.get(pageId);
+						if (!beforePage || beforePage.content === nextContent) continue;
 
 						const updateResult = updateProjectLocal(workingProject.id, (project) =>
 							updateProjectPageState(project, pageId, nextContent)
@@ -4139,9 +4295,24 @@
 							throw new Error(`Could not apply content for page "${pad.name}".`);
 						}
 						await runSyncAction(
-							() => syncProjectPageContent(workingProject.id, pageId, nextContent),
+							() =>
+								syncProjectPageContent(workingProject.id, pageId, nextContent, beforePage.content),
 							'Unable to sync page content right now.'
 						);
+					}
+
+					const previewPadIds = new Set(previewPads.map((pad) => pad.id));
+					for (const page of workingProject.pages.filter((entry) => !previewPadIds.has(entry.id))) {
+						await runSyncAction(
+							() => deleteProjectPageRemote(workingProject.id, page.id),
+							'Unable to delete a page changed by the assistant.'
+						);
+						updateProjectLocal(workingProject.id, (project) => ({
+							...project,
+							pages: project.pages.filter((entry) => entry.id !== page.id)
+						}));
+						workingProject =
+							projects.find((entry) => entry.id === workingProject.id) || workingProject;
 					}
 
 					const finalPadId =
@@ -4153,11 +4324,25 @@
 					);
 
 					applied = true;
+					fullyAppliedScratchpad = true;
 					bumpProjectRevision(workingProject.id, 'scratchpad');
-					desktopWorkspaceTab = 'scratchpad';
-					mobileTab = 'scratchpad';
+					if (options.navigateToTarget !== false) {
+						desktopWorkspaceTab = 'scratchpad';
+						mobileTab = 'scratchpad';
+					}
 				} catch (error) {
 					applyError = error instanceof Error ? error.message : 'Could not apply page changes.';
+					const partiallyAppliedProject =
+						projects.find((entry) => entry.id === nextProject.id) || nextProject;
+					if (
+						getProjectPagesFingerprint(partiallyAppliedProject.pages) !==
+						getProjectPagesFingerprint(beforeProject.pages)
+					) {
+						applied = true;
+						applyError = `Only part of the page change was applied: ${applyError}`;
+					}
+				} finally {
+					setAiPageLocks(nextProject.id, lockedPageIds, false);
 				}
 
 				const updatedProject = projects.find((entry) => entry.id === nextProject.id) || nextProject;
@@ -4185,19 +4370,76 @@
 				...proposalApplyErrors,
 				[proposalId]: applyError || 'Could not apply changes.'
 			};
-			return;
+			return false;
 		}
 
+		const appliedProject = projects.find((entry) => entry.id === nextProject.id) || nextProject;
+		const messageId = createId();
+		const sessionId = options.sessionId || getActiveProjectAiSession(appliedProject)?.id || '';
+		const appliedAt = Date.now();
+		const beforeBoard =
+			refreshedProposal.target === 'kanban'
+				? beforeProject.boards.find((board) => board.id === refreshedProposal.boardId)
+				: null;
+		const appliedChange: AppliedProposalChange =
+			refreshedProposal.target === 'kanban'
+				? {
+						id: createId(),
+						proposalId: refreshedProposal.id,
+						projectId: nextProject.id,
+						sessionId,
+						messageId,
+						target: 'kanban',
+						boardId: refreshedProposal.boardId,
+						summary: refreshedProposal.summary,
+						appliedAt,
+						status: 'applied',
+						...(applyError ? { error: applyError } : {}),
+						beforeFingerprint: getKanbanFingerprint(beforeBoard?.kanbanData || []),
+						afterFingerprint: getKanbanFingerprint(appliedKanbanSnapshot || []),
+						before: { kanbanData: structuredClone(beforeBoard?.kanbanData || []) },
+						after: { kanbanData: structuredClone(appliedKanbanSnapshot || []) }
+					}
+				: {
+						id: createId(),
+						proposalId: refreshedProposal.id,
+						projectId: nextProject.id,
+						sessionId,
+						messageId,
+						target: 'scratchpad',
+						summary: refreshedProposal.summary,
+						appliedAt,
+						status: 'applied',
+						...(applyError ? { error: applyError } : {}),
+						beforeFingerprint: getProjectPagesFingerprint(beforeProject.pages),
+						afterFingerprint: fullyAppliedScratchpad
+							? getProjectPagesFingerprint(refreshedProposal.preview.scratchpadState.pads)
+							: getProjectPagesFingerprint(appliedProject.pages),
+						before: {
+							pages: structuredClone(beforeProject.pages),
+							activePageId: beforeProject.activePageId
+						},
+						after: {
+							pages: structuredClone(appliedProject.pages),
+							activePageId: appliedProject.activePageId
+						}
+					};
+
 		updateProjectLocal(nextProject.id, (project) => ({
-			...updateActiveProjectAiSession(project, (session) => ({
-				...session,
-				history: [
-					...removeStagedProposalFromHistory(session.history, refreshedProposal.id),
-					buildProposalAppliedMessage(refreshedProposal)
-				],
-				updatedAt: Date.now(),
-				lastMessageAt: Date.now()
-			}))
+			...project,
+			aiSessions: project.aiSessions.map((session) =>
+				session.id === sessionId
+					? {
+							...session,
+							history: [
+								...removeStagedProposalFromHistory(session.history, refreshedProposal.id),
+								buildProposalAppliedMessage(refreshedProposal, appliedChange)
+							],
+							updatedAt: Date.now(),
+							lastMessageAt: Date.now()
+						}
+					: session
+			)
 		}));
 		scheduleChatSync(nextProject.id, 0);
 
@@ -4207,6 +4449,253 @@
 		proposalApplyErrors = remainingErrors;
 		if (proposalPreviewTarget === refreshedProposal.target) {
 			proposalPreviewTarget = null;
+		}
+		return true;
+	};
+
+	const updateAppliedProposalChange = (
+		change: AppliedProposalChange,
+		update: (current: AppliedProposalChange) => AppliedProposalChange
+	) => {
+		updateProjectLocal(change.projectId, (project) => ({
+			...project,
+			aiSessions: project.aiSessions.map((session) =>
+				session.id === change.sessionId
+					? {
+							...session,
+							history: updateAppliedProposalChangeInHistory(session.history, change.id, update),
+							updatedAt: Date.now()
+						}
+					: session
+			)
+		}));
+		scheduleChatSync(change.projectId, 0);
+	};
+
+	const handleUndoProposal = async (changeId: string) => {
+		const change = projects
+			.flatMap((project) =>
+				project.aiSessions.flatMap((session) =>
+					collectAppliedProposalChangesFromHistory(session.history)
+				)
+			)
+			.find((entry) => entry.id === changeId);
+		if (!change || change.status !== 'applied') return;
+
+		const project = projects.find((entry) => entry.id === change.projectId);
+		if (!project) return;
+		const expectedFingerprint = change.undoFingerprint || change.afterFingerprint;
+		if (!canResumeAppliedProposalUndo(change, project)) {
+			updateAppliedProposalChange(change, (current) => ({
+				...current,
+				status: 'conflicted',
+				error: 'Undo is unavailable because this part of the workspace changed afterward.'
+			}));
+			return;
+		}
+
+		updateAppliedProposalChange(change, (current) => ({
+			...current,
+			status: 'undoing',
+			error: undefined,
+			undoFingerprint: expectedFingerprint
+		}));
+		const lockedPageIds =
+			change.target === 'scratchpad'
+				? (() => {
+						const beforeById = new Map(change.before.pages.map((page) => [page.id, page]));
+						const afterById = new Map(change.after.pages.map((page) => [page.id, page]));
+						return uniqueIds(
+							[...new Set([...beforeById.keys(), ...afterById.keys()])].filter((pageId) => {
+								const beforePage = beforeById.get(pageId);
+								const afterPage = afterById.get(pageId);
+								return (
+									!beforePage ||
+									!afterPage ||
+									beforePage.name !== afterPage.name ||
+									beforePage.content !== afterPage.content
+								);
+							})
+						);
+					})()
+				: [];
+		if (change.target === 'scratchpad') {
+			setAiPageLocks(change.projectId, lockedPageIds, true);
+		}
+		let undoCheckpointFingerprint = expectedFingerprint;
+		const checkpointScratchpadUndo = () => {
+			const checkpointProject = projects.find((entry) => entry.id === change.projectId);
+			if (!checkpointProject) return;
+			undoCheckpointFingerprint = getProjectPagesFingerprint(checkpointProject.pages);
+			updateAppliedProposalChange(change, (current) => ({
+				...current,
+				status: 'undoing',
+				error: undefined,
+				undoFingerprint: undoCheckpointFingerprint
+			}));
+		};
+
+		try {
+			if (change.target === 'kanban') {
+				if (!project.boards.some((board) => board.id === change.boardId)) {
+					throw new Error('The board targeted by this change no longer exists.');
+				}
+				const undone = applyLocalKanbanChange(project, change.before.kanbanData, {
+					syncDelay: 0,
+					boardId: change.boardId
+				});
+				if (!undone) throw new Error('The board no longer matches the applied change.');
+				const syncKey = getBoardHistoryKey(project.id, change.boardId);
+				const timeout = boardSyncTimeouts.get(syncKey);
+				if (timeout) clearTimeout(timeout);
+				boardSyncTimeouts.delete(syncKey);
+				await flushBoardSync(syncKey);
+			} else {
+				let workingProject = projects.find((entry) => entry.id === project.id) || project;
+				const originalById = new Map(change.before.pages.map((page) => [page.id, page]));
+				const appliedById = new Map(change.after.pages.map((page) => [page.id, page]));
+				const changedOriginalPages = change.before.pages.filter((page) => {
+					const appliedPage = appliedById.get(page.id);
+					return (
+						!appliedPage || appliedPage.name !== page.name || appliedPage.content !== page.content
+					);
+				});
+				const createdPageIds = change.after.pages
+					.filter((page) => !originalById.has(page.id))
+					.map((page) => page.id);
+
+				for (const originalPage of changedOriginalPages) {
+					let currentPage = workingProject.pages.find((page) => page.id === originalPage.id);
+					if (!currentPage) {
+						const restoredPage = await runSyncAction(
+							() =>
+								createProjectPage(project.id, originalPage.name, originalPage.position, {
+									clientId: originalPage.id,
+									content: originalPage.content,
+									tolerateExisting: true
+								}),
+							'Unable to restore a page removed by the assistant.'
+						);
+						updateProjectLocal(project.id, (current) => ({
+							...current,
+							pages: [...current.pages, restoredPage]
+						}));
+						workingProject = projects.find((entry) => entry.id === project.id) || workingProject;
+						currentPage = workingProject.pages.find((page) => page.id === originalPage.id);
+						checkpointScratchpadUndo();
+					}
+					if (!currentPage) throw new Error(`Could not restore page "${originalPage.name}".`);
+
+					if (currentPage.name !== originalPage.name) {
+						await runSyncAction(
+							() => renameProjectPageRemote(project.id, currentPage!.id, originalPage.name),
+							'Unable to restore the previous page name.'
+						);
+						updateProjectLocal(project.id, (current) => ({
+							...current,
+							pages: current.pages.map((page) =>
+								page.id === originalPage.id
+									? { ...page, name: originalPage.name, updatedAt: Date.now() }
+									: page
+							)
+						}));
+						workingProject = projects.find((entry) => entry.id === project.id) || workingProject;
+						currentPage = workingProject.pages.find((page) => page.id === originalPage.id)!;
+						checkpointScratchpadUndo();
+					}
+					if (currentPage.content !== originalPage.content) {
+						const appliedPage = appliedById.get(originalPage.id);
+						await runSyncAction(
+							() =>
+								syncProjectPageContent(
+									project.id,
+									currentPage!.id,
+									originalPage.content,
+									appliedPage?.content || ''
+								),
+							'Unable to restore the previous page content.'
+						);
+						updateProjectLocal(project.id, (current) => ({
+							...current,
+							pages: current.pages.map((page) =>
+								page.id === originalPage.id
+									? { ...page, content: originalPage.content, updatedAt: Date.now() }
+									: page
+							)
+						}));
+						workingProject = projects.find((entry) => entry.id === project.id) || workingProject;
+						checkpointScratchpadUndo();
+					}
+				}
+
+				for (const pageId of createdPageIds) {
+					if (!workingProject.pages.some((page) => page.id === pageId)) continue;
+					try {
+						await runSyncAction(
+							() => deleteProjectPageRemote(project.id, pageId),
+							'Unable to remove a page created by the assistant.'
+						);
+					} catch (error) {
+						if (!isPocketBaseNotFound(error)) throw error;
+					}
+					updateProjectLocal(project.id, (current) => ({
+						...current,
+						pages: current.pages.filter((page) => page.id !== pageId)
+					}));
+					workingProject = projects.find((entry) => entry.id === project.id) || workingProject;
+					checkpointScratchpadUndo();
+				}
+
+				updateProjectLocal(project.id, (current) =>
+					setProjectActivePage(
+						{
+							...current,
+							pages: [...current.pages].sort(
+								(left, right) => left.position - right.position || left.createdAt - right.createdAt
+							)
+						},
+						change.before.activePageId
+					)
+				);
+				checkpointScratchpadUndo();
+				bumpProjectRevision(project.id, 'scratchpad');
+			}
+
+			updateAppliedProposalChange(change, (current) => ({
+				...current,
+				status: 'undone',
+				error: undefined,
+				undoFingerprint: undefined
+			}));
+		} catch (error) {
+			const errorMessage = error instanceof Error ? error.message : 'Could not undo this change.';
+			const latestProject = projects.find((entry) => entry.id === change.projectId);
+			const boardUndoIsLocal =
+				change.target === 'kanban' &&
+				latestProject?.boards.some(
+					(board) =>
+						board.id === change.boardId &&
+						getKanbanFingerprint(board.kanbanData) === change.beforeFingerprint
+				);
+			updateAppliedProposalChange(change, (current) => ({
+				...current,
+				status: boardUndoIsLocal
+					? 'undoing'
+					: change.target === 'scratchpad'
+						? 'applied'
+						: 'conflicted',
+				error: boardUndoIsLocal
+					? `The change is undone locally, but it has not synced yet: ${errorMessage}`
+					: change.target === 'scratchpad'
+						? `Undo paused after the last completed step: ${errorMessage}`
+						: errorMessage,
+				undoFingerprint:
+					change.target === 'scratchpad' ? undoCheckpointFingerprint : current.undoFingerprint
+			}));
+		} finally {
+			if (change.target === 'scratchpad') {
+				setAiPageLocks(change.projectId, lockedPageIds, false);
+			}
 		}
 	};
 
@@ -4391,7 +4880,7 @@
 			}));
 
 			updateProjectLocal(projectSnapshot.id, (project) =>
-				updateActiveProjectAiSession(project, (session) => ({
+				updateProjectAiSessionById(project, aiSessionSnapshot.id, (session) => ({
 					...session,
 					history: [
 						...clearStagedProposalsForTargets(session.history, supersededProposalTargets),
@@ -4416,6 +4905,12 @@
 			const latestProjectSnapshot =
 				projects.find((project) => project.id === projectSnapshot.id) || aiProjectSnapshot;
 			mergePendingProposals(latestProjectSnapshot, response);
+			for (const proposal of response.proposals) {
+				await handleAcceptProposal(proposal.id, projectSnapshot.id, {
+					navigateToTarget: false,
+					sessionId: activeSessionSnapshot.id
+				});
+			}
 
 			if (needsAutoTitle) {
 				generateSessionTitle(displayText, response.reply).then((generatedTitle) => {
@@ -4447,7 +4942,7 @@
 			};
 
 			updateProjectLocal(projectSnapshot.id, (project) =>
-				updateActiveProjectAiSession(project, (session) => ({
+				updateProjectAiSessionById(project, aiSessionSnapshot.id, (session) => ({
 					...session,
 					history: [...session.history, assistantErrorMessage],
 					updatedAt: assistantErrorMessage.timestamp,
@@ -5417,7 +5912,8 @@
 												<PagePane
 													title={visibleScratchpadPad?.name || currentPage?.name || 'Page'}
 													content={scratchpadContent}
-													isLocked={proposalPreviewTarget === 'scratchpad'}
+													isLocked={proposalPreviewTarget === 'scratchpad' ||
+														isAiPageLocked(currentProject.id, currentPage?.id || '')}
 													comparisonContent={scratchpadComparisonContent}
 													active={mobileTab === 'scratchpad'}
 													hideHeader={true}
@@ -5445,6 +5941,7 @@
 													isProcessing={isAiProcessing}
 													processingEvents={aiProgressEvents}
 													pendingProposals={activePendingProposals}
+													{appliedProposalChanges}
 													{proposalApplyErrors}
 													{applyingProposalId}
 													activeProposalTarget={proposalPreviewTarget}
@@ -5479,6 +5976,7 @@
 														: null}
 													onAcceptProposal={handleAcceptProposal}
 													onRejectProposal={handleRejectProposal}
+													onUndoProposal={handleUndoProposal}
 													onAnswerQuestion={handleAnswerQuestion}
 													onAnswerQuestions={handleAnswerQuestions}
 												/>
@@ -5620,7 +6118,8 @@
 												<PagePane
 													title={visibleScratchpadPad?.name || currentPage?.name || 'Page'}
 													content={scratchpadContent}
-													isLocked={proposalPreviewTarget === 'scratchpad'}
+													isLocked={proposalPreviewTarget === 'scratchpad' ||
+														isAiPageLocked(currentProject.id, currentPage?.id || '')}
 													comparisonContent={scratchpadComparisonContent}
 													active={desktopWorkspaceTab === 'scratchpad'}
 													referenceOptions={scratchpadReferenceOptions}
@@ -5763,6 +6262,7 @@
 										isProcessing={isAiProcessing}
 										processingEvents={aiProgressEvents}
 										pendingProposals={activePendingProposals}
+										{appliedProposalChanges}
 										{proposalApplyErrors}
 										{applyingProposalId}
 										activeProposalTarget={proposalPreviewTarget}
@@ -5793,6 +6293,7 @@
 										onReviewProposal={activePendingProposals.length ? handleReviewProposal : null}
 										onAcceptProposal={handleAcceptProposal}
 										onRejectProposal={handleRejectProposal}
+										onUndoProposal={handleUndoProposal}
 										onAnswerQuestion={handleAnswerQuestion}
 										onAnswerQuestions={handleAnswerQuestions}
 										onCollapseSidebar={() => {

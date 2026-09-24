@@ -67,6 +67,76 @@ describe('persistence safety regressions', () => {
 		expect(isProposalStaleForProject(proposal, project(changed))).toBe(true);
 	});
 
+	it('does not mark a fresh proposal stale because the client retains deleted task tombstones', () => {
+		const liveBoard = [{ id: 'column-1', title: 'Todo', tasks: [task('task-1')] }];
+		const clientBoard = [
+			{
+				...liveBoard[0],
+				tasks: [...liveBoard[0].tasks, { ...task('deleted-task'), deletedAt: 100 }]
+			}
+		];
+		const proposal = {
+			id: 'proposal-with-tombstone',
+			target: 'kanban' as const,
+			summary: 'change',
+			scope: 'board' as const,
+			editCallCount: 1,
+			ops: [],
+			proposalSafety: {
+				outOfScope: false,
+				touchedTaskIds: [],
+				touchedColumnIds: [],
+				moveCount: 0,
+				deleteCount: 0,
+				reorderCount: 0
+			},
+			originalKanbanData: liveBoard,
+			preview: { kanbanData: liveBoard },
+			baseRevision: 0,
+			baseFingerprint: getKanbanFingerprint(liveBoard)
+		};
+
+		expect(isProposalStaleForProject(proposal, project(clientBoard))).toBe(false);
+	});
+
+	it('still marks a proposal stale when live linked-task state changes', () => {
+		const original = [
+			{
+				id: 'column-1',
+				title: 'Todo',
+				tasks: [{ ...task('task-1'), linkedTaskIds: ['task-2'] }]
+			}
+		];
+		const changed = [
+			{
+				...original[0],
+				tasks: [{ ...task('task-1'), linkedTaskIds: ['task-3'] }]
+			}
+		];
+		const proposal = {
+			id: 'proposal-with-links',
+			target: 'kanban' as const,
+			summary: 'change',
+			scope: 'board' as const,
+			editCallCount: 1,
+			ops: [],
+			proposalSafety: {
+				outOfScope: false,
+				touchedTaskIds: [],
+				touchedColumnIds: [],
+				moveCount: 0,
+				deleteCount: 0,
+				reorderCount: 0
+			},
+			originalKanbanData: original,
+			preview: { kanbanData: original },
+			baseRevision: 0,
+			baseFingerprint: getKanbanFingerprint(original)
+		};
+
+		expect(isProposalStaleForProject(proposal, project(changed))).toBe(true);
+	});
+
 	it('allows a proposal that creates a new page when the page set is unchanged', () => {
 		const currentPages: Project['pages'] = [];
 		const proposal = {
