@@ -73,6 +73,7 @@
 		DESKTOP_CHAT_WIDTH
 	} from '$lib/kainbu/constants';
 	import {
+		canResumeAppliedProposalRedo,
 		canResumeAppliedProposalUndo,
 		collectAppliedProposalChangesFromHistory,
 		collectStagedProposalsFromHistory,
@@ -1677,7 +1678,21 @@
 					}
 					if (change.status === 'undoing' && change.beforeFingerprint === currentFingerprint) {
 						changed = true;
-						return { ...change, status: 'undone' as const, error: undefined };
+						return {
+							...change,
+							status: 'undone' as const,
+							error: undefined,
+							undoFingerprint: undefined
+						};
+					}
+					if (change.status === 'redoing' && change.afterFingerprint === currentFingerprint) {
+						changed = true;
+						return {
+							...change,
+							status: 'applied' as const,
+							error: undefined,
+							undoFingerprint: undefined
+						};
 					}
 					if (
 						change.status === 'applied' &&
@@ -4699,6 +4714,204 @@
 		}
 	};
 
+	const handleRedoProposal = async (changeId: string) => {
+		const change = projects
+			.flatMap((project) =>
+				project.aiSessions.flatMap((session) =>
+					collectAppliedProposalChangesFromHistory(session.history)
+				)
+			)
+			.find((entry) => entry.id === changeId);
+		if (!change || change.status !== 'undone') return;
+
+		const project = projects.find((entry) => entry.id === change.projectId);
+		if (!project) return;
+		if (!canResumeAppliedProposalRedo(change, project)) {
+			updateAppliedProposalChange(change, (current) => ({
+				...current,
+				status: 'conflicted',
+				error: 'Redo is unavailable because this part of the workspace changed afterward.'
+			}));
+			return;
+		}
+
+		updateAppliedProposalChange(change, (current) => ({
+			...current,
+			status: 'redoing',
+			error: undefined,
+			undoFingerprint: current.undoFingerprint || change.beforeFingerprint
+		}));
+		const lockedPageIds =
+			change.target === 'scratchpad'
+				? uniqueIds([
+						...change.before.pages.map((page) => page.id),
+						...change.after.pages.map((page) => page.id)
+					])
+				: [];
+		if (change.target === 'scratchpad') setAiPageLocks(change.projectId, lockedPageIds, true);
+		let redoCheckpointFingerprint = change.undoFingerprint || change.beforeFingerprint;
+		const checkpointScratchpadRedo = () => {
+			const checkpointProject = projects.find((entry) => entry.id === change.projectId);
+			if (!checkpointProject) return;
+			redoCheckpointFingerprint = getProjectPagesFingerprint(checkpointProject.pages);
+			updateAppliedProposalChange(change, (current) => ({
+				...current,
+				status: 'redoing',
+				error: undefined,
+				undoFingerprint: redoCheckpointFingerprint
+			}));
+		};
+
+		try {
+			if (change.target === 'kanban') {
+				if (!project.boards.some((board) => board.id === change.boardId)) {
+					throw new Error('The board targeted by this change no longer exists.');
+				}
+				const redone = applyLocalKanbanChange(project, change.after.kanbanData, {
+					syncDelay: 0,
+					boardId: change.boardId
+				});
+				if (!redone) throw new Error('The board no longer matches the undone change.');
+				const syncKey = getBoardHistoryKey(project.id, change.boardId);
+				const timeout = boardSyncTimeouts.get(syncKey);
+				if (timeout) clearTimeout(timeout);
+				boardSyncTimeouts.delete(syncKey);
+				await flushBoardSync(syncKey);
+			} else {
+				let workingProject = projects.find((entry) => entry.id === project.id) || project;
+				const afterById = new Map(change.after.pages.map((page) => [page.id, page]));
+				for (const desiredPage of change.after.pages) {
+					let currentPage = workingProject.pages.find((page) => page.id === desiredPage.id);
+					if (!currentPage) {
+						const restoredPage = await runSyncAction(
+							() =>
+								createProjectPage(project.id, desiredPage.name, desiredPage.position, {
+									clientId: desiredPage.id,
+									content: desiredPage.content,
+									tolerateExisting: true
+								}),
+							'Unable to restore a page created by the assistant.'
+						);
+						updateProjectLocal(project.id, (current) => ({
+							...current,
+							pages: [...current.pages, restoredPage]
+						}));
+						workingProject = projects.find((entry) => entry.id === project.id) || workingProject;
+						currentPage = workingProject.pages.find((page) => page.id === desiredPage.id);
+						checkpointScratchpadRedo();
+					}
+					if (!currentPage) throw new Error(`Could not restore page "${desiredPage.name}".`);
+					if (currentPage.name !== desiredPage.name) {
+						await runSyncAction(
+							() => renameProjectPageRemote(project.id, currentPage!.id, desiredPage.name),
+							'Unable to restore the assistant page name.'
+						);
+						updateProjectLocal(project.id, (current) => ({
+							...current,
+							pages: current.pages.map((page) =>
+								page.id === desiredPage.id
+									? { ...page, name: desiredPage.name, updatedAt: Date.now() }
+									: page
+							)
+						}));
+						workingProject = projects.find((entry) => entry.id === project.id) || workingProject;
+						currentPage = workingProject.pages.find((page) => page.id === desiredPage.id)!;
+						checkpointScratchpadRedo();
+					}
+					if (currentPage.content !== desiredPage.content) {
+						await runSyncAction(
+							() =>
+								syncProjectPageContent(
+									project.id,
+									currentPage!.id,
+									desiredPage.content,
+									currentPage!.content
+								),
+							'Unable to restore the assistant page content.'
+						);
+						updateProjectLocal(project.id, (current) => ({
+							...current,
+							pages: current.pages.map((page) =>
+								page.id === desiredPage.id
+									? { ...page, content: desiredPage.content, updatedAt: Date.now() }
+									: page
+							)
+						}));
+						workingProject = projects.find((entry) => entry.id === project.id) || workingProject;
+						checkpointScratchpadRedo();
+					}
+				}
+
+				for (const pageId of change.before.pages
+					.filter((page) => !afterById.has(page.id))
+					.map((page) => page.id)) {
+					if (!workingProject.pages.some((page) => page.id === pageId)) continue;
+					try {
+						await runSyncAction(
+							() => deleteProjectPageRemote(project.id, pageId),
+							'Unable to remove a page deleted by the assistant.'
+						);
+					} catch (error) {
+						if (!isPocketBaseNotFound(error)) throw error;
+					}
+					updateProjectLocal(project.id, (current) => ({
+						...current,
+						pages: current.pages.filter((page) => page.id !== pageId)
+					}));
+					workingProject = projects.find((entry) => entry.id === project.id) || workingProject;
+					checkpointScratchpadRedo();
+				}
+				updateProjectLocal(project.id, (current) =>
+					setProjectActivePage(
+						{
+							...current,
+							pages: [...current.pages].sort(
+								(left, right) => left.position - right.position || left.createdAt - right.createdAt
+							)
+						},
+						change.after.activePageId
+					)
+				);
+				checkpointScratchpadRedo();
+				bumpProjectRevision(project.id, 'scratchpad');
+			}
+
+			updateAppliedProposalChange(change, (current) => ({
+				...current,
+				status: 'applied',
+				error: undefined,
+				undoFingerprint: undefined
+			}));
+		} catch (error) {
+			const errorMessage = error instanceof Error ? error.message : 'Could not redo this change.';
+			const latestProject = projects.find((entry) => entry.id === change.projectId);
+			const boardRedoIsLocal =
+				change.target === 'kanban' &&
+				latestProject?.boards.some(
+					(board) =>
+						board.id === change.boardId &&
+						getKanbanFingerprint(board.kanbanData) === change.afterFingerprint
+				);
+			updateAppliedProposalChange(change, (current) => ({
+				...current,
+				status: boardRedoIsLocal
+					? 'redoing'
+					: change.target === 'scratchpad'
+						? 'undone'
+						: 'conflicted',
+				error: boardRedoIsLocal
+					? `The change is redone locally, but it has not synced yet: ${errorMessage}`
+					: change.target === 'scratchpad'
+						? `Redo paused after the last completed step: ${errorMessage}`
+						: errorMessage,
+				undoFingerprint:
+					change.target === 'scratchpad' ? redoCheckpointFingerprint : current.undoFingerprint
+			}));
+		} finally {
+			if (change.target === 'scratchpad') setAiPageLocks(change.projectId, lockedPageIds, false);
+		}
+	};
+
 	const handleRejectProposal = (proposalId: string) => {
 		const proposal = activePendingProposals.find((entry) => entry.id === proposalId);
 		if (!proposal || !currentProject) return;
@@ -5977,6 +6190,7 @@
 													onAcceptProposal={handleAcceptProposal}
 													onRejectProposal={handleRejectProposal}
 													onUndoProposal={handleUndoProposal}
+													onRedoProposal={handleRedoProposal}
 													onAnswerQuestion={handleAnswerQuestion}
 													onAnswerQuestions={handleAnswerQuestions}
 												/>
@@ -6294,6 +6508,7 @@
 										onAcceptProposal={handleAcceptProposal}
 										onRejectProposal={handleRejectProposal}
 										onUndoProposal={handleUndoProposal}
+										onRedoProposal={handleRedoProposal}
 										onAnswerQuestion={handleAnswerQuestion}
 										onAnswerQuestions={handleAnswerQuestions}
 										onCollapseSidebar={() => {

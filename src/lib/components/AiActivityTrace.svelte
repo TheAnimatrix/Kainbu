@@ -27,6 +27,10 @@
 		const plain = plainTraceText(value);
 		return plain.length > maxLength ? `…${plain.slice(-(maxLength - 1)).trimStart()}` : plain;
 	};
+	const readableToolResult = (value = '') => {
+		const result = value.trim();
+		return result.startsWith('{') || result.startsWith('[') ? '' : result;
+	};
 
 	$: toolActivities = deriveToolActivities(events, isLive);
 	$: thinkingEvents = events.filter(
@@ -53,7 +57,7 @@
 		if (draftEvent?.message?.trim()) return latestStatus?.message || 'Writing reply…';
 		if (latestStatus?.message) return latestStatus.message;
 		if (latestThinking) return 'Thinking…';
-		return '';
+		return isLive ? 'Working…' : '';
 	})();
 
 	$: settledLabel = (() => {
@@ -83,7 +87,7 @@
 	};
 
 	const toggleTool = (tool: AiToolActivity) => {
-		if (!tool.input && !tool.result && !tool.resultDetail) return;
+		if (!readableToolResult(tool.result)) return;
 		const next = new Set(openToolIds);
 		next.has(tool.id) ? next.delete(tool.id) : next.add(tool.id);
 		openToolIds = next;
@@ -177,7 +181,8 @@
 							{/if}
 
 							{#each toolActivities as tool (tool.id)}
-								{@const hasDetails = Boolean(tool.input || tool.result || tool.resultDetail)}
+								{@const readableResult = readableToolResult(tool.result)}
+								{@const hasDetails = Boolean(readableResult)}
 								{@const toolOpen = openToolIds.has(tool.id)}
 								<div class="relative min-w-0">
 									<span
@@ -238,12 +243,9 @@
 												<div
 													class="mb-1 ml-1 border-l border-app-border/40 py-1 pl-3 text-[11px] leading-relaxed text-app-subtext/70"
 												>
-													{#if tool.input}
-														<p class="break-words font-mono">{summarize(tool.input, 240)}</p>
-													{/if}
-													{#if tool.result}
-														<p class={`break-words ${tool.input ? 'mt-1' : ''}`}>
-															{summarize(tool.result, 240)}
+													{#if readableResult}
+														<p class="break-words">
+															{summarize(readableResult, 240)}
 														</p>
 													{/if}
 												</div>

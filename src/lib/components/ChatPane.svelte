@@ -16,6 +16,7 @@
 		Pencil,
 		Paperclip,
 		Plus,
+		Redo2,
 		RefreshCw,
 		Search,
 		Send,
@@ -24,8 +25,7 @@
 		Trash2,
 		Undo2,
 		Upload,
-		X,
-		XCircle
+		X
 	} from '$lib/icons';
 	import BrandMark from '$lib/components/BrandMark.svelte';
 	import { createId } from '$lib/kainbu/id';
@@ -81,6 +81,7 @@
 	export let onAcceptProposal: (proposalId: string) => void;
 	export let onRejectProposal: (proposalId: string) => void;
 	export let onUndoProposal: (changeId: string) => void | Promise<void> = () => {};
+	export let onRedoProposal: (changeId: string) => void | Promise<void> = () => {};
 	export let onAnswerQuestion: (questionId: string, optionId?: string, text?: string) => void;
 	export let onAnswerQuestions: (
 		answers: { questionId: string; optionId?: string; text?: string }[]
@@ -100,12 +101,6 @@
 	$: mobileAiSettingsLabel = `${activeModel?.id || modelId || 'Model'}${
 		showThinkingSelect ? `, ${thinkingLevelLabel(thinkingLevel)}` : ''
 	}`;
-
-	// The orb pulses while we're waiting (preparing, tools, idle) and holds steady
-	// once text is actively streaming, so the motion reads as "thinking" not "stalled".
-	$: isStreamingText =
-		processingEvents.at(-1)?.kind === 'thinking' ||
-		processingEvents.at(-1)?.kind === 'assistant_draft';
 
 	let fileInput: HTMLInputElement | null = null;
 	let composerTextarea: HTMLTextAreaElement | null = null;
@@ -135,18 +130,25 @@
 		'text-[10px] font-semibold uppercase tracking-[0.18em] text-app-subtext/70';
 	$: activeSession =
 		sessions.find((session) => session.id === activeSessionId) || sessions[0] || null;
-	let showEarlierAppliedChanges = false;
 	$: sessionAppliedProposalChanges = appliedProposalChanges.filter(
 		(change) => !activeSessionId || change.sessionId === activeSessionId
 	);
-	$: earlierAppliedChangeCount = Math.max(0, sessionAppliedProposalChanges.length - 3);
-	$: visibleAppliedProposalChanges = (
-		showEarlierAppliedChanges
-			? sessionAppliedProposalChanges
-			: sessionAppliedProposalChanges.slice(-3)
-	)
-		.slice()
-		.reverse();
+	let appliedChangeOffset = 0;
+	let selectedChangeSessionId = activeSessionId;
+	let selectedChangeCount = 0;
+	$: if (
+		activeSessionId !== selectedChangeSessionId ||
+		sessionAppliedProposalChanges.length !== selectedChangeCount
+	) {
+		appliedChangeOffset = 0;
+		selectedChangeSessionId = activeSessionId;
+		selectedChangeCount = sessionAppliedProposalChanges.length;
+	}
+	$: selectedAppliedChangeIndex = Math.max(
+		0,
+		sessionAppliedProposalChanges.length - 1 - appliedChangeOffset
+	);
+	$: selectedAppliedChange = sessionAppliedProposalChanges[selectedAppliedChangeIndex];
 
 	const starterPrompts = [
 		{
@@ -168,13 +170,12 @@
 
 	const appliedChangeStatus = (change: AppliedProposalChange) => {
 		if (change.status === 'undoing') return 'Undoing change…';
+		if (change.status === 'redoing') return 'Redoing change…';
 		if (change.status === 'undone') return 'Change undone';
 		if (change.status === 'conflicted') return 'Could not undo safely';
 		if (change.error) return 'Needs attention';
 		return 'Applied automatically';
 	};
-
-	const proposalTargetLabel = (target: ProposalTarget) => (target === 'kanban' ? 'Board' : 'Page');
 
 	// Sidebar opens on the active session; use back to browse all sessions.
 	let showingSessionsList = false;
@@ -766,26 +767,6 @@
 
 	const summarize = (value = '', maxLength = 92) =>
 		value.length > maxLength ? `${value.slice(0, maxLength - 1).trimEnd()}…` : value;
-	const proposalStatusText = (proposal: PendingProposal) => {
-		if (proposal.stale) {
-			return 'The workspace changed after this was generated. Discard it and ask Kainbu to generate the change again.';
-		}
-
-		if (proposal.proposalSafety.outOfScope) {
-			return 'Review carefully before applying. This one reaches beyond the original target.';
-		}
-
-		if (proposal.editCallCount > 1) {
-			return proposal.target === 'kanban'
-				? `${proposal.editCallCount} smaller card edits are batched into one board diff. Review the grouped insertions, edits, and deletions before applying them.`
-				: `${proposal.editCallCount} smaller page edits are batched into one diff so you can review the full page change before applying it.`;
-		}
-
-		return proposal.target === 'kanban'
-			? 'Board changes are ready to review and apply to the project.'
-			: 'Page changes are ready to review and apply to the project.';
-	};
-
 	const setQuestionDraft = (questionId: string, value: string) => {
 		questionDrafts = {
 			...questionDrafts,
@@ -1705,25 +1686,14 @@
 						?.message?.trim()}
 					{@const traceCompact = Boolean(streamingDraft)}
 					<div class="flex flex-col items-start gap-3" data-chat-processing>
-						<div class="flex items-start gap-2 px-0.5">
-							<div
-								class="mt-1 grid h-5 w-5 shrink-0 place-items-center rounded-full bg-app-primary/15 shadow-[0_0_18px_color-mix(in_oklab,var(--color-app-primary)_55%,transparent)]"
-								aria-hidden="true"
-							>
-								<span
-									class="ai-stream-orb h-2.5 w-2.5 rounded-full bg-app-primary"
-									class:ai-stream-orb--steady={isStreamingText}
-								></span>
-							</div>
-							<div class="min-w-0 flex-1 pt-0.5">
-								<AiActivityTrace
-									events={processingEvents}
-									isLive
-									compact={traceCompact}
-									defaultExpanded={!traceCompact}
-									showSpinner={false}
-								/>
-							</div>
+						<div class="w-full min-w-0 px-0.5">
+							<AiActivityTrace
+								events={processingEvents}
+								isLive
+								compact={traceCompact}
+								defaultExpanded={!traceCompact}
+								showSpinner={false}
+							/>
 						</div>
 						{#if streamingDraft}
 							<div class="max-w-[min(100%,46rem)] w-full">
@@ -1734,153 +1704,6 @@
 							</div>
 						{/if}
 					</div>
-				{/if}
-
-				{#each pendingProposals as pendingProposal (pendingProposal.id)}
-					<div class="rounded-lg border border-app-primary/25 bg-app-primary/10 p-3.5">
-						<p class="text-[10px] font-bold uppercase tracking-[0.28em] text-app-subtext">
-							Sync proposal
-						</p>
-						<h3 class="mt-2 text-base font-semibold leading-snug text-app-text">
-							{pendingProposal.summary || 'Review AI changes'}
-						</h3>
-						<p class="mt-2 text-sm text-app-subtext">
-							{proposalStatusText(pendingProposal)}
-						</p>
-						<div
-							class="mt-3 flex flex-wrap gap-2 text-[10px] font-bold uppercase tracking-[0.22em]"
-						>
-							<span
-								class="rounded-full border border-app-border bg-app-element/70 px-3 py-1 text-app-subtext"
-							>
-								{proposalTargetLabel(pendingProposal.target)}
-							</span>
-							{#if activeProposalTarget === pendingProposal.target}
-								<span
-									class="rounded-full border border-app-accent/25 bg-app-accent/10 px-3 py-1 text-app-accent"
-								>
-									Preview Open
-								</span>
-							{/if}
-							{#if pendingProposal.proposalSafety.outOfScope}
-								<span
-									class="rounded-full border border-amber-500/30 bg-amber-500/10 px-3 py-1 text-amber-200"
-								>
-									Review Carefully
-								</span>
-							{/if}
-						</div>
-						{#if proposalApplyErrors[pendingProposal.id]}
-							<p class="mt-2 text-sm text-app-text">{proposalApplyErrors[pendingProposal.id]}</p>
-						{/if}
-						<div class="mt-3 flex flex-wrap gap-2.5">
-							{#if onReviewProposal}
-								<button
-									type="button"
-									class="inline-flex flex-1 items-center justify-center gap-2 rounded-lg border border-app-border bg-app-element px-4 py-2 text-sm font-semibold text-app-text"
-									on:click={() => onReviewProposal && onReviewProposal(pendingProposal.target)}
-								>
-									<Info size={16} />
-									Review
-								</button>
-							{/if}
-							<button
-								type="button"
-								disabled={pendingProposal.stale || isProcessing || Boolean(applyingProposalId)}
-								class="kainbu-btn kainbu-btn--primary inline-flex flex-1 disabled:cursor-not-allowed disabled:opacity-60"
-								title={pendingProposal.stale
-									? 'Regenerate this proposal against the latest workspace before applying.'
-									: 'Apply proposal'}
-								on:click={() => onAcceptProposal(pendingProposal.id)}
-							>
-								{#if applyingProposalId === pendingProposal.id}
-									<LoaderCircle size={16} class="animate-spin" />
-									Applying…
-								{:else}
-									<Check size={16} />
-									{proposalApplyErrors[pendingProposal.id] ? 'Retry' : 'Apply'}
-								{/if}
-							</button>
-							<button
-								type="button"
-								class="inline-flex flex-1 items-center justify-center gap-2 rounded-lg border border-app-border bg-app-element px-4 py-2 text-sm font-semibold text-app-text"
-								on:click={() => onRejectProposal(pendingProposal.id)}
-								disabled={isProcessing || Boolean(applyingProposalId)}
-							>
-								<XCircle size={16} />
-								Discard
-							</button>
-						</div>
-					</div>
-				{/each}
-
-				{#each visibleAppliedProposalChanges as change (change.id)}
-					{@const hasAppliedChangeIssue = change.status === 'conflicted' || Boolean(change.error)}
-					<div
-						role={hasAppliedChangeIssue ? 'alert' : 'status'}
-						class={`flex items-start gap-3 border-y px-1 py-3 ${
-							hasAppliedChangeIssue
-								? 'border-rose-500/30 bg-rose-500/[0.04] text-app-text'
-								: 'border-app-border/70 text-app-text'
-						}`}
-					>
-						<div
-							class={`mt-0.5 grid h-6 w-6 shrink-0 place-items-center rounded-md ${
-								hasAppliedChangeIssue
-									? 'border border-rose-500/30 bg-rose-500/10 text-app-text'
-									: 'border border-app-border bg-app-element text-app-text'
-							}`}
-						>
-							{#if change.status === 'undoing'}
-								<LoaderCircle size={14} class="animate-spin" />
-							{:else if change.status === 'conflicted'}
-								<Info size={14} />
-							{:else}
-								<Check size={14} />
-							{/if}
-						</div>
-						<div class="min-w-0 flex-1">
-							<div class="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
-								<p class="text-[13px] font-medium leading-5">{change.summary}</p>
-								<span
-									class="text-[10px] font-semibold uppercase tracking-[0.12em] text-app-subtext"
-								>
-									{proposalTargetLabel(change.target)}
-								</span>
-							</div>
-							<p class="mt-0.5 text-xs text-app-subtext">{appliedChangeStatus(change)}</p>
-							{#if change.error}
-								<p class="mt-1 text-xs leading-5 text-app-text">{change.error}</p>
-							{/if}
-						</div>
-						{#if change.status === 'applied'}
-							<button
-								type="button"
-								class="inline-flex shrink-0 items-center gap-1.5 rounded-md border border-app-border px-2.5 py-1.5 text-xs font-medium text-app-text transition hover:border-app-primary/40 hover:bg-app-element"
-								on:click={() => void onUndoProposal(change.id)}
-							>
-								<Undo2 size={13} />
-								Undo
-							</button>
-						{/if}
-					</div>
-				{/each}
-
-				{#if earlierAppliedChangeCount > 0}
-					<button
-						type="button"
-						class="flex w-full items-center justify-center gap-1.5 border-b border-app-border/70 py-2 text-xs font-medium text-app-subtext transition hover:bg-app-element/60 hover:text-app-text"
-						aria-expanded={showEarlierAppliedChanges}
-						on:click={() => (showEarlierAppliedChanges = !showEarlierAppliedChanges)}
-					>
-						<ChevronDown
-							size={13}
-							class={`transition-transform ${showEarlierAppliedChanges ? 'rotate-180' : ''}`}
-						/>
-						{showEarlierAppliedChanges
-							? 'Hide earlier changes'
-							: `Show ${earlierAppliedChangeCount} earlier ${earlierAppliedChangeCount === 1 ? 'change' : 'changes'}`}
-					</button>
 				{/if}
 
 				{#if pinnedSpacerHeight > 0}
@@ -1899,6 +1722,104 @@
 					: 'border-t border-app-border bg-app-bg/95'
 		} px-0 py-0 backdrop-blur`}
 	>
+		{#if selectedAppliedChange}
+			<div
+				class="flex min-w-0 items-center gap-2 border-b border-app-border/50 px-3 py-1.5 text-xs text-app-subtext"
+				role={selectedAppliedChange.error ? 'alert' : 'status'}
+			>
+				{#if selectedAppliedChange.status === 'undoing' || selectedAppliedChange.status === 'redoing'}
+					<LoaderCircle size={13} class="shrink-0 animate-spin" />
+				{:else if selectedAppliedChange.status === 'conflicted' || selectedAppliedChange.error}
+					<Info size={13} class="shrink-0 text-rose-500" />
+				{:else}
+					<Check size={13} class="shrink-0" />
+				{/if}
+				<span
+					class="min-w-0 flex-1 truncate"
+					title={selectedAppliedChange.error || selectedAppliedChange.summary}
+				>
+					{selectedAppliedChange.error ||
+						(selectedAppliedChange.status === 'undoing' ||
+						selectedAppliedChange.status === 'redoing'
+							? appliedChangeStatus(selectedAppliedChange)
+							: selectedAppliedChange.summary || appliedChangeStatus(selectedAppliedChange))}
+				</span>
+				{#if sessionAppliedProposalChanges.length > 1}
+					<button
+						type="button"
+						class="rounded p-1 hover:bg-app-element disabled:opacity-30"
+						disabled={selectedAppliedChangeIndex === 0}
+						aria-label="Previous change"
+						on:click={() => (appliedChangeOffset += 1)}><ChevronLeft size={13} /></button
+					>
+					<span class="shrink-0 tabular-nums"
+						>{selectedAppliedChangeIndex + 1}/{sessionAppliedProposalChanges.length}</span
+					>
+					<button
+						type="button"
+						class="rounded p-1 hover:bg-app-element disabled:opacity-30"
+						disabled={selectedAppliedChangeIndex === sessionAppliedProposalChanges.length - 1}
+						aria-label="Next change"
+						on:click={() => (appliedChangeOffset = Math.max(0, appliedChangeOffset - 1))}
+						><ChevronRight size={13} /></button
+					>
+				{/if}
+				{#if selectedAppliedChange.status === 'applied' || selectedAppliedChange.status === 'undone'}
+					<button
+						type="button"
+						class="inline-flex shrink-0 items-center gap-1 rounded px-1.5 py-1 font-medium text-app-text transition hover:bg-app-element"
+						on:click={() =>
+							selectedAppliedChange.status === 'applied'
+								? void onUndoProposal(selectedAppliedChange.id)
+								: void onRedoProposal(selectedAppliedChange.id)}
+					>
+						{#if selectedAppliedChange.status === 'applied'}<Undo2 size={13} /> Undo{:else}<Redo2
+								size={13}
+							/> Redo{/if}
+					</button>
+				{/if}
+			</div>
+		{/if}
+		{#each pendingProposals as pendingProposal (pendingProposal.id)}
+			<div
+				class="flex min-w-0 items-center gap-2 border-b border-app-border/50 px-3 py-1.5 text-xs text-app-subtext"
+				role={proposalApplyErrors[pendingProposal.id] ? 'alert' : 'status'}
+			>
+				{#if applyingProposalId === pendingProposal.id}<LoaderCircle
+						size={13}
+						class="shrink-0 animate-spin"
+					/>{:else}<Info size={13} class="shrink-0" />{/if}
+				<span
+					class="min-w-0 flex-1 truncate"
+					title={proposalApplyErrors[pendingProposal.id] || pendingProposal.summary}
+				>
+					{proposalApplyErrors[pendingProposal.id] ||
+						(applyingProposalId === pendingProposal.id
+							? 'Applying change…'
+							: pendingProposal.summary)}
+				</span>
+				{#if !isProcessing && applyingProposalId !== pendingProposal.id}
+					{#if onReviewProposal}<button
+							type="button"
+							class="shrink-0 rounded px-1.5 py-1 hover:bg-app-element"
+							on:click={() => onReviewProposal?.(pendingProposal.target)}
+							>{activeProposalTarget === pendingProposal.target ? 'Viewing' : 'Review'}</button
+						>{/if}
+					<button
+						type="button"
+						class="shrink-0 rounded px-1.5 py-1 font-medium text-app-text hover:bg-app-element disabled:opacity-45"
+						disabled={pendingProposal.stale}
+						on:click={() => onAcceptProposal(pendingProposal.id)}
+						>{proposalApplyErrors[pendingProposal.id] ? 'Retry' : 'Resume'}</button
+					>
+					<button
+						type="button"
+						class="shrink-0 rounded px-1.5 py-1 hover:bg-app-element"
+						on:click={() => onRejectProposal(pendingProposal.id)}>Dismiss</button
+					>
+				{/if}
+			</div>
+		{/each}
 		<form
 			class={isMobileChrome ? 'space-y-2' : 'space-y-0'}
 			on:submit|preventDefault={submitComposer}
@@ -2485,37 +2406,3 @@
 		</div>
 	</div>
 {/if}
-
-<style>
-	.ai-stream-orb {
-		animation: ai-stream-orb 1.25s ease-in-out infinite;
-		box-shadow:
-			0 0 10px color-mix(in oklab, var(--color-app-primary) 80%, transparent),
-			0 0 22px color-mix(in oklab, var(--color-app-primary) 45%, transparent);
-	}
-
-	@keyframes ai-stream-orb {
-		0%,
-		100% {
-			opacity: 0.72;
-			transform: scale(0.82);
-		}
-		50% {
-			opacity: 1;
-			transform: scale(1.18);
-		}
-	}
-
-	/* While text is streaming, hold the orb steady so the pulse signals "waiting". */
-	.ai-stream-orb--steady {
-		animation: none;
-		opacity: 1;
-		transform: scale(1);
-	}
-
-	@media (prefers-reduced-motion: reduce) {
-		.ai-stream-orb {
-			animation: none;
-		}
-	}
-</style>

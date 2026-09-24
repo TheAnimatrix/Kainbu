@@ -83,7 +83,9 @@ export const recoverInterruptedScratchpadUndosInHistory = (history: ChatMessage[
 	history.map((message) => {
 		if (
 			!message.appliedProposalChanges?.some(
-				(change) => change.target === 'scratchpad' && change.status === 'undoing'
+				(change) =>
+					change.target === 'scratchpad' &&
+					(change.status === 'undoing' || change.status === 'redoing')
 			)
 		) {
 			return message;
@@ -91,11 +93,12 @@ export const recoverInterruptedScratchpadUndosInHistory = (history: ChatMessage[
 		return {
 			...message,
 			appliedProposalChanges: message.appliedProposalChanges.map((change) =>
-				change.target === 'scratchpad' && change.status === 'undoing'
+				change.target === 'scratchpad' &&
+				(change.status === 'undoing' || change.status === 'redoing')
 					? {
 							...change,
-							status: 'applied',
-							error: 'Undo was interrupted. Retry to continue from the last completed step.'
+							status: change.status === 'undoing' ? 'applied' : 'undone',
+							error: `${change.status === 'undoing' ? 'Undo' : 'Redo'} was interrupted. Retry to continue from the last completed step.`
 						}
 					: change
 			)
@@ -124,6 +127,13 @@ export const canResumeAppliedProposalUndo = (
 ): boolean =>
 	getAppliedProposalChangeTargetFingerprint(change, project) ===
 	(change.undoFingerprint || change.afterFingerprint);
+
+export const canResumeAppliedProposalRedo = (
+	change: AppliedProposalChange,
+	project: Project
+): boolean =>
+	getAppliedProposalChangeTargetFingerprint(change, project) ===
+	(change.undoFingerprint || change.beforeFingerprint);
 
 export const toPendingProposals = (project: Project, proposals: AiProposal[]): PendingProposal[] =>
 	proposals.map((proposal) =>

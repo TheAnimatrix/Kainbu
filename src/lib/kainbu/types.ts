@@ -238,7 +238,12 @@ export interface ChatMessage {
 	stoppedReason?: string;
 }
 
-export type AppliedProposalChangeStatus = 'applied' | 'undoing' | 'undone' | 'conflicted';
+export type AppliedProposalChangeStatus =
+	| 'applied'
+	| 'undoing'
+	| 'undone'
+	| 'redoing'
+	| 'conflicted';
 
 export type AppliedProposalChange = {
 	id: string;

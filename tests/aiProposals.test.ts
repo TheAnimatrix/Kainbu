@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+	canResumeAppliedProposalRedo,
 	canResumeAppliedProposalUndo,
 	collectAppliedProposalChangesFromHistory,
 	collectStagedProposalsFromHistory,
@@ -291,6 +292,71 @@ describe('aiProposals history helpers', () => {
 
 		expect(recovered[0]?.appliedProposalChanges?.[0]).toMatchObject({
 			status: 'applied',
+			undoFingerprint: 'checkpoint',
+			error: expect.stringContaining('Retry')
+		});
+	});
+
+	it('only redoes an undone change from its exact target state', () => {
+		const before = [{ id: 'todo', title: 'Todo', width: 268, tasks: [] }];
+		const after = [{ ...before[0], title: 'Ready' }];
+		const change: AppliedProposalChange = {
+			id: 'change-board',
+			proposalId: 'proposal-board',
+			projectId: 'project-1',
+			sessionId: 'session-1',
+			messageId: 'message-1',
+			target: 'kanban',
+			boardId: 'board-1',
+			summary: 'Rename column',
+			appliedAt: 1,
+			status: 'undone',
+			beforeFingerprint: getKanbanFingerprint(before),
+			afterFingerprint: getKanbanFingerprint(after),
+			before: { kanbanData: before },
+			after: { kanbanData: after }
+		};
+		const project = {
+			boards: [{ id: 'board-1', kanbanData: before }],
+			pages: []
+		} as unknown as Project;
+		expect(canResumeAppliedProposalRedo(change, project)).toBe(true);
+		expect(
+			canResumeAppliedProposalRedo(change, {
+				...project,
+				boards: [{ id: 'board-1', kanbanData: [{ ...before[0], title: 'User edit' }] }]
+			} as unknown as Project)
+		).toBe(false);
+	});
+
+	it('recovers an interrupted page redo with its checkpoint intact', () => {
+		const change: AppliedProposalChange = {
+			id: 'change-page',
+			proposalId: 'proposal-page',
+			projectId: 'project-1',
+			sessionId: 'session-1',
+			messageId: 'message-1',
+			target: 'scratchpad',
+			summary: 'Edit notes',
+			appliedAt: 1,
+			status: 'redoing',
+			beforeFingerprint: 'before',
+			afterFingerprint: 'after',
+			undoFingerprint: 'checkpoint',
+			before: { pages: [], activePageId: 'page-1' },
+			after: { pages: [], activePageId: 'page-1' }
+		};
+		const recovered = recoverInterruptedScratchpadUndosInHistory([
+			{
+				id: 'message-1',
+				role: 'assistant',
+				text: '',
+				timestamp: 1,
+				appliedProposalChanges: [change]
+			}
+		]);
+		expect(recovered[0]?.appliedProposalChanges?.[0]).toMatchObject({
+			status: 'undone',
 			undoFingerprint: 'checkpoint',
 			error: expect.stringContaining('Retry')
 		});
