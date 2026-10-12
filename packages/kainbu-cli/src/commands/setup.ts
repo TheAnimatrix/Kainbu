@@ -1,4 +1,5 @@
-import { fetchWorkspace, listAuthProfiles, readAuthFile, upsertAuthProfile } from '@kainbu/core';
+import { loadWorkspace } from '../workspace.js';
+import { listAuthProfiles, readAuthFile, upsertAuthProfile } from '@kainbu/core';
 import type { Command } from 'commander';
 import { c, ui } from '../color.js';
 import { setActiveBoard, setActiveProject } from '../context.js';
@@ -106,8 +107,8 @@ export const runSetup = async () => {
 	);
 
 	await initRuntime();
-	const user = await requireUser();
-	const { projects } = await fetchWorkspace(user.id);
+	await requireUser();
+	const { projects } = await loadWorkspace();
 	if (!projects.length) {
 		console.log(
 			`\nYou don't have any projects yet. Create one in the web app, or run ${c.cyan('kainbu project create "My project"')}.`

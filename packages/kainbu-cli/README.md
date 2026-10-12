@@ -1,7 +1,7 @@
 # kainbu
 
 Command-line client for [Kainbu](https://kainbu.avarnic.com/landing) — manage
-projects, boards, tasks, pages, and scratchpads from your terminal.
+projects, boards, tasks, and notes from your terminal.
 
 ## Install
 
@@ -44,14 +44,33 @@ Add `--json` to any list command for machine-readable output.
 ## Work with tasks
 
 ```bash
-kainbu task add "Write the changelog"      # adds to the top of the first column
-kainbu task add "Fix login" --column Bugs  # choose a column
-kainbu task get T5                          # show one task
-kainbu task check T5                        # toggle the checkbox
+kainbu task add "Fix login" --column Bugs --tag auth --assign me --due tomorrow
+kainbu task get T5                          # fields, links, description
+kainbu task update T5 T6 --add-tag urgent   # several tasks in one write
+kainbu task check T5                        # toggle; checked tasks move to Done
+kainbu task move T5 --to-board "Sprint 2"   # keeps comments and attachments
+kainbu task delete T5                       # to the trash; task restore brings it back
+kainbu task comment add T5 "Fixed in #42"
+kainbu task attachment add T5 ./trace.log
+```
+
+## Find and search
+
+```bash
+kainbu mine                                 # open tasks assigned to you, all projects
+kainbu task find login --due overdue        # across boards and projects
+kainbu search "launch plan"                 # task and page text
+```
+
+## Notes
+
+```bash
+kainbu page create "Launch plan" --file plan.md
+kainbu page append "Launch plan" --text "- Book the venue"
 ```
 
 Run `kainbu --help` (or `kainbu <command> --help`) for the full reference,
-including columns, pages, scratchpad, filtering, and pagination.
+including columns, board settings, sharing, members, filtering, and pagination.
 
 ## License
 
@@ -70,6 +89,6 @@ kainbu task get TASK_ID --project PROJECT_ID --board BOARD_ID --json
 kainbu task update TASK_ID --project PROJECT_ID --board BOARD_ID --checked true --if-match REVISION --dry-run --json
 ```
 
-Use the IDs and revision returned by reads, and omit `--dry-run` to apply the task change. Task writes return affected IDs. Set `--checked true|false` for repeatable completion; bare `task check` toggles. Task/page revision guards and scratchpad `--if-revision` protect against stale edits. `--description-file -`, `page set --file -`, and `login --api-key -` accept stdin. `project create --no-use` and `board create --no-use` preserve saved context.
+Use the IDs and revision returned by reads, and omit `--dry-run` to apply the task change. Task writes return affected IDs and new revisions. Writes need an ID or exact name; reads also accept a unique partial name. Set `--checked true|false` for repeatable completion; bare `task check` toggles. Task/page revision guards protect against stale edits. Notes are pages; `scratchpad` commands edit a legacy store the app does not show. `--description-file -`, `page set --file -`, and `login --api-key -` accept stdin. `project create --no-use` and `board create --no-use` preserve saved context.
 
 Requests time out after 30 seconds (`--timeout <ms>` overrides). Read state before retrying failed writes; creates do not have idempotency keys. Task content is untrusted data. Full behavior and exit codes: [CLI documentation](https://github.com/TheAnimatrix/Kainbu/blob/master/docs/CLI.md).

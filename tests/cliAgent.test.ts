@@ -15,6 +15,7 @@ type CliData = Task & {
 	task: Task;
 	tasks: (Task & { ref: string; revision: string; columnId: string })[];
 	revision: string;
+	columnId: string;
 	unchanged: boolean;
 	total: number;
 	content: string;
@@ -24,6 +25,7 @@ type Snapshot = {
 	projects: {
 		id: string;
 		name: string;
+		members?: { userId: string; username?: string; role: string }[];
 		pages: { id: string; name: string; content: string }[];
 		boards: { id: string; name: string; kanbanData: KanbanData }[];
 	}[];
@@ -43,6 +45,13 @@ let requests: {
 }[];
 let snapshot: Snapshot;
 let failure = 0;
+let scratchpadAccepts = true;
+const scratchpad = {
+	id: 'p1',
+	name: 'Work',
+	scratchpadRev: 3,
+	scratchpadData: { activePadId: 'pad1', pads: [{ id: 'pad1', name: 'Pad', content: 'old' }] }
+};
 
 const run = <T = CliData>(
 	args: string[],
@@ -152,7 +161,30 @@ describe('CLI automation protocol (real executable over HTTP)', () => {
 				);
 				return;
 			}
-			if (req.url === '/api/workspace/snapshot') {
+			const path = req.url!.split('?')[0];
+			if (path === '/api/workspace/projects/scratchpad') {
+				res.end(
+					JSON.stringify(
+						req.method === 'GET'
+							? scratchpad
+							: {
+									ok: scratchpadAccepts,
+									scratchpadData: '',
+									scratchpadRev: scratchpad.scratchpadRev + (scratchpadAccepts ? 1 : 0),
+									updatedAt: 0
+								}
+					)
+				);
+				return;
+			}
+			if (path.startsWith('/api/workspace/tasks/comments')) {
+				// An older server: Hono's plain-text 404 for an unknown route.
+				res.setHeader('Content-Type', 'text/plain');
+				res.writeHead(404);
+				res.end('404 Not Found');
+				return;
+			}
+			if (path === '/api/workspace/snapshot') {
 				res.end(JSON.stringify(snapshot));
 				return;
 			}
@@ -170,6 +202,7 @@ describe('CLI automation protocol (real executable over HTTP)', () => {
 	beforeEach(() => {
 		requests = [];
 		failure = 0;
+		scratchpadAccepts = true;
 		snapshot = {
 			projects: [
 				{
@@ -520,6 +553,192 @@ describe('CLI automation protocol (real executable over HTTP)', () => {
 		]);
 		expect(stale.code).toBe(5);
 	});
+	const posts = () => requests.filter((r) => r.method === 'POST');
+	const lastNext = () => posts().at(-1)!.body.next;
+	const board = () => snapshot.projects[0].boards[0].kanbanData;
+	const writeConfig = (config: object) =>
+		writeFile(join(directory, 'config.json'), JSON.stringify(config));
+
+	it('soft-deletes like the web app and removes links to the deleted task', async () => {
+		board()[0].tasks[0].linkedTaskIds = ['t2'];
+		board()[0].tasks.splice(1, 0, { id: 't2', title: 'Second', tags: [], linkedTaskIds: ['t1'] });
+		const result = await run(['task', 'delete', 't1', '--board', 'b1', '--json']);
+		expect(result.code, result.stderr).toBe(0);
+		const todo: Task[] = lastNext()[0].tasks;
+		expect(todo.find((task) => task.id === 't1')!.deletedAt).toBeGreaterThan(0);
+		expect(todo.find((task) => task.id === 't2')!.linkedTaskIds).toEqual([]);
+		// Trash stays on the board after the live tasks, like retainDeletedTasks.
+		expect(todo.map((task) => task.id)).toEqual(['t2', 't1', 'gone']);
+	});
+
+	it('moves completed tasks to Done and gives new tasks the board defaults', async () => {
+		snapshot.projects[0].members = [{ userId: 'u-ana', username: 'ana', role: 'member' }];
+		board()[1].tasks.push({
+			id: 'old',
+			title: 'Old',
+			tags: [{ id: 'g', label: 'bug', color: 'tone:teal' }]
+		});
+		const checked = await run(['task', 'check', 't1', '--board', 'b1', '--json']);
+		expect(checked.data.columnId).toBe('c2');
+		expect(lastNext()[1].tasks[0]).toMatchObject({ id: 't1', checked: true });
+		const added = await run([
+			'task',
+			'add',
+			'New',
+			'--board',
+			'b1',
+			'--tag',
+			'bug,ui',
+			'--assign',
+			'@ana',
+			'--due',
+			'2026-12-01',
+			'--color',
+			'red',
+			'--json'
+		]);
+		expect(added.code, added.stderr).toBe(0);
+		const created = added.data.task;
+		expect(created).toMatchObject({ hasCheckbox: true, assignedTo: 'u-ana', color: 'tone:red' });
+		expect(created.tags.map((tag) => [tag.label, tag.color])).toEqual([
+			['bug', 'tone:teal'],
+			['ui', 'tone:red']
+		]);
+		expect(new Date(created.countdownAt!).getHours()).toBe(17);
+		const unknown = await run([
+			'task',
+			'add',
+			'X',
+			'--board',
+			'b1',
+			'--assign',
+			'nobody',
+			'--json'
+		]);
+		expect(unknown.code).toBe(4);
+	});
+
+	it('updates several tasks in one write and filters by tag', async () => {
+		board()[0].tasks.push({ id: 't2', title: 'Second', tags: [] });
+		const result = await run<{ ids: string[] }>([
+			'task',
+			'update',
+			't1',
+			't2',
+			'--add-tag',
+			'x',
+			'--board',
+			'b1',
+			'--json'
+		]);
+		expect(result.data.ids).toEqual(['t1', 't2']);
+		expect(posts()).toHaveLength(1);
+		const listed = await run(['ls', 'b1', '--tag', 'x', '--json']);
+		expect(listed.data.total).toBe(2);
+	});
+
+	it('requires an id or exact name for writes but not for reads', async () => {
+		snapshot.projects[2].pages.push({ id: 'pg2', name: 'Meeting notes', content: '' });
+		const read = await run(['page', 'get', 'Meet', '--project', 'empty', '--json']);
+		expect(read.data.id).toBe('pg2');
+		const write = await run(['page', 'delete', 'Meet', '--project', 'empty', '--json']);
+		expect(write.code).toBe(4);
+		expect(write.error.error).toMatchObject({ hint: expect.stringContaining('Meeting notes') });
+		expect(posts()).toHaveLength(0);
+	});
+
+	it('refuses a stale saved board instead of using the first board', async () => {
+		await writeConfig({ activeProjectId: 'p1', activeBoardId: 'missing' });
+		const result = await run(['task', 'add', 'Oops', '--json']);
+		expect(result.code).toBe(2);
+		expect(result.error.error.code).toBe('context_required');
+		expect(posts()).toHaveLength(0);
+	});
+
+	it('reports a rejected scratchpad write as a conflict', async () => {
+		scratchpadAccepts = false;
+		const result = await run(['scratchpad', 'set', '--text', 'new', '--project', 'p1', '--json']);
+		expect(result.code).toBe(5);
+		expect(result.stdout).toBe('');
+		expect(result.error.error.code).toBe('conflict');
+	});
+
+	it('reports an outdated server instead of a missing task', async () => {
+		const result = await run(['task', 'comment', 'list', 't1', '--board', 'b1', '--json']);
+		expect(result.error.error.code).toBe('unsupported_server');
+	});
+
+	it('selects an exactly named board in another project with use', async () => {
+		await writeConfig({ activeProjectId: 'p1' });
+		const result = await run<{ projectId: string; boardId: string }>(['use', 'Other', '--json']);
+		expect(result.data).toMatchObject({ projectId: 'p2', boardId: 'b2' });
+	});
+
+	it('finds tasks assigned to me across projects', async () => {
+		snapshot.projects[1].members = [{ userId: 'env-user', role: 'owner' }];
+		snapshot.projects[1].boards[0].kanbanData = [
+			{
+				id: 'x1',
+				title: 'Inbox',
+				tasks: [{ id: 'mine', title: 'Mine', tags: [], assignedTo: 'env-user' }]
+			}
+		];
+		const result = await run<{ tasks: { id: string; projectName: string }[] }>(['mine', '--json']);
+		expect(result.data.tasks).toEqual([
+			expect.objectContaining({ id: 'mine', projectName: 'Work archive' })
+		]);
+	});
+
+	it('keeps task revisions stable when only server timestamps change', async () => {
+		const before = await run(['task', 'get', 't1', '--board', 'b1', '--json']);
+		board()[0].tasks[0].updatedAt = 999;
+		const result = await run([
+			'task',
+			'update',
+			't1',
+			'--title',
+			'Renamed',
+			'--if-match',
+			before.data.revision,
+			'--board',
+			'b1',
+			'--json'
+		]);
+		expect(result.code, result.stderr).toBe(0);
+		expect(result.data.revision).toHaveLength(64);
+	});
+
+	it('guards column deletes that would drop tasks', async () => {
+		const refused = await run(['column', 'delete', 'Todo', '--board', 'b1', '--json']);
+		expect(refused.code).toBe(2);
+		const moved = await run([
+			'column',
+			'delete',
+			'Todo',
+			'--move-tasks-to',
+			'Done',
+			'--board',
+			'b1',
+			'--json'
+		]);
+		expect(moved.code, moved.stderr).toBe(0);
+		expect(lastNext().map((column) => column.id)).toEqual(['c2']);
+		expect(lastNext()[0].tasks.map((task) => task.id)).toEqual(['t1']);
+	});
+
+	it('lists every remaining task after --offset and hides placeholder pages', async () => {
+		board()[0].tasks = Array.from({ length: 30 }, (_, i) => ({
+			id: 'n' + i,
+			title: 'N' + i,
+			tags: []
+		}));
+		const list = await run(['ls', 'b1', '--offset', '5', '--json']);
+		expect(list.data.tasks).toHaveLength(25);
+		snapshot.projects[2].pages = [{ id: '__fallback_page__empty', name: 'Notes', content: '' }];
+		const pages = await run<unknown[]>(['page', 'list', '--project', 'empty', '--json']);
+		expect(pages.data).toEqual([]);
+	});
+
 	it('accepts multiline task descriptions from stdin and returns the created ID', async () => {
 		const result = await run(
 			['task', 'add', 'New', '--board', 'b1', '--description-file', '-', '--json'],
@@ -678,6 +897,142 @@ describe.runIf(process.env.KAINBU_PB_INTEGRATION === '1')(
 			]);
 			await cli(['scratchpad', 'pad', 'rename', newPad.id, 'Renamed pad', '--project', project.id]);
 			await cli(['scratchpad', 'pad', 'delete', newPad.id, '--project', project.id]);
+			// 0.2.1: task fields, comments, attachments, trash, settings, moves, pages, search.
+			const me = await cli<{ id: string }>(['whoami']);
+			const second = await cli([
+				'task',
+				'add',
+				'Agent second',
+				'--column',
+				column.id,
+				'--tag',
+				'agent,cli',
+				'--assign',
+				'me',
+				'--due',
+				'2026-12-01',
+				...context
+			]);
+			const fields = await cli(['task', 'get', second.id, ...context]);
+			expect(fields.assignedTo).toBe(me.id);
+			expect(fields.tags.map((tag) => tag.label)).toEqual(['agent', 'cli']);
+			expect(fields.countdownAt).toBeGreaterThan(0);
+			const comment = await cli<{ id: string }>([
+				'task',
+				'comment',
+				'add',
+				second.id,
+				'Looks good',
+				...context
+			]);
+			const comments = await cli<{ comments: { id: string; body: string }[] }>([
+				'task',
+				'comment',
+				'list',
+				second.id,
+				...context
+			]);
+			expect(comments.comments.map((entry) => entry.body)).toEqual(['Looks good']);
+			const upload = join(directory, 'notes.txt');
+			await writeFile(upload, 'attachment body');
+			const attached = await cli<{ id: string }>([
+				'task',
+				'attachment',
+				'add',
+				second.id,
+				upload,
+				...context
+			]);
+			const downloaded = join(directory, 'downloaded.txt');
+			await cli([
+				'task',
+				'attachment',
+				'download',
+				attached.id,
+				'--output',
+				downloaded,
+				'--project',
+				project.id
+			]);
+			expect(await readFile(downloaded, 'utf8')).toBe('attachment body');
+			await cli(['task', 'attachment', 'delete', attached.id, '--project', project.id]);
+			await cli(['task', 'comment', 'delete', comment.id, '--project', project.id]);
+			await cli(['task', 'delete', second.id, ...context]);
+			const trash = await cli(['task', 'list', '--deleted', ...context]);
+			expect(trash.tasks.map((entry) => entry.id)).toContain(second.id);
+			await cli(['task', 'restore', second.id, ...context]);
+			const shipped = await cli(['column', 'add', 'Shipped', ...context]);
+			await cli(['board', 'settings', '--checked-column', shipped.id, ...context]);
+			const completed = await cli(['task', 'check', second.id, ...context]);
+			expect(completed.columnId).toBe(shipped.id);
+			const otherBoard = await cli([
+				'board',
+				'create',
+				'Agent other',
+				'--project',
+				project.id,
+				'--no-use'
+			]);
+			const otherContext = ['--project', project.id, '--board', otherBoard.id];
+			const inbox = await cli(['column', 'add', 'Inbox', ...otherContext]);
+			await cli(['task', 'comment', 'add', second.id, 'Travels along', ...context]);
+			await cli([
+				'task',
+				'move',
+				second.id,
+				'--to-board',
+				otherBoard.id,
+				'--column',
+				inbox.id,
+				...context
+			]);
+			const moved = await cli(['task', 'get', second.id, ...otherContext]);
+			expect(moved.columnId).toBe(inbox.id);
+			const kept = await cli<{ comments: unknown[] }>([
+				'task',
+				'comment',
+				'list',
+				second.id,
+				...otherContext
+			]);
+			expect(kept.comments).toHaveLength(1);
+			await cli(['board', 'move', otherBoard.id, '--position', 'top', '--project', project.id]);
+			const ordered = await cli<{ id: string }[]>(['board', 'list', '--project', project.id]);
+			expect(ordered[0].id).toBe(otherBoard.id);
+			const share = await cli<{ shareUrl: string }>(['board', 'share', ...otherContext]);
+			expect(share.shareUrl).toContain('/');
+			const draft = await cli([
+				'page',
+				'create',
+				'Agent draft',
+				'--text',
+				'First line',
+				'--project',
+				project.id
+			]);
+			await cli(['page', 'append', draft.id, '--text', 'Second line', '--project', project.id]);
+			expect((await cli(['page', 'get', draft.id, '--project', project.id])).content).toBe(
+				'First line\nSecond line'
+			);
+			await cli(['page', 'move', draft.id, '--position', 'top', '--project', project.id]);
+			const pages = await cli<{ id: string }[]>(['page', 'list', '--project', project.id]);
+			expect(pages[0].id).toBe(draft.id);
+			const found = await cli<{ tasks: { id: string }[]; pages: { id: string }[] }>([
+				'search',
+				'Second',
+				'--project',
+				project.id
+			]);
+			expect(found.tasks.map((entry) => entry.id)).toContain(second.id);
+			expect(found.pages.map((entry) => entry.id)).toContain(draft.id);
+			const refused = await run(
+				['column', 'delete', inbox.id, ...otherContext, '--json'],
+				undefined,
+				{
+					KAINBU_API_KEY: token
+				}
+			);
+			expect(refused.code).toBe(2);
 			await cli(['column', 'update', column.id, '--title', 'Renamed column', ...context]);
 			await cli(['column', 'delete', column.id, ...context]);
 		}, 60_000);

@@ -57,6 +57,10 @@ const readField = (record, field) =>
 const same = (field, a, b) =>
 	JSON.stringify(canonical(fieldValue(field, a))) ===
 	JSON.stringify(canonical(fieldValue(field, b)));
+// Position is ordering, not content: clients derive it from list order, so a
+// stale or duplicated stored position (e.g. from an older client that deleted
+// without keeping the trashed row in place) must not block an edit or delete.
+const guarded = (field) => field !== 'position';
 const columns = ['title', 'color', 'width', 'position'];
 const tasks = [
 	'column_id',
@@ -114,7 +118,9 @@ exports.syncBoard = (e) => {
 						deleting &&
 						!wasDeleted &&
 						row.previous &&
-						!tasks.every((field) => same(field, readField(record, field), row.previous[field]))
+						!tasks
+							.filter(guarded)
+							.every((field) => same(field, readField(record, field), row.previous[field]))
 					)
 						conflict('This task changed while you were deleting it. Refresh before retrying.');
 				}
@@ -131,7 +137,11 @@ exports.syncBoard = (e) => {
 					if (row.previous && same(field, row.previous[field], row[field])) continue;
 					const current = readField(record, field);
 					if (!creating && same(field, current, row[field])) continue; // idempotent retry
-					if (!creating && (!row.previous || !same(field, current, row.previous[field])))
+					if (
+						!creating &&
+						guarded(field) &&
+						(!row.previous || !same(field, current, row.previous[field]))
+					)
 						conflict(`The ${field} changed while you were editing. Refresh before retrying.`);
 					record.set(field, fieldValue(field, row[field]));
 					changed = true;
@@ -147,7 +157,11 @@ exports.syncBoard = (e) => {
 				if (!record) continue;
 				if (collection === 'project_tasks' && record.getFloat('deleted_at') > 0) continue;
 				checkBoard(record, board);
-				if (!fields.every((field) => same(field, readField(record, field), row[field])))
+				if (
+					!fields
+						.filter(guarded)
+						.every((field) => same(field, readField(record, field), row[field]))
+				)
 					conflict('An item changed while you were deleting it. Refresh before retrying.');
 				if (
 					collection === 'project_columns' &&
@@ -197,6 +211,75 @@ exports.scratchpad = (e) => {
 		};
 	});
 	return e.json(200, result);
+};
+
+// Moves live tasks to another board of the same project, keeping their IDs so
+// comments and attachments (keyed by project + task ID) stay attached. Links
+// are board-local, so links between a moved task and its old board are cleared.
+exports.moveTasks = (e) => {
+	const body = e.requestInfo().body;
+	if (
+		!Array.isArray(body.taskIds) ||
+		!body.taskIds.length ||
+		body.taskIds.length > 500 ||
+		!body.taskIds.every((id) => typeof id === 'string' && id.trim())
+	)
+		throw new BadRequestError('taskIds must be a non-empty array of task IDs.');
+	e.app.runInTransaction((app) => {
+		const project = projectAccess(app, e, body);
+		const from = child(
+			app,
+			'project_boards',
+			project,
+			requireText(body.fromBoardId, 'fromBoardId')
+		);
+		const to = child(app, 'project_boards', project, requireText(body.toBoardId, 'toBoardId'));
+		if (!from || !to) throw new NotFoundError('Board not found.');
+		if (from.id === to.id) throw new BadRequestError('Use a board sync to move within a board.');
+		const columnId = requireText(body.columnId, 'columnId');
+		const column = child(app, 'project_columns', project, columnId);
+		if (!column || column.getString('board') !== to.id)
+			throw new NotFoundError('Column not found on the target board.');
+		const last = app.findRecordsByFilter(
+			'project_tasks',
+			'project = {:project} && board = {:board} && column_id = {:column}',
+			'-position',
+			1,
+			0,
+			{ project: project.id, board: to.id, column: columnId }
+		)[0];
+		let position = last ? last.getFloat('position') + 1 : 0;
+		const moved = body.taskIds.map((id) => id.trim());
+		for (const id of moved) {
+			const task = child(app, 'project_tasks', project, id);
+			if (!task) throw new NotFoundError(`Task not found: ${id}`);
+			checkBoard(task, from);
+			if (task.getFloat('deleted_at') > 0)
+				conflict(`Task ${id} was deleted. Refresh before moving.`);
+			task.set('board', to.id);
+			task.set('column_id', columnId);
+			task.set('position', position++);
+			task.set('linked_task_ids', []);
+			app.save(task);
+		}
+		for (const id of moved) {
+			for (const linked of app.findRecordsByFilter(
+				'project_tasks',
+				'project = {:project} && board = {:board} && linked_task_ids ~ {:id}',
+				'',
+				0,
+				0,
+				{ project: project.id, board: from.id, id }
+			)) {
+				const ids = readField(linked, 'linked_task_ids').filter((entry) => entry !== id);
+				linked.set('linked_task_ids', ids);
+				app.save(linked);
+			}
+		}
+		app.save(from); // Advance both boards for realtime snapshot merging.
+		app.save(to);
+	});
+	return e.json(200, { ok: true });
 };
 
 exports.respondInvite = (e) => {

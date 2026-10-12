@@ -8,6 +8,12 @@ routerAdd(
 );
 routerAdd(
 	'POST',
+	'/api/kainbu/task-move',
+	(e) => require(`${__hooks}/workspace.js`).moveTasks(e),
+	$apis.requireAuth()
+);
+routerAdd(
+	'POST',
 	'/api/kainbu/scratchpad',
 	(e) => require(`${__hooks}/workspace.js`).scratchpad(e),
 	$apis.requireAuth()

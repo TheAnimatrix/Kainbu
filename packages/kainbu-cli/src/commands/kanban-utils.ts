@@ -4,12 +4,16 @@ import {
 	resolveTaskRef,
 	type BoardRefMap
 } from '@kainbu/core';
-import type { KanbanData, Task } from '../../../../src/lib/kainbu/types.js';
+import type { KanbanData } from '../../../../src/lib/kainbu/types.js';
 
-import { resolveByIdOrName } from './shared.js';
-import { KainbuError } from '../errors.js';
+import { resolveByIdOrName, type MatchMode } from './shared.js';
 export { buildBoardRefIndex, resolveColumnRef, resolveTaskRef };
-export const findColumnByRefOrTitle = (kanban: KanbanData, refs: BoardRefMap, target: string) => {
+export const findColumnByRefOrTitle = (
+	kanban: KanbanData,
+	refs: BoardRefMap,
+	target: string,
+	mode: MatchMode = {}
+) => {
 	const byId = kanban.find((column) => column.id === target.trim());
 	if (byId) return byId;
 	const ref = resolveColumnRef(refs, target);
@@ -17,7 +21,8 @@ export const findColumnByRefOrTitle = (kanban: KanbanData, refs: BoardRefMap, ta
 	const selected = resolveByIdOrName(
 		kanban.map((column) => ({ ...column, name: column.title })),
 		target,
-		'column'
+		'column',
+		mode
 	);
 	return kanban.find((column) => column.id === selected.id)!;
 };
@@ -34,34 +39,4 @@ export const findTaskByRefOrId = (kanban: KanbanData, refs: BoardRefMap, target:
 		}
 	}
 	return null;
-};
-
-export const moveTaskToColumn = (
-	kanban: KanbanData,
-	taskId: string,
-	targetColumnId: string
-): KanbanData => {
-	let moving: Task | null = null;
-	const stripped = kanban.map((column) => {
-		const index = column.tasks.findIndex((task) => task.id === taskId);
-		if (index === -1) return column;
-		moving = column.tasks[index];
-		return {
-			...column,
-			tasks: column.tasks.filter((task) => task.id !== taskId)
-		};
-	});
-
-	if (!moving) {
-		throw new KainbuError('Task not found for move.', { code: 'not_found', exitCode: 4 });
-	}
-
-	return stripped.map((column) =>
-		column.id === targetColumnId
-			? {
-					...column,
-					tasks: [...column.tasks, moving as Task]
-				}
-			: column
-	);
 };

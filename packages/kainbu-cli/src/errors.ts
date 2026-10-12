@@ -53,6 +53,10 @@ export const describeError = (value: unknown) => {
 	} else if (status === 409) {
 		code = 'conflict';
 		exitCode = 5;
+		hint = 'Read the resource again, review the change, and retry.';
+	} else if (status === 413) {
+		code = 'too_large';
+		exitCode = 2;
 	} else if (error.name === 'TimeoutError' || error.name === 'AbortError') {
 		code = 'timeout';
 		hint = 'A write may have reached the server. Read the affected resource before retrying.';

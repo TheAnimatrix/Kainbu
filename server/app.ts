@@ -49,6 +49,20 @@ import {
 } from './apiKeysRoute.js';
 import { handleWorkspaceSnapshot } from './workspaceSnapshot.js';
 import {
+	MAX_ASSET_BYTES,
+	handleAssetDeleteRequest,
+	handleAssetDownloadRequest,
+	handleAssetListRequest,
+	handleAssetUploadRequest,
+	handleBoardPreferencesRequest,
+	handleBoardReorderRequest,
+	handlePageReorderRequest,
+	handleTaskCommentCreateRequest,
+	handleTaskCommentDeleteRequest,
+	handleTaskCommentListRequest,
+	handleTaskMoveRequest
+} from './workspaceDetails.js';
+import {
 	handlePublicBoardShareRequest,
 	handleWorkspaceBoardShareRequest,
 	toShareApiError
@@ -147,9 +161,11 @@ app.use('*', async (c, next) => {
 	const limit =
 		path === '/api/workspace-ai/transcribe-images'
 			? securityLimits.maxTranscriptionJsonBytes
-			: path.startsWith('/api/workspace-ai')
-				? securityLimits.maxAiJsonBytes
-				: securityLimits.maxJsonBytes;
+			: path === '/api/workspace/assets/upload'
+				? MAX_ASSET_BYTES + 64 * 1024
+				: path.startsWith('/api/workspace-ai')
+					? securityLimits.maxAiJsonBytes
+					: securityLimits.maxJsonBytes;
 	return requestBodyLimit(limit)(c, next);
 });
 app.use('*', rateLimit());
@@ -627,6 +643,70 @@ app.post('/api/workspace/projects/scratchpad', async (c: Context) => {
 		return handleWorkspaceMutationError(c, error);
 	}
 });
+
+const workspaceRoute =
+	<T>(
+		read: (c: Context) => Promise<T>,
+		handle: (input: T, authorization?: string) => Promise<unknown>
+	) =>
+	async (c: Context) => {
+		try {
+			return c.json(await handle(await read(c), c.req.header('Authorization')));
+		} catch (error) {
+			return handleWorkspaceMutationError(c, error);
+		}
+	};
+const jsonBody = (c: Context) => c.req.json() as Promise<Record<string, string | undefined>>;
+const queryParams = async (c: Context) => c.req.query();
+
+app.get('/api/workspace/tasks/comments', workspaceRoute(queryParams, handleTaskCommentListRequest));
+app.post(
+	'/api/workspace/tasks/comments/create',
+	workspaceRoute(jsonBody, handleTaskCommentCreateRequest)
+);
+app.post(
+	'/api/workspace/tasks/comments/delete',
+	workspaceRoute(jsonBody, handleTaskCommentDeleteRequest)
+);
+app.get('/api/workspace/assets', workspaceRoute(queryParams, handleAssetListRequest));
+app.post(
+	'/api/workspace/assets/upload',
+	workspaceRoute(
+		(c) => c.req.parseBody() as Promise<Record<string, unknown>>,
+		handleAssetUploadRequest
+	)
+);
+app.post('/api/workspace/assets/delete', workspaceRoute(jsonBody, handleAssetDeleteRequest));
+app.get('/api/workspace/assets/download', async (c: Context) => {
+	try {
+		const asset = await handleAssetDownloadRequest(c.req.query(), c.req.header('Authorization'));
+		const headers: Record<string, string> = {
+			'Content-Type': asset.mimeType,
+			'Content-Disposition': `attachment; filename*=UTF-8''${encodeURIComponent(asset.name)}`,
+			'Cache-Control': 'no-store'
+		};
+		if (asset.contentLength) headers['Content-Length'] = asset.contentLength;
+		return new Response(asset.body, { headers });
+	} catch (error) {
+		return handleWorkspaceMutationError(c, error);
+	}
+});
+app.post(
+	'/api/workspace/boards/preferences',
+	workspaceRoute((c) => c.req.json(), handleBoardPreferencesRequest)
+);
+app.post(
+	'/api/workspace/boards/reorder',
+	workspaceRoute((c) => c.req.json(), handleBoardReorderRequest)
+);
+app.post(
+	'/api/workspace/pages/reorder',
+	workspaceRoute((c) => c.req.json(), handlePageReorderRequest)
+);
+app.post(
+	'/api/workspace/tasks/move',
+	workspaceRoute((c) => c.req.json(), handleTaskMoveRequest)
+);
 
 app.post('/api/workspace/boards/sync', async (c: Context) => {
 	try {

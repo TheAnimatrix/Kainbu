@@ -31,9 +31,17 @@ export const handleWorkspaceSnapshot = async (c: Context) => {
 			// No-op: invites-by-email won't match, but the rest still works.
 		}
 
+		// Optional scoping for callers that read one project and no chat state
+		// (the CLI): ?projectId=<id> (repeatable) and ?ai=0. Defaults are unchanged.
+		const projectIds = (c.req.queries('projectId') || [])
+			.flatMap((value) => value.split(','))
+			.map((value) => value.trim())
+			.filter(Boolean);
 		const snapshot = await loadWorkspaceFromPb(pb, userId, {
 			authEmail,
-			avatarBaseUrl: getPublicPocketBaseUrl()
+			avatarBaseUrl: getPublicPocketBaseUrl(),
+			projectIds,
+			includeAiSessions: c.req.query('ai') !== '0'
 		});
 		return c.json(snapshot);
 	} catch (error) {

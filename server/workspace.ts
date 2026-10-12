@@ -69,7 +69,7 @@ const isBackgroundTheme = (value: unknown): value is BackgroundTheme => {
 	return false;
 };
 
-class WorkspaceApiError extends Error {
+export class WorkspaceApiError extends Error {
 	status: number;
 
 	constructor(status: number, message: string) {
@@ -125,7 +125,7 @@ type WorkspaceMemberProfilesRequest = {
 	userIds: string[];
 };
 
-const requireString = (value: unknown, field: string) => {
+export const requireString = (value: unknown, field: string) => {
 	if (typeof value !== 'string' || !value.trim()) {
 		throw new WorkspaceApiError(400, `${field} is required.`);
 	}
@@ -186,7 +186,7 @@ const getProjectOrThrow = async (admin: PocketBase, projectId: string) => {
 	}
 };
 
-const ensureOwnerProject = async (admin: PocketBase, projectId: string, userId: string) => {
+export const ensureOwnerProject = async (admin: PocketBase, projectId: string, userId: string) => {
 	const project = await getProjectOrThrow(admin, projectId);
 	if (project.user_id !== userId) {
 		throw new WorkspaceApiError(403, 'Only the project owner can perform this action.');
@@ -195,7 +195,7 @@ const ensureOwnerProject = async (admin: PocketBase, projectId: string, userId: 
 	return project;
 };
 
-const getMembership = async (admin: PocketBase, projectId: string, userId: string) => {
+export const getMembership = async (admin: PocketBase, projectId: string, userId: string) => {
 	const projectPbId = await getProjectPbId(admin, projectId);
 	try {
 		return await admin
@@ -208,7 +208,7 @@ const getMembership = async (admin: PocketBase, projectId: string, userId: strin
 	}
 };
 
-const ensureMembership = async (admin: PocketBase, projectId: string, userId: string) => {
+export const ensureMembership = async (admin: PocketBase, projectId: string, userId: string) => {
 	const membership = await getMembership(admin, projectId, userId);
 	if (!membership) {
 		throw new WorkspaceApiError(404, 'Membership not found.');
@@ -833,13 +833,22 @@ const requireKanbanData = (value: unknown, field: string): KanbanData => {
 	return value as KanbanData;
 };
 
+const MAX_PAGE_CONTENT_LENGTH = 500_000;
+
+/** Oversized content is rejected, never truncated: a cut page would look saved. */
 const sanitizeProjectPageContent = (content: unknown) => {
 	if (typeof content !== 'string') return '';
-	return content.replace(/\0/g, '').slice(0, 500_000);
+	const clean = content.replace(/\0/g, '');
+	if (clean.length > MAX_PAGE_CONTENT_LENGTH)
+		throw new WorkspaceApiError(
+			413,
+			`Page content is limited to ${MAX_PAGE_CONTENT_LENGTH} characters (got ${clean.length}).`
+		);
+	return clean;
 };
 
 /** Find a project child (board/page/…) by its app-level client_id, scoped to the project. */
-const findProjectChildByClientId = async (
+export const findProjectChildByClientId = async (
 	admin: PocketBase,
 	collection: string,
 	projectPbId: string,

@@ -47,6 +47,10 @@ import type {
 export type LoadWorkspaceOptions = {
 	authEmail?: string;
 	avatarBaseUrl?: string;
+	/** Limit the snapshot to these project client IDs (CLI reads of one project). */
+	projectIds?: string[];
+	/** Skip AI sessions and per-user chat state; the CLI never reads them. */
+	includeAiSessions?: boolean;
 };
 
 const DEFAULT_COLUMN_WIDTH = 240;
@@ -236,7 +240,11 @@ export const loadWorkspaceFromPb = async (
 		return mapMembershipRecord(record, projectClientId);
 	});
 
-	const accessibleProjectIds = ownMembershipRows.map((membership) => membership.project_id);
+	const scopedProjectIds = options.projectIds?.length ? new Set(options.projectIds) : null;
+	const accessibleProjectIds = ownMembershipRows
+		.map((membership) => membership.project_id)
+		.filter((id) => !scopedProjectIds || scopedProjectIds.has(id));
+	const includeAiSessions = options.includeAiSessions !== false;
 
 	const [
 		projectRecords,
@@ -272,7 +280,7 @@ export const loadWorkspaceFromPb = async (
 		accessibleProjectIds.length
 			? listByProjectIds(pb, 'project_tasks', accessibleProjectIds, 'position')
 			: Promise.resolve([]),
-		accessibleProjectIds.length
+		accessibleProjectIds.length && includeAiSessions
 			? pb.collection('project_user_state').getFullList<Record<string, unknown>>({
 					filter: `user = "${pbEscapeFilter(userId)}" && (${accessibleProjectIds
 						.map((id) => `project.client_id = "${pbEscapeFilter(id)}"`)
@@ -281,7 +289,7 @@ export const loadWorkspaceFromPb = async (
 					...pbNoAutoCancel
 				})
 			: Promise.resolve([]),
-		accessibleProjectIds.length
+		accessibleProjectIds.length && includeAiSessions
 			? pb.collection('project_ai_sessions').getFullList<Record<string, unknown>>({
 					filter: `user = "${pbEscapeFilter(userId)}" && (${accessibleProjectIds
 						.map((id) => `project.client_id = "${pbEscapeFilter(id)}"`)
