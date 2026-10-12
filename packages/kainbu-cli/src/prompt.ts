@@ -83,7 +83,17 @@ export const promptLine = (
 			output: process.stdout,
 			terminal: true
 		});
+		let answered = false;
+		rl.on('SIGINT', () => {
+			process.stdout.write('\n');
+			process.exit(130);
+		});
+		// EOF (Ctrl+D) closes the interface without an answer.
+		rl.on('close', () => {
+			if (!answered) resolve(null);
+		});
 		rl.question(question, (answer) => {
+			answered = true;
 			rl.close();
 			resolve(answer);
 		});

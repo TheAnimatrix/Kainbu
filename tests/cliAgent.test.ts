@@ -236,12 +236,33 @@ describe('CLI automation protocol (real executable over HTTP)', () => {
 		[['task', 'list', '--offset', '-1', '--json'], 'invalid_arguments'],
 		[['--json', 'unknown'], 'invalid_arguments'],
 		[['login', '--device', '--json'], 'input_required'],
+		[['setup', '--json'], 'input_required'],
+		[['task', '--json'], 'invalid_arguments'],
 		[['--json', 'task', 'update', 't1', '--checked', 'maybe'], 'invalid_arguments']
 	])('fails invalid or interactive command %j with clean JSON', async (args, code) => {
 		const result = await run(args);
 		expect(result.stdout).toBe('');
 		expect(result.code).toBe(2);
 		expect(result.error.error.code).toBe(code);
+		expect(requests).toHaveLength(0);
+	});
+	it('prints help for a bare invocation or command group outside a terminal', () => {
+		const cli = (args: string[]) =>
+			spawnSync(process.execPath, [join(root, 'packages/kainbu-cli/dist/index.js'), ...args], {
+				cwd: directory,
+				encoding: 'utf8',
+				windowsHide: true,
+				env: { ...process.env, KAINBU_CONFIG_DIR: directory, KAINBU_API_KEY: '', FORCE_COLOR: '0' }
+			});
+		const bare = cli([]);
+		expect(bare.status).toBe(0);
+		expect(bare.stdout).toContain('Usage: kainbu');
+		expect(bare.stdout).toContain('setup');
+		expect(bare.stderr).toBe('');
+		const group = cli(['task']);
+		expect(group.status).toBe(2);
+		expect(group.stderr).toContain('Usage: kainbu task');
+		expect(group.stderr).not.toContain('outputHelp');
 		expect(requests).toHaveLength(0);
 	});
 	it('reads a piped API key, defaults the first profile, and does not print the secret', async () => {

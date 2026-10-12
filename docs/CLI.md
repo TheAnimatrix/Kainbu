@@ -4,18 +4,20 @@ Manage projects, boards, tasks, and notes from your terminal.
 
 ## Install
 
-With Node.js 22 installed, run these commands from your Kainbu repository folder:
+With Node.js 22 or later installed:
 
 ```bash
-npm install
-npm run cli:link
+npm install -g kainbu
+kainbu
 ```
 
-## Sign in
+The first time you run `kainbu`, it walks you through setup. It asks for your server, helps you create an API key in **Settings → Access**, and lets you choose a project and board. Run `kainbu setup` to go through it again.
 
-1. Open Kainbu in your browser and go to **Settings → Access**.
-2. Create an API key with a label such as `laptop` and copy it. The full key is shown only once.
-3. Run the command below, replacing the URL and example key with your own:
+To run the CLI from a Kainbu repository instead, use Node.js 22 and run `npm install` and then `npm run cli:link` in the repository folder.
+
+## Sign in without the guide
+
+For scripts, or if you already have an API key, sign in with flags. Replace the URL and example key with your own:
 
 ```bash
 kainbu login --server https://kainbu.example.com --api-key YOUR_API_KEY

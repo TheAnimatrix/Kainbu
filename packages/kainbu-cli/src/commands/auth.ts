@@ -33,7 +33,57 @@ const formatUserCode = (value: string) => {
 	return `${compact.slice(0, 4)}-${compact.slice(4)}`;
 };
 
-const verifyApiKey = async (apiBase: string, apiKey: string) => {
+/** Validate a server URL and return it without trailing slashes. */
+export const parseServerUrl = (server: string) => {
+	let serverUrl: URL;
+	try {
+		serverUrl = new URL(server.trim());
+	} catch {
+		throw new KainbuError(`Invalid server URL: ${server}`, {
+			code: 'invalid_arguments',
+			exitCode: 2,
+			hint: 'Use a full URL such as https://kainbu.example.com.'
+		});
+	}
+	if (
+		!['http:', 'https:'].includes(serverUrl.protocol) ||
+		serverUrl.username ||
+		serverUrl.password ||
+		serverUrl.search ||
+		serverUrl.hash
+	)
+		throw new KainbuError(
+			'Server must be an HTTP(S) URL without embedded credentials, query or fragment.',
+			{ code: 'invalid_arguments', exitCode: 2 }
+		);
+	return server.trim().replace(/\/+$/, '');
+};
+
+/** Open an http(s) URL in the default browser. Resolves false if no browser could be launched. */
+export const openInBrowser = async (href: string) => {
+	const url = new URL(href);
+	if (!['http:', 'https:'].includes(url.protocol))
+		throw new KainbuError('Refusing to open a non-HTTP URL.');
+	const { spawn } = await import('node:child_process');
+	const child =
+		process.platform === 'win32'
+			? spawn('rundll32.exe', ['url.dll,FileProtocolHandler', url.href], {
+					windowsHide: true,
+					stdio: 'ignore'
+				})
+			: spawn(process.platform === 'darwin' ? 'open' : 'xdg-open', [url.href], {
+					stdio: 'ignore'
+				});
+	return new Promise<boolean>((resolve) => {
+		child.once('error', () => resolve(false));
+		child.once('spawn', () => {
+			child.unref();
+			resolve(true);
+		});
+	});
+};
+
+export const verifyApiKey = async (apiBase: string, apiKey: string) => {
 	const response = await fetch(`${apiBase}/api/me`, {
 		signal: requestSignal(),
 		headers: { Authorization: `Bearer ${apiKey}` }
@@ -74,7 +124,7 @@ type LoginArgs = {
 	rename?: string;
 };
 
-const resolveProfileName = async (
+export const resolveProfileName = async (
 	argName: string | undefined,
 	existing: AuthProfileSummary[]
 ): Promise<string> => {
@@ -217,27 +267,7 @@ export const registerAuthCommands = (program: Command) => {
 				});
 			}
 
-			let serverUrl: URL;
-			try {
-				serverUrl = new URL(server);
-			} catch {
-				throw new KainbuError(`Invalid server URL: ${server}`, {
-					code: 'invalid_arguments',
-					exitCode: 2,
-					hint: 'Use a full URL such as https://kainbu.example.com.'
-				});
-			}
-			if (
-				!['http:', 'https:'].includes(serverUrl.protocol) ||
-				serverUrl.username ||
-				serverUrl.password ||
-				serverUrl.search ||
-				serverUrl.hash
-			)
-				throw new KainbuError(
-					'Server must be an HTTP(S) URL without embedded credentials, query or fragment.',
-					{ code: 'invalid_arguments', exitCode: 2 }
-				);
+			server = parseServerUrl(server);
 			const profileName = await resolveProfileName(options.profile, existing);
 			const identity = await verifyApiKey(server, apiKey);
 			const profile = await upsertAuthProfile({
@@ -479,23 +509,8 @@ async function runDeviceFlow(options: LoginArgs, mode: OutputMode) {
 	console.log(`${ui.meta('Device code:')} ${ui.heading(userCode)}`);
 	console.log(`${ui.meta('If needed, open:')} ${verificationUrl}`);
 
-	if (options.open !== false) {
-		const url = new URL(verificationUrl);
-		if (!['http:', 'https:'].includes(url.protocol))
-			throw new KainbuError('Invalid device verification URL.');
-		const { spawn } = await import('node:child_process');
-		const child =
-			process.platform === 'win32'
-				? spawn('rundll32.exe', ['url.dll,FileProtocolHandler', url.href], {
-						windowsHide: true,
-						stdio: 'ignore'
-					})
-				: spawn(process.platform === 'darwin' ? 'open' : 'xdg-open', [url.href], {
-						stdio: 'ignore'
-					});
-		child.on('error', () => console.error('Open the verification URL above in your browser.'));
-		child.unref();
-	}
+	if (options.open !== false && !(await openInBrowser(verificationUrl)))
+		console.error('Open the verification URL above in your browser.');
 
 	const pollIntervalMs = (startPayload.interval || 3) * 1000;
 	const deadline = Date.now() + 10 * 60 * 1000;

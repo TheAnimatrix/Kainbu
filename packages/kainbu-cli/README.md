@@ -8,22 +8,23 @@ projects, boards, tasks, pages, and scratchpads from your terminal.
 Requires Node ≥ 22.
 
 ```bash
-npm install -g kainbu      # or run ad-hoc: npx kainbu <command>
+npm install -g kainbu
+kainbu
 ```
 
-## Log in
+The first run walks you through setup: choose your server, create an API key
+in **Settings → Access**, and pick a project and board. Run `kainbu setup` to
+go through it again.
 
-The CLI authenticates with a **per-user API key** that you mint from
-**Settings → Access** in the Kainbu web UI:
+## Sign in with flags
+
+For scripts, or if you already have an API key:
 
 ```bash
 kainbu login --server https://kainbu.example.com --api-key kbu_v1_...
 kainbu whoami                              # confirm the signed-in user
 kainbu auth profiles                       # manage multiple servers / accounts
 ```
-
-The API key works directly against the Kainbu API — no PocketBase URL needed.
-Don't have a key yet? Use `kainbu login --device` for the browser device flow.
 
 ## View tasks
 

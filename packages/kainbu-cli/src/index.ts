@@ -7,6 +7,8 @@ import { registerPageCommands } from './commands/page.js';
 import { registerProjectCommands } from './commands/project.js';
 import { registerScratchpadCommands } from './commands/scratchpad.js';
 import { registerTaskCommands } from './commands/task.js';
+import { needsSetup, registerSetupCommand, runSetup } from './commands/setup.js';
+import { isInteractive } from './prompt.js';
 import { c, ui } from './color.js';
 import { printError, printSuccess } from './output.js';
 import { configureInvocation, integerOption } from './invocation.js';
@@ -49,8 +51,18 @@ program.configureHelp({
 	styleArgumentTerm: (str) => c.green(str),
 	styleDescriptionText: (str) => c.dim(str)
 });
+// Flags before `--`, read directly so errors raised before option parsing still honor --json.
+const argv = process.argv.slice(2);
+const flags = argv.slice(0, argv.indexOf('--') < 0 ? argv.length : argv.indexOf('--'));
+const jsonRequested = flags.includes('--json');
+
 program.configureOutput({
-	writeErr: () => {} // Parser failures are emitted once by the structured error handler.
+	// Parser failures are emitted once by the structured error handler.
+	outputError: () => {},
+	// Help for a bare command group still prints, except in JSON mode where stderr carries one error object.
+	writeErr: (text) => {
+		if (!jsonRequested) process.stderr.write(text);
+	}
 });
 program.hook('preAction', (_command, action) => configureInvocation(action.optsWithGlobals()));
 
@@ -64,6 +76,7 @@ registerPageCommands(program);
 registerScratchpadCommands(program);
 
 registerSchemaCommand(program);
+registerSetupCommand(program);
 
 program
 	.command('use <target>')
@@ -113,10 +126,29 @@ program
 		);
 	});
 
-program.parseAsync(process.argv).catch((error: unknown) => {
+// A bare `kainbu` in a terminal guides first-time setup; otherwise it shows help.
+const main = async () => {
+	if (argv.length) return program.parseAsync(process.argv);
+	if (isInteractive() && (await needsSetup())) return runSetup();
+	program.outputHelp();
+};
+
+main().catch((error: unknown) => {
+	const code = error && typeof error === 'object' && 'code' in error ? error.code : undefined;
 	if (error && typeof error === 'object' && 'exitCode' in error && error.exitCode === 0) return;
-	const args = process.argv.slice(2);
-	const flags = args.slice(0, args.indexOf('--') < 0 ? args.length : args.indexOf('--'));
-	configureInvocation({ json: flags.includes('--json') });
-	process.exitCode = printError(error);
+	configureInvocation({ json: jsonRequested });
+	// A command group without a subcommand already printed its help.
+	if (code === 'commander.help' && !jsonRequested) {
+		process.exitCode = 2;
+		return;
+	}
+	process.exitCode = printError(
+		code === 'commander.help'
+			? new KainbuError('A subcommand is required.', {
+					code: 'invalid_arguments',
+					exitCode: 2,
+					hint: 'Run kainbu schema for the command catalog.'
+				})
+			: error
+	);
 });
