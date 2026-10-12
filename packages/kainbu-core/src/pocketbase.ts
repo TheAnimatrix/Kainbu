@@ -1,10 +1,10 @@
 import { readFileSync } from 'node:fs';
-import { mkdir, readFile, writeFile, unlink } from 'node:fs/promises';
+import { readFile, unlink } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import PocketBase from 'pocketbase';
 import { formatMissingPocketBaseConfigHelp, getPocketBaseEnv } from './env.js';
-import { parseJsonFile, quarantineCorruptFile } from './jsonFile.js';
+import { parseJsonFile, quarantineCorruptFile, writeFileAtomic } from './jsonFile.js';
 
 export type CliConfig = {
 	activeProjectId?: string;
@@ -28,10 +28,6 @@ export const getCliConfigDir = () => {
 
 export const getCliSessionPath = () => join(getCliConfigDir(), 'session.json');
 export const getCliConfigPath = () => join(getCliConfigDir(), 'config.json');
-
-const ensureConfigDir = async () => {
-	await mkdir(getCliConfigDir(), { recursive: true });
-};
 
 type StoredSession = {
 	token: string;
@@ -65,8 +61,7 @@ export const readCliConfig = async (): Promise<CliConfig> => {
 };
 
 export const writeCliConfig = async (config: CliConfig) => {
-	await ensureConfigDir();
-	await writeFile(getCliConfigPath(), `${JSON.stringify(config, null, 2)}\n`, 'utf8');
+	await writeFileAtomic(getCliConfigPath(), `${JSON.stringify(config, null, 2)}\n`);
 };
 
 export const readCliSession = async (): Promise<StoredSession | null> => {
@@ -87,8 +82,7 @@ export const readCliSession = async (): Promise<StoredSession | null> => {
 };
 
 export const writeCliSession = async (session: StoredSession) => {
-	await ensureConfigDir();
-	await writeFile(getCliSessionPath(), `${JSON.stringify(session, null, 2)}\n`, 'utf8');
+	await writeFileAtomic(getCliSessionPath(), `${JSON.stringify(session, null, 2)}\n`);
 };
 
 export const deleteCliSession = async () => {

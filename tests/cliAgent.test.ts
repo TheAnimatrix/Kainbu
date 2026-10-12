@@ -1,7 +1,7 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { createServer, type Server } from 'node:http';
 import { spawn, spawnSync } from 'node:child_process';
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve, sep } from 'node:path';
 import PocketBase from 'pocketbase';
@@ -44,7 +44,12 @@ let requests: {
 let snapshot: Snapshot;
 let failure = 0;
 
-const run = <T = CliData>(args: string[], input?: string, env: NodeJS.ProcessEnv = {}) =>
+const run = <T = CliData>(
+	args: string[],
+	input?: string,
+	env: NodeJS.ProcessEnv = {},
+	cwd = directory
+) =>
 	new Promise<{
 		code: number | null;
 		stdout: string;
@@ -56,7 +61,7 @@ const run = <T = CliData>(args: string[], input?: string, env: NodeJS.ProcessEnv
 			process.execPath,
 			[join(root, 'packages/kainbu-cli/dist/index.js'), ...args],
 			{
-				cwd: directory,
+				cwd,
 				windowsHide: true,
 				env: {
 					...process.env,
@@ -286,6 +291,60 @@ describe('CLI automation protocol (real executable over HTTP)', () => {
 			KAINBU_API_BASE: 'http://127.0.0.1:1'
 		});
 		expect(mismatch.error.error.code).toBe('invalid_config');
+	});
+	it('ignores project .env files in the working directory', async () => {
+		const project = join(directory, 'project');
+		await mkdir(project);
+		await writeFile(
+			join(project, '.env'),
+			'KAINBU_API_BASE=http://127.0.0.1:1\nKAINBU_API_KEY=project_key_long_enough\n'
+		);
+		const login = await run(
+			['login', '--server', base, '--api-key', '-', '--profile', 'saved', '--json'],
+			'saved_key_long_enough',
+			{ KAINBU_API_KEY: '', KAINBU_API_BASE: '' },
+			project
+		);
+		expect(login.code).toBe(0);
+		const me = await run(
+			['whoami', '--json'],
+			undefined,
+			{
+				KAINBU_API_KEY: '',
+				KAINBU_API_BASE: ''
+			},
+			project
+		);
+		expect(me.code).toBe(0);
+		expect(me.data.id).toBe('saved-user');
+		if (process.platform !== 'win32')
+			expect((await stat(join(directory, 'auth.json'))).mode & 0o777).toBe(0o600);
+	});
+	it('imports only the PocketBase URL from a project .env', async () => {
+		const project = join(directory, 'project');
+		await mkdir(project);
+		await writeFile(
+			join(project, '.env'),
+			'VITE_POCKETBASE_URL=http://127.0.0.1:8090/\nPOCKETBASE_ADMIN_PASSWORD=secret-value\n'
+		);
+		const imported = await run(['config', 'import-env', '--json'], undefined, {}, project);
+		expect(imported.code).toBe(0);
+		const config = await readFile(join(directory, 'config.json'), 'utf8');
+		expect(JSON.parse(config).pocketbaseUrl).toBe('http://127.0.0.1:8090');
+		expect(config).not.toContain('secret-value');
+		await expect(stat(join(directory, '.env'))).rejects.toThrow();
+	});
+	it('maps invalid login input and missing profiles to documented exit codes', async () => {
+		const badUrl = await run(
+			['login', '--server', 'not a url', '--api-key', '-', '--json'],
+			'saved_key_long_enough',
+			{ KAINBU_API_KEY: '' }
+		);
+		expect(badUrl.code).toBe(2);
+		expect(badUrl.error.error.code).toBe('invalid_arguments');
+		const missing = await run(['auth', 'profiles', '--use', 'nope', '--json']);
+		expect(missing.code).toBe(4);
+		expect(missing.error.error.code).toBe('not_found');
 	});
 	it('switches saved profiles non-interactively and logout clears the active key', async () => {
 		const login = await run(

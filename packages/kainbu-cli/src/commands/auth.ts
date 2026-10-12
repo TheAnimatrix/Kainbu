@@ -217,7 +217,16 @@ export const registerAuthCommands = (program: Command) => {
 				});
 			}
 
-			const serverUrl = new URL(server);
+			let serverUrl: URL;
+			try {
+				serverUrl = new URL(server);
+			} catch {
+				throw new KainbuError(`Invalid server URL: ${server}`, {
+					code: 'invalid_arguments',
+					exitCode: 2,
+					hint: 'Use a full URL such as https://kainbu.example.com.'
+				});
+			}
 			if (
 				!['http:', 'https:'].includes(serverUrl.protocol) ||
 				serverUrl.username ||
@@ -322,7 +331,10 @@ export const registerAuthCommands = (program: Command) => {
 					const profiles = await listAuthProfiles();
 					const target = profiles.find((p) => p.name === cmdOptions.remove);
 					if (!target) {
-						throw new KainbuError(`No profile named "${cmdOptions.remove}".`);
+						throw new KainbuError(`No profile named "${cmdOptions.remove}".`, {
+							code: 'not_found',
+							exitCode: 4
+						});
 					}
 					if (isInteractive()) {
 						const confirm = await promptLine(
@@ -351,7 +363,10 @@ export const registerAuthCommands = (program: Command) => {
 						await import('@kainbu/core');
 					const file = await readAuthFile();
 					if (!file.activeProfile) {
-						throw new KainbuError('No active profile to rename.');
+						throw new KainbuError('No active profile to rename.', {
+							code: 'context_required',
+							exitCode: 2
+						});
 					}
 					const current = file.profiles[file.activeProfile];
 					if (!current) {

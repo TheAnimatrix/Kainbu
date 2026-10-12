@@ -8,6 +8,7 @@ import { integerOption } from '../invocation.js';
 import { ui } from '../color.js';
 import { initRuntime } from '../runtime.js';
 import { findColumnByRefOrTitle } from './kanban-utils.js';
+import { KainbuError } from '../errors.js';
 
 export const registerColumnCommands = (program: Command) => {
 	const column = program.command('column').alias('c').description('Manage board columns');
@@ -144,7 +145,7 @@ export const registerColumnCommands = (program: Command) => {
 			const columnId = findColumnByRefOrTitle(kanban, refs, target).id;
 			const next = kanban.filter((entry) => entry.id !== columnId);
 			if (next.length === kanban.length) {
-				throw new Error(`Column not found: ${target}`);
+				throw new KainbuError(`Column not found: ${target}`, { code: 'not_found', exitCode: 4 });
 			}
 			await syncProjectBoard(project.id, board.id, kanban, next);
 			printSuccess(

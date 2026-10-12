@@ -5,6 +5,7 @@ import { printSuccess, printResult } from '../output.js';
 import { ui } from '../color.js';
 import { initRuntime } from '../runtime.js';
 import { resolveByIdOrName } from './shared.js';
+import { KainbuError } from '../errors.js';
 
 export const registerBoardCommands = (program: Command) => {
 	const board = program.command('board').alias('b').description('Manage boards (taskboards)');
@@ -95,7 +96,10 @@ export const registerBoardCommands = (program: Command) => {
 			await initRuntime();
 			const { project } = await resolveContext({ project: options.project, requireBoard: false });
 			if (project.boards.length <= 1) {
-				throw new Error('Cannot delete the only board on a project.');
+				throw new KainbuError('Cannot delete the only board on a project.', {
+					code: 'invalid_arguments',
+					exitCode: 2
+				});
 			}
 			const selected = resolveByIdOrName(project.boards, target, 'board');
 			await deleteProjectBoard(project.id, selected.id);

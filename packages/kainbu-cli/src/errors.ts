@@ -14,20 +14,28 @@ export class KainbuError extends Error {
 
 export const isKainbuError = (error: unknown): error is KainbuError => error instanceof KainbuError;
 
+// Codes attached to plain errors by @kainbu/core.
+const CODED_EXIT: Record<string, number> = {
+	invalid_config: 2,
+	invalid_arguments: 2,
+	not_found: 4
+};
+
 export const describeError = (value: unknown) => {
 	const error = value instanceof Error ? value : new Error(String(value));
 	const status = 'status' in error ? Number(error.status) : undefined;
 	let code = 'request_failed';
 	let exitCode = 1;
 	let hint: string | undefined;
+	const errorCode = 'code' in error ? String(error.code) : '';
 	if (isKainbuError(error)) ({ code, exitCode, hint } = error);
-	else if ('code' in error && error.code === 'invalid_config') {
-		code = 'invalid_config';
-		exitCode = 2;
-	} else if ('code' in error && error.code === 'ENOENT') {
+	else if (errorCode in CODED_EXIT) {
+		code = errorCode;
+		exitCode = CODED_EXIT[errorCode]!;
+	} else if (errorCode === 'ENOENT') {
 		code = 'not_found';
 		exitCode = 4;
-	} else if ('code' in error && String(error.code).startsWith('commander.')) {
+	} else if (errorCode.startsWith('commander.')) {
 		code = 'invalid_arguments';
 		exitCode = 2;
 	} else if (status === 400 || status === 422) {

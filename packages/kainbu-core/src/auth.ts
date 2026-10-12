@@ -1,8 +1,8 @@
-import { chmod, mkdir, readFile, writeFile } from 'node:fs/promises';
+import { readFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { getCliConfigDir } from './pocketbase.js';
-import { parseJsonFile } from './jsonFile.js';
+import { codedError, parseJsonFile, writeFileAtomic } from './jsonFile.js';
 
 export type AuthProfile = {
 	name: string;
@@ -50,19 +50,6 @@ const isAuthFile = (value: unknown): value is AuthFile => {
 
 const emptyAuthFile = (): AuthFile => ({ version: 1, activeProfile: null, profiles: {} });
 
-const ensureAuthDir = async () => {
-	await mkdir(getCliConfigDir(), { recursive: true });
-};
-
-const tryChmod600 = async (path: string) => {
-	if (process.platform === 'win32') return;
-	try {
-		await chmod(path, 0o600);
-	} catch {
-		// Best-effort; on some filesystems (FAT, network mounts) chmod is a no-op.
-	}
-};
-
 export const readAuthFile = async (): Promise<AuthFile> => {
 	const path = getAuthFilePath();
 	try {
@@ -82,13 +69,8 @@ export const readAuthFile = async (): Promise<AuthFile> => {
 };
 
 export const writeAuthFile = async (file: AuthFile) => {
-	await ensureAuthDir();
-	const path = getAuthFilePath();
-	// `mode` only applies when the file is created, so a fresh auth.json is
-	// never world-readable even for an instant. tryChmod600 still tightens
-	// pre-existing files on overwrite.
-	await writeFile(path, `${JSON.stringify(file, null, 2)}\n`, { encoding: 'utf8', mode: 0o600 });
-	await tryChmod600(path);
+	// Atomic and owner-only: the replacement is created 0600 before it is renamed into place.
+	await writeFileAtomic(getAuthFilePath(), `${JSON.stringify(file, null, 2)}\n`);
 };
 
 export const listAuthProfiles = async (): Promise<AuthProfileSummary[]> => {
@@ -116,11 +98,13 @@ export type UpsertProfileInput = {
 
 const validateProfileName = (name: string) => {
 	const trimmed = name.trim();
-	if (!trimmed) throw new Error('Profile name is required.');
-	if (trimmed.length > 64) throw new Error('Profile name is too long (max 64 chars).');
+	if (!trimmed) throw codedError('Profile name is required.', 'invalid_arguments');
+	if (trimmed.length > 64)
+		throw codedError('Profile name is too long (max 64 chars).', 'invalid_arguments');
 	if (!/^[A-Za-z0-9._\- ]+$/.test(trimmed)) {
-		throw new Error(
-			'Profile name can only contain letters, numbers, spaces, dots, underscores and dashes.'
+		throw codedError(
+			'Profile name can only contain letters, numbers, spaces, dots, underscores and dashes.',
+			'invalid_arguments'
 		);
 	}
 	return trimmed;
@@ -128,23 +112,23 @@ const validateProfileName = (name: string) => {
 
 const normalizeApiBase = (apiBase: string) => {
 	const trimmed = apiBase.trim().replace(/\/+$/, '');
-	if (!trimmed) throw new Error('Server URL is required.');
+	if (!trimmed) throw codedError('Server URL is required.', 'invalid_arguments');
 	let url: URL;
 	try {
 		url = new URL(trimmed);
 	} catch {
-		throw new Error(`Invalid server URL: ${apiBase}`);
+		throw codedError(`Invalid server URL: ${apiBase}`, 'invalid_arguments');
 	}
 	if (url.protocol !== 'http:' && url.protocol !== 'https:') {
-		throw new Error(`Server URL must be http(s): ${apiBase}`);
+		throw codedError(`Server URL must be http(s): ${apiBase}`, 'invalid_arguments');
 	}
 	return trimmed;
 };
 
 const validateApiKey = (apiKey: string) => {
 	const trimmed = apiKey.trim();
-	if (!trimmed) throw new Error('API key is required.');
-	if (trimmed.length < 16) throw new Error('API key looks too short.');
+	if (!trimmed) throw codedError('API key is required.', 'invalid_arguments');
+	if (trimmed.length < 16) throw codedError('API key looks too short.', 'invalid_arguments');
 	return trimmed;
 };
 
@@ -187,7 +171,7 @@ export const setActiveAuthProfile = async (name: string): Promise<AuthProfile> =
 	const file = await readAuthFile();
 	const profile = file.profiles[name];
 	if (!profile) {
-		throw new Error(`No profile named "${name}". Run: kainbu auth profiles`);
+		throw codedError(`No profile named "${name}". Run: kainbu auth profiles`, 'not_found');
 	}
 	file.activeProfile = name;
 	await writeAuthFile(file);

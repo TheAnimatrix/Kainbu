@@ -1,5 +1,5 @@
 import { existsSync, readFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { join } from 'node:path';
 import { config as loadDotenv } from 'dotenv';
 import { parseJsonFile } from './jsonFile.js';
 import { getCliConfigDir, getCliConfigPath } from './pocketbase.js';
@@ -9,26 +9,6 @@ const normalizeEnvValue = (value: string | undefined) =>
 		.trim()
 		.replace(/^['"]|['"]$/g, '')
 		.replace(/;+\s*$/, '');
-
-const collectEnvFilesUpward = (startDir: string) => {
-	const chain: string[] = [];
-	let dir = startDir;
-
-	for (let depth = 0; depth < 12; depth += 1) {
-		for (const name of ['.env', '.env.local']) {
-			const candidate = join(dir, name);
-			if (existsSync(candidate)) {
-				chain.push(candidate);
-			}
-		}
-
-		const parent = dirname(dir);
-		if (parent === dir) break;
-		dir = parent;
-	}
-
-	return chain.reverse();
-};
 
 const readConfigFileSync = () => {
 	try {
@@ -44,22 +24,18 @@ const readConfigFileSync = () => {
 
 let envLoaded = false;
 
-/** Load env from ~/.config/kainbu/.env, then project .env files (root → cwd). */
+/**
+ * Load the CLI's own <config dir>/.env. Shell variables always win. Project
+ * .env files are deliberately never read: they belong to whatever app lives in
+ * the working directory and must not redirect the CLI to another server.
+ */
 export const loadCliEnv = () => {
 	if (envLoaded) return;
 	envLoaded = true;
-	const inherited = { ...process.env };
-
 	const globalEnv = join(getCliConfigDir(), '.env');
 	if (existsSync(globalEnv)) {
 		loadDotenv({ path: globalEnv, quiet: true });
 	}
-
-	for (const path of collectEnvFilesUpward(process.cwd())) {
-		loadDotenv({ path, override: true, quiet: true });
-	}
-	// A checked-out .env must never replace credentials explicitly supplied by a runner.
-	Object.assign(process.env, inherited);
 };
 
 export const getPocketBaseEnv = () => {
@@ -105,19 +81,17 @@ export const getDefaultApiBase = () => {
 };
 
 export const formatMissingPocketBaseConfigHelp = () => {
-	const configDir = getCliConfigDir();
-	const globalEnv = join(configDir, '.env');
-	const cwdEnv = join(process.cwd(), '.env');
+	const globalEnv = join(getCliConfigDir(), '.env');
 
 	return [
 		'PocketBase is not configured.',
 		'',
-		'Add credentials using one of:',
+		'Add the URL using one of:',
 		`  1. ${globalEnv}`,
 		'     KAINBU_POCKETBASE_URL=http://127.0.0.1:8090',
-		`  2. ${cwdEnv} (or a parent directory — same VITE_POCKETBASE_URL as the web app)`,
+		'  2. kainbu config set --pocketbase-url http://127.0.0.1:8090',
 		'  3. export KAINBU_POCKETBASE_URL in your shell',
 		'',
-		'From a kainbu repo with .env:  kainbu config import-env'
+		'From a Kainbu repository with a .env file:  kainbu config import-env'
 	].join('\n');
 };

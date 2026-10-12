@@ -33,7 +33,8 @@ export const registerScratchpadCommands = (program: Command) => {
 			const { project } = await resolveContext({ project: options.project, requireBoard: false });
 			const meta = await fetchProjectScratchpadMeta(project.id);
 			const pad = resolvePad(meta.scratchpadData, options.pad);
-			if (!pad) throw new Error('Scratchpad pad not found.');
+			if (!pad)
+				throw new KainbuError('Scratchpad pad not found.', { code: 'not_found', exitCode: 4 });
 
 			printResult(
 				{ json: Boolean(options.json), quiet: false },
@@ -63,7 +64,8 @@ export const registerScratchpadCommands = (program: Command) => {
 					throw new KainbuError('Scratchpad revision conflict.', { code: 'conflict', exitCode: 5 });
 
 				const pad = resolvePad(meta.scratchpadData, options.pad);
-				if (!pad) throw new Error('Scratchpad pad not found.');
+				if (!pad)
+					throw new KainbuError('Scratchpad pad not found.', { code: 'not_found', exitCode: 4 });
 
 				const nextPads = meta.scratchpadData.pads.map((entry) =>
 					entry.id === pad.id ? { ...entry, content } : entry
@@ -149,7 +151,7 @@ export const registerScratchpadCommands = (program: Command) => {
 			const { project } = await resolveContext({ project: options.project, requireBoard: false });
 			const meta = await fetchProjectScratchpadMeta(project.id);
 			const selected = resolvePad(meta.scratchpadData, target);
-			if (!selected) throw new Error('Pad not found.');
+			if (!selected) throw new KainbuError('Pad not found.', { code: 'not_found', exitCode: 4 });
 
 			const nextData: ScratchpadData = {
 				...meta.scratchpadData,
@@ -173,9 +175,12 @@ export const registerScratchpadCommands = (program: Command) => {
 			const { project } = await resolveContext({ project: options.project, requireBoard: false });
 			const meta = await fetchProjectScratchpadMeta(project.id);
 			const selected = resolvePad(meta.scratchpadData, target);
-			if (!selected) throw new Error('Pad not found.');
+			if (!selected) throw new KainbuError('Pad not found.', { code: 'not_found', exitCode: 4 });
 			if (meta.scratchpadData.pads.length <= 1) {
-				throw new Error('Cannot delete the only scratchpad pad.');
+				throw new KainbuError('Cannot delete the only scratchpad pad.', {
+					code: 'invalid_arguments',
+					exitCode: 2
+				});
 			}
 
 			const remaining = meta.scratchpadData.pads.filter((entry) => entry.id !== selected.id);

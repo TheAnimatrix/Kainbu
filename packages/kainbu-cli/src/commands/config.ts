@@ -1,6 +1,7 @@
-import { copyFile, mkdir, readFile } from 'node:fs/promises';
+import { readFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { existsSync } from 'node:fs';
+import { parse as parseDotenv } from 'dotenv';
 import {
 	getCliConfigDir,
 	getCliConfigPath,
@@ -12,6 +13,7 @@ import type { Command } from 'commander';
 import { printSuccess, printResult } from '../output.js';
 import { ui } from '../color.js';
 import { initRuntime } from '../runtime.js';
+import { KainbuError } from '../errors.js';
 
 const findProjectEnv = () => {
 	let dir = process.cwd();
@@ -23,6 +25,23 @@ const findProjectEnv = () => {
 		dir = parent;
 	}
 	return null;
+};
+
+const PROJECT_POCKETBASE_KEYS = ['KAINBU_POCKETBASE_URL', 'POCKETBASE_URL', 'VITE_POCKETBASE_URL'];
+
+const parseHttpUrl = (value: string, label: string) => {
+	let url: URL;
+	try {
+		url = new URL(value.trim());
+	} catch {
+		throw new KainbuError(`Invalid ${label}: ${value}`, { code: 'invalid_arguments', exitCode: 2 });
+	}
+	if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password)
+		throw new KainbuError(`${label} must be an HTTP(S) URL without embedded credentials.`, {
+			code: 'invalid_arguments',
+			exitCode: 2
+		});
+	return url.href.replace(/\/+$/, '');
 };
 
 export const registerConfigCommands = (program: Command) => {
@@ -45,19 +64,29 @@ export const registerConfigCommands = (program: Command) => {
 
 	config
 		.command('import-env')
-		.description('Copy .env from the current project into ~/.config/kainbu/.env')
+		.description("Save the PocketBase URL from the current project's .env to the CLI config")
 		.action(async () => {
 			const source = findProjectEnv();
-			if (!source) {
-				throw new Error('No .env found in the current directory or parents.');
-			}
+			if (!source)
+				throw new KainbuError('No .env found in the current directory or parents.', {
+					code: 'not_found',
+					exitCode: 4
+				});
 
-			await mkdir(getCliConfigDir(), { recursive: true });
-			const target = join(getCliConfigDir(), '.env');
-			await copyFile(source, target);
+			// Only the PocketBase URL is copied; project .env files also hold server secrets.
+			const values = parseDotenv(await readFile(source, 'utf8'));
+			const key = PROJECT_POCKETBASE_KEYS.find((name) => values[name]?.trim());
+			if (!key)
+				throw new KainbuError(`No PocketBase URL in ${source}.`, {
+					code: 'not_found',
+					exitCode: 4,
+					hint: `Expected one of: ${PROJECT_POCKETBASE_KEYS.join(', ')}.`
+				});
+			const pocketbaseUrl = parseHttpUrl(values[key]!, key);
+			await writeCliConfig({ ...(await readCliConfig()), pocketbaseUrl });
 			printSuccess(
-				{ source, target },
-				`${ui.success('Imported')} ${ui.id(source)} → ${ui.id(target)}`
+				{ source, key, pocketbaseUrl, target: getCliConfigPath() },
+				`${ui.success('Saved PocketBase URL')} ${ui.id(pocketbaseUrl)} ${ui.meta(`from ${source}`)}`
 			);
 		});
 
@@ -70,8 +99,10 @@ export const registerConfigCommands = (program: Command) => {
 			const current = await readCliConfig();
 			await writeCliConfig({
 				...current,
-				...(options.pocketbaseUrl ? { pocketbaseUrl: options.pocketbaseUrl } : {}),
-				...(options.apiBase ? { apiBase: options.apiBase } : {})
+				...(options.pocketbaseUrl
+					? { pocketbaseUrl: parseHttpUrl(options.pocketbaseUrl, 'PocketBase URL') }
+					: {}),
+				...(options.apiBase ? { apiBase: parseHttpUrl(options.apiBase, 'API base URL') } : {})
 			});
 			printSuccess({}, ui.success('Config updated.'));
 		});

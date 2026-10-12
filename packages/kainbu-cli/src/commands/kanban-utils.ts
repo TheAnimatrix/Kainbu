@@ -7,6 +7,7 @@ import {
 import type { KanbanData, Task } from '../../../../src/lib/kainbu/types.js';
 
 import { resolveByIdOrName } from './shared.js';
+import { KainbuError } from '../errors.js';
 export { buildBoardRefIndex, resolveColumnRef, resolveTaskRef };
 export const findColumnByRefOrTitle = (kanban: KanbanData, refs: BoardRefMap, target: string) => {
 	const byId = kanban.find((column) => column.id === target.trim());
@@ -52,7 +53,7 @@ export const moveTaskToColumn = (
 	});
 
 	if (!moving) {
-		throw new Error('Task not found for move.');
+		throw new KainbuError('Task not found for move.', { code: 'not_found', exitCode: 4 });
 	}
 
 	return stripped.map((column) =>
