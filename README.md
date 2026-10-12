@@ -1,133 +1,62 @@
-# Kainbu
+<h1><img src="assets/logo.svg" alt="Kainbu" width="290" height="88" /></h1>
 
-Self-hosted kanban workspace: SvelteKit SPA, Hono API, PocketBase (auth + data + files), optional Capacitor Android builds.
+A self-hosted workspace for organizing projects, kanban boards, tasks, and notes.
 
-## Self-hosting (Docker)
+## Get started with Docker
 
-1. Copy environment template and set secrets:
+You need Git and Docker with Docker Compose installed and running. Docker handles the app and database setup for you.
+
+### 1. Download Kainbu
 
 ```bash
+git clone https://github.com/TheAnimatrix/Kainbu.git
+cd Kainbu
 cp .env.example .env
-# Edit OPENROUTER_API_KEY, POCKETBASE_ADMIN_PASSWORD, etc.
 ```
 
-2. Start the stack (local host ports via override):
+### 2. Set your credentials
+
+Open `.env` in a text editor and change:
+
+- `POCKETBASE_ADMIN_EMAIL` — your database administrator email.
+- `POCKETBASE_ADMIN_PASSWORD` — a strong, unique password.
+- `KAINBU_ADMIN_EMAILS` — the email you will use to sign up in Kainbu.
+
+Leave the other settings as they are for local use. If you want AI features, add your `OPENROUTER_API_KEY`; it is optional.
+
+### 3. Start Kainbu
 
 ```bash
-docker compose -f docker-compose.yml -f docker-compose.local.yml up --build
+docker compose -f docker-compose.yml -f docker-compose.local.yml up --build -d
 ```
 
-3. Open the app at [http://localhost:3000](http://localhost:3000). PocketBase admin: [http://localhost:8090/\_/](http://localhost:8090/_/) (or [http://localhost:3000/pb/\_/](http://localhost:3000/pb/_/) via nginx).
+The first build may take a few minutes. Once it finishes, open [localhost:3000](http://localhost:3000) and create an account.
 
-4. Verify signup, username, board create, API auth, and admin panel:
+### 4. Enable admin access
+
+Your Kainbu account is separate from the database administrator account. To access Kainbu's admin settings, sign up with the email in `KAINBU_ADMIN_EMAILS` and verify it.
+
+If email delivery is not configured, open the [database admin panel](http://localhost:3000/pb/_/), log in with your `POCKETBASE_ADMIN_EMAIL` and `POCKETBASE_ADMIN_PASSWORD`, and mark your account as verified in the `users` collection. Then sign in to Kainbu and open **Settings → Open admin**.
+
+## Host on your own domain
+
+For a public server, use HTTPS and set `KAINBU_PUBLIC_URL` to your app's URL. The [Dokploy deployment guide](deploy/DOKPLOY.md) covers domain setup; use `docker-compose.yml` without the local override on Dokploy.
+
+## Stop or update
+
+Stop Kainbu:
 
 ```bash
-npm run test:local-docker
-npm run test:admin-docker
+docker compose -f docker-compose.yml -f docker-compose.local.yml down
 ```
 
-Set `KAINBU_ADMIN_EMAILS` in `.env` (default in compose: `admin-e2e@kainbu.test`). Verify that email through the verification link before signing in, then open [http://localhost:3000/admin](http://localhost:3000/admin) or use **Settings → Open admin**.
-
-If email delivery is disabled, a PocketBase superuser must verify the administrator account or explicitly set its `is_admin` flag. Public signup never verifies email ownership.
-
-Fresh database (wipes data): `docker compose -f docker-compose.yml -f docker-compose.local.yml down -v` then `up --build` again.
-
-**Dokploy:** see [deploy/DOKPLOY.md](deploy/DOKPLOY.md) — use `docker-compose.yml` only (no host port bindings).
-
-**Cursor agent skills:** [`.cursor/skills/README.md`](.cursor/skills/README.md) — Dokploy deploy, testing, release checklist, PocketBase debugging.
-
-**PocketBase URLs in Docker**
-
-| Consumer          | URL                      | Why                                                                         |
-| ----------------- | ------------------------ | --------------------------------------------------------------------------- |
-| Browser (app)     | same origin `/pb`        | nginx proxies to the `pocketbase` container; no public PB hostname required |
-| `api` service     | `http://pocketbase:8090` | Docker network DNS between containers                                       |
-| Optional override | `VITE_POCKETBASE_URL`    | Separate PocketBase host (e.g. `https://pb.example.com`)                    |
-
-Set `KAINBU_PUBLIC_URL` to your public app URL (for CLI device login). Leave `VITE_POCKETBASE_URL` unset on Dokploy unless PocketBase is on another domain.
-
-Services:
-
-| Service      | Port                                                   | Role                                         |
-| ------------ | ------------------------------------------------------ | -------------------------------------------- |
-| `web`        | 3000                                                   | Static UI (nginx)                            |
-| `api`        | 8789 (host, local override) / 8788 (in Docker network) | Hono API (AI, workspace mutations, CLI auth) |
-| `pocketbase` | 8090                                                   | Auth, database, file storage, realtime       |
-
-Schema is applied from [`pocketbase/pb_migrations/`](pocketbase/pb_migrations/) on PocketBase startup.
-
-### Local development (without Docker)
+Update to the latest version:
 
 ```bash
-# Terminal 1 — PocketBase (download binary or use docker compose up pocketbase)
-# Terminal 2
-cp .env.example .env.local
-npm install --no-engine-strict
-npm run dev:full
+git pull
+docker compose -f docker-compose.yml -f docker-compose.local.yml up --build -d
 ```
 
-Web: [http://localhost:3001](http://localhost:3001) (Vite proxies `/api` to port 8788).
+Your database and uploaded files are stored in the Docker volume `pb_data` and survive restarts and updates. Back up your data before updating. **Do not add `-v` to the stop command: it deletes that data.**
 
-### Regression checks
-
-Use Node 22. The database regression suite downloads the pinned PocketBase binary into a temporary cache and tests disposable fresh and upgraded databases:
-
-```bash
-npm run check
-npm run check:server
-npm run test:pb
-node scripts/test-pocketbase.mjs --stack
-```
-
-`--stack` runs the HTTP suites with native PocketBase, Hono, and Vite proxies when Docker is unavailable; it does not test the Docker images or nginx configuration. `--serve` starts a disposable browser fixture and prints its local URL and synthetic login. Set `KAINBU_TEST_PB_BIN` to use an existing PocketBase 0.38.2 binary.
-
-See [the review and remediation notes](docs/review-2026-09-12.md) for the security changes, dashboard definitions, and remaining architectural work.
-
-## CLI
-
-Install from npm (Node ≥ 22):
-
-```bash
-npm install -g kainbu      # or run ad-hoc: npx kainbu <command>
-```
-
-### Log in
-
-The CLI uses **per-user API keys** that you mint from **Settings → Access**
-in the web UI:
-
-```bash
-kainbu login --server https://kainbu.example.com --api-key kbu_v1_...
-kainbu whoami                              # confirm the signed-in user
-kainbu auth profiles                       # manage multiple servers / accounts
-```
-
-### View tasks
-
-```bash
-kainbu project list                        # list your projects
-kainbu use <project>                       # set the active project (name or id)
-kainbu board list                          # boards in the active project
-kainbu ls                                  # tasks on the active board, grouped by column
-kainbu ls <board>                          # tasks on any board, without switching
-kainbu ls --without=Done --sort=-created   # hide columns / sort within columns
-```
-
-See [docs/CLI.md](docs/CLI.md) for the full command reference (columns, pages,
-scratchpad, filtering, and pagination).
-
-## Environment variables
-
-| Variable                                               | Purpose                                                             |
-| ------------------------------------------------------ | ------------------------------------------------------------------- |
-| `VITE_POCKETBASE_URL`                                  | Optional browser PocketBase URL (Docker default: same-origin `/pb`) |
-| `POCKETBASE_URL`                                       | Server PocketBase URL (`http://pocketbase:8090` in compose)         |
-| `POCKETBASE_ADMIN_EMAIL` / `POCKETBASE_ADMIN_PASSWORD` | API admin access to PocketBase                                      |
-| `OPENROUTER_API_KEY`                                   | Workspace AI routes (fallback if not set in admin UI)               |
-| `KAINBU_ADMIN_EMAILS`                                  | Comma-separated emails with in-app admin access (`/admin`)          |
-| `KAINBU_PUBLIC_URL`                                    | CLI device-login links                                              |
-| `KAINBU_API_KEY`                                       | One-shot CLI API key (overrides saved profile)                      |
-
-## Android (optional)
-
-Capacitor wraps the static `build/` output. After `npm run build`, run `npx cap sync` and open the Android project in Android Studio.
+Want to use Kainbu from the terminal? See the [CLI guide](docs/CLI.md).

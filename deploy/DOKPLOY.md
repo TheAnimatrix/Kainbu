@@ -1,62 +1,49 @@
-# Kainbu on Dokploy
+# Host Kainbu with Dokploy
 
-**Agents:** use the project skill [`.cursor/skills/kainbu-dokploy/SKILL.md`](../.cursor/skills/kainbu-dokploy/SKILL.md) (workflows, env pitfalls, prod tests). Human operators can stay in this file.
+You need a server running Dokploy and a domain pointing to that server.
 
-## Why host port 3000 must not be published
+## 1. Create the app
 
-Dokploy’s panel uses **host port 3000**. Do **not** map `3000:80` (or any host port) on the `web` service. Traefik reaches containers on the internal Docker network.
+In Dokploy, create a project and environment, then add a **Compose** app with:
 
-This repo’s `docker-compose.yml` has **no host `ports`**. Use `docker-compose.local.yml` only on your laptop.
+| Setting        | Value                                    |
+| -------------- | ---------------------------------------- |
+| Git repository | `https://github.com/TheAnimatrix/Kainbu` |
+| Branch         | `master`                                 |
+| Compose file   | `docker-compose.yml`                     |
+| Build          | Enabled                                  |
 
-## Recreate the project (UI)
+Use the base Compose file only. The local override publishes ports that can conflict with Dokploy.
 
-1. **Dokploy** → find project **Kainbu** → **Delete** (confirm; this removes apps and compose stack).
-2. **Create project** → name `Kainbu` → add **Environment** (e.g. `production`).
-3. **Add Compose**:
-   - **Source:** Git → `https://github.com/TheAnimatrix/Kainbu`
-   - **Branch:** `master` (or your deploy branch)
-   - **Compose file:** `docker-compose.yml`
-   - **Build:** enabled (builds `pocketbase`, `api`, and `web`)
-4. **Environment** — paste from [`dokploy.env.example`](./dokploy.env.example), set:
-   - `POCKETBASE_ADMIN_PASSWORD`
-   - `OPENROUTER_API_KEY`
-   - `KAINBU_ADMIN_EMAILS` — comma-separated emails for in-app admin (`/admin`); e.g. `you@example.com`
-   - `KAINBU_PUBLIC_URL=https://kainbu.avarnic.com` (your real URL)
-   - Leave `VITE_POCKETBASE_URL` **unset** (browser uses `/pb` via nginx).
-5. **Domains** — attach `https://kainbu.avarnic.com` (or your host) to service **`web`**, **container port `80`**.
-   - Do **not** add a published host port.
-6. **Deploy**.
-7. After first deploy, open **PocketBase admin** at `https://your-domain/pb/_/` and confirm **Collections → users → API Rules → Create** is **empty** (public signup). The repo migration `1730000001_allow_user_signup.js` sets this on container start; restart the `pocketbase` service if signup still fails.
+## 2. Add your settings
 
-## Services (internal)
+Copy the [environment template](dokploy.env.example) into the app's **Environment** settings. Set:
 
-| Service     | Container port | Public access        |
-|------------|----------------|----------------------|
-| `web`      | 80             | Domain → Traefik     |
-| `api`      | 8788           | Via nginx `/api/`    |
-| `pocketbase` | 8090         | Via nginx `/pb/`     |
+- `POCKETBASE_ADMIN_EMAIL` — your database administrator email.
+- `POCKETBASE_ADMIN_PASSWORD` — a strong, unique password.
+- `KAINBU_ADMIN_EMAILS` — the email you will use to sign up in Kainbu.
+- `KAINBU_PUBLIC_URL` — your full app URL, such as `https://kainbu.example.com`.
 
-## Local Docker (with host ports)
+Add `OPENROUTER_API_KEY` if you want AI features. Leave `VITE_POCKETBASE_URL` unset; Kainbu connects to its database through your app's domain.
 
-```bash
-docker compose -f docker-compose.yml -f docker-compose.local.yml up --build
-```
+## 3. Connect your domain and deploy
 
-App: http://localhost:3000
+In **Domains**, add your domain, enable HTTPS, and select service **web**, container port **80**. No host port mappings are needed.
 
-## API recreate (optional)
+Click **Deploy** and wait for the build to finish. Open your domain and create a Kainbu account.
 
-With a Dokploy API key (`Settings → API`):
+## 4. Enable admin access
 
-```bash
-export DOKPLOY_URL=https://dokploy.avarnic.com
-export DOKPLOY_API_KEY=your-key
+Sign up with the email in `KAINBU_ADMIN_EMAILS` and verify it. Then open **Settings → Open admin** in Kainbu.
 
-# List projects, find Kainbu projectId, then:
-curl -X POST "$DOKPLOY_URL/api/project.remove" \
-  -H "x-api-key: $DOKPLOY_API_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{"projectId":"PROJECT_ID_HERE"}'
-```
+If email delivery is not configured, visit `https://your-domain/pb/_/` and sign in with your database administrator credentials. Open the `users` collection and mark your Kainbu account as verified, then sign in to Kainbu again.
 
-Then create the compose app again in the UI (or via `compose.create` / project APIs).
+## Updates and backups
+
+Back up your database and uploads before updating. They are stored in the Compose volume `pb_data`. To update, deploy the existing app again to pull and build the latest code from your selected branch. Keep the existing volume.
+
+## Troubleshooting
+
+- **App unavailable or 502:** confirm the domain targets `web` on container port `80`, then check the deployment logs.
+- **Sign-in fails:** leave `VITE_POCKETBASE_URL` unset and redeploy. If it still fails, check the `pocketbase` service logs for startup or migration errors.
+- **Admin settings missing:** check that your account email matches `KAINBU_ADMIN_EMAILS` and that the account is verified.

@@ -2,3 +2,7 @@
 renders/
 features/*/check.json
 features/*/snapshots/
+check-*.json
+snapshots/
+phone/check-phone.json
+phone/snapshots/
