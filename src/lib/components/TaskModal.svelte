@@ -193,7 +193,7 @@
 	let descriptionActionMessage = '';
 	let descriptionActionTimer: ReturnType<typeof setTimeout> | null = null;
 	let latestDetailsKey = '';
-	let activeTab: 'properties' | 'files' | 'comments' | null = 'properties';
+	let activeTab: 'properties' | 'files' | 'comments' | null = null;
 
 	const normalizeDraftTask = (candidate: Task): Task => ({
 		...candidate,
@@ -1089,15 +1089,16 @@
 			<!-- Tab panel (fixed above tab strip) -->
 			{#if activeTab}
 				<div class="shrink-0 max-h-[42vh] overflow-y-auto border-t border-app-border bg-app-bg/30">
-					<div class={`mx-auto w-full max-w-3xl ${isMobile ? 'px-4 py-4' : 'px-5 py-4'}`}>
+					<div class={`mx-auto w-full max-w-3xl ${isMobile ? 'px-4' : 'px-5'} ${activeTab === 'properties' ? 'py-2.5' : 'py-4'}`}>
 						{#if activeTab === 'properties'}
-							<div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
-								{#if draft.hasCheckbox}
-									<div class="flex flex-col gap-1.5">
-										<span class="text-[10px] font-bold uppercase tracking-[0.2em] text-app-subtext">Status</span>
+							<div class="grid grid-cols-[3.25rem_minmax(0,1fr)] items-center gap-x-3 gap-y-2">
+								<span class="text-[10px] font-bold uppercase tracking-[0.16em] text-app-subtext">Card</span>
+								<div class="flex flex-wrap items-center gap-1.5">
+									{#if draft.hasCheckbox}
 										<button
 											type="button"
-											class={`inline-flex w-fit items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-semibold transition ${
+											title="Status"
+											class={`inline-flex items-center gap-1 rounded-md border px-2 py-0.5 text-[11px] font-semibold transition ${
 												draft.checked
 													? 'border-app-accent/40 bg-app-accent/10 text-app-accent'
 													: 'border-app-border bg-app-element/40 text-app-text hover:border-app-primary/40'
@@ -1105,23 +1106,23 @@
 											on:click={toggleComplete}
 										>
 											{#if draft.checked}
-												<CheckSquare size={13} />
+												<CheckSquare size={12} />
 												Completed
 											{:else}
-												<Square size={13} />
+												<Square size={12} />
 												Open
 											{/if}
 										</button>
-									</div>
-								{/if}
+									{/if}
 
-								<div class="flex flex-col gap-1.5">
-									<span class="text-[10px] font-bold uppercase tracking-[0.2em] text-app-subtext">Due</span>
-									<label class="inline-flex w-fit items-center gap-1.5 rounded-full border border-app-border bg-app-element/40 px-3 py-1 text-xs text-app-text transition focus-within:border-app-primary/40">
-										<Clock3 size={13} class="text-app-subtext" />
+									<label
+										title="Due"
+										class="inline-flex items-center gap-1 rounded-md border border-app-border bg-app-element/40 px-2 py-0.5 text-[11px] text-app-text transition focus-within:border-app-primary/40"
+									>
+										<Clock3 size={12} class="text-app-subtext" />
 										<input
 											type="datetime-local"
-											class="bg-transparent text-xs text-app-text outline-none [color-scheme:dark]"
+											class="bg-transparent text-[11px] text-app-text outline-none [color-scheme:dark]"
 											value={toLocalInputValue(draftDueAt ?? undefined)}
 											on:input={(event) => {
 												const nextDueAt = fromLocalInputValue(
@@ -1139,7 +1140,7 @@
 										{#if draftDueAt !== null}
 											<button
 												type="button"
-												class="ml-0.5 text-app-subtext transition hover:text-rose-300"
+												class="text-app-subtext transition hover:text-rose-300"
 												aria-label="Clear due date"
 												on:click|preventDefault={() =>
 													mutateDraft((current) => clearTaskDueAt(current), 'immediate')}
@@ -1148,64 +1149,64 @@
 											</button>
 										{/if}
 									</label>
-								</div>
 
-								<div class="relative flex flex-col gap-1.5">
-									<span class="text-[10px] font-bold uppercase tracking-[0.2em] text-app-subtext">Tone</span>
-									<button
-										type="button"
-										class="inline-flex w-fit items-center gap-1.5 rounded-full border border-app-border bg-app-element/40 px-3 py-1 text-xs font-semibold text-app-text transition hover:border-app-primary/40"
-										on:mousedown|stopPropagation
-										on:click={() => (tonePickerOpen = !tonePickerOpen)}
-									>
-										<span class={`inline-block h-3.5 w-3.5 rounded-md border ${currentTone.swatchClass}`}></span>
-										{currentTone.label}
-										<ChevronDown size={12} class={`transition ${tonePickerOpen ? 'rotate-180' : ''}`} />
-									</button>
-									{#if tonePickerOpen}
-										<div
-											role="presentation"
-											class="absolute left-0 bottom-full z-20 mb-1.5 rounded-md border border-app-border bg-app-surface p-2 shadow-kainbu-md"
+									<div class="relative">
+										<button
+											type="button"
+											title="Tone"
+											class="inline-flex items-center gap-1 rounded-md border border-app-border bg-app-element/40 px-2 py-0.5 text-[11px] font-semibold text-app-text transition hover:border-app-primary/40"
 											on:mousedown|stopPropagation
+											on:click={() => (tonePickerOpen = !tonePickerOpen)}
 										>
-											<div class="flex flex-wrap gap-1.5">
-												{#each SURFACE_TONE_OPTIONS as tone}
-													<button
-														type="button"
-														aria-label={`Set card tone to ${tone.label}`}
-														title={tone.label}
-														class={`h-7 w-7 rounded-md border p-0 transition ${tone.swatchClass} ${
-															(draft.color || '') === tone.value
-																? 'scale-110 border-white/80 ring-2 ring-app-primary/45'
-																: 'hover:scale-110 hover:border-app-primary/35'
-														}`}
-														on:click={() => {
-															setTaskColor(tone.value);
-															tonePickerOpen = false;
-														}}
-													></button>
-												{/each}
+											<span class={`inline-block h-3 w-3 rounded-sm border ${currentTone.swatchClass}`}></span>
+											{currentTone.label}
+											<ChevronDown size={11} class={`transition ${tonePickerOpen ? 'rotate-180' : ''}`} />
+										</button>
+										{#if tonePickerOpen}
+											<div
+												role="presentation"
+												class="absolute left-0 bottom-full z-20 mb-1.5 rounded-md border border-app-border bg-app-surface p-2 shadow-kainbu-md"
+												on:mousedown|stopPropagation
+											>
+												<div class="flex flex-wrap gap-1.5">
+													{#each SURFACE_TONE_OPTIONS as tone}
+														<button
+															type="button"
+															aria-label={`Set card tone to ${tone.label}`}
+															title={tone.label}
+															class={`h-7 w-7 rounded-md border p-0 transition ${tone.swatchClass} ${
+																(draft.color || '') === tone.value
+																	? 'scale-110 border-white/80 ring-2 ring-app-primary/45'
+																	: 'hover:scale-110 hover:border-app-primary/35'
+															}`}
+															on:click={() => {
+																setTaskColor(tone.value);
+																tonePickerOpen = false;
+															}}
+														></button>
+													{/each}
+												</div>
 											</div>
-										</div>
-									{/if}
+										{/if}
+									</div>
 								</div>
 
-								<div class="flex flex-col gap-1.5 sm:col-span-2">
-									<span class="text-[10px] font-bold uppercase tracking-[0.2em] text-app-subtext">Tags</span>
+								<span class="self-start pt-1 text-[10px] font-bold uppercase tracking-[0.16em] text-app-subtext">Tags</span>
+								<div class="flex min-w-0 flex-col gap-1.5">
 									<div class="flex flex-wrap items-center gap-1.5">
 										{#each draft.tags as tag (tag.id)}
-												<span class={`${getTagToneClasses(tag.color)} kainbu-tag-tone--lg gap-1.5`}>
+											<span class={`${getTagToneClasses(tag.color)} kainbu-tag-tone--lg gap-1`}>
 												{tag.label}
 												<button type="button" class="opacity-70 transition hover:opacity-100" on:click={() => deleteTag(tag.id)}>
-													<X size={11} />
+													<X size={10} />
 												</button>
 											</span>
 										{/each}
-										<div class="inline-flex items-center gap-1 rounded-full border border-app-border bg-app-element/40 pl-3 pr-1 py-0.5 transition focus-within:border-app-primary/40">
-											<TagIcon size={12} class="text-app-subtext" />
+										<div class="inline-flex items-center gap-1 rounded-md border border-app-border bg-app-element/40 pl-2 pr-0.5 transition focus-within:border-app-primary/40">
+											<TagIcon size={11} class="text-app-subtext" />
 											<input
 												bind:value={tagSearch}
-												class="w-28 bg-transparent py-0.5 text-xs text-app-text outline-none placeholder:text-app-subtext/60"
+												class="w-24 bg-transparent py-0.5 text-[11px] text-app-text outline-none placeholder:text-app-subtext/60"
 												placeholder="Add tag"
 												on:keydown={(event) => {
 													if (event.key === 'Enter') addTag(tagSearch || 'New Tag', selectedTagColor);
@@ -1216,18 +1217,18 @@
 													bind:this={tagColorPickerButton}
 													type="button"
 													data-task-modal-tag-color-trigger
-													class="inline-flex items-center rounded-full p-1 text-app-subtext transition hover:text-app-text"
+													class="inline-flex items-center rounded p-0.5 text-app-subtext transition hover:text-app-text"
 													aria-label="Pick tag color"
 													aria-expanded={tagColorPickerOpen}
 													on:mousedown|stopPropagation
 													on:click={() => void toggleTagColorPicker()}
 												>
-													<span class={`inline-block h-3.5 w-3.5 rounded-md border ${currentTagColorSwatch.swatchClass}`}></span>
+													<span class={`inline-block h-3 w-3 rounded-sm border ${currentTagColorSwatch.swatchClass}`}></span>
 												</button>
 											</div>
 											<button
 												type="button"
-												class="ml-0.5 rounded-full bg-app-primary p-1 text-white transition hover:bg-app-primary-hover"
+												class="rounded bg-app-primary p-0.5 text-white transition hover:bg-app-primary-hover"
 												aria-label="Add tag"
 												on:click={() => addTag(tagSearch || 'New Tag', selectedTagColor)}
 											>
@@ -1236,11 +1237,12 @@
 										</div>
 									</div>
 									{#if recentTags.length}
-										<div class="flex flex-wrap items-center gap-1.5">
+										<div class="flex flex-wrap items-center gap-1">
 											{#each recentTags as tag (tag.id)}
 												<button
 													type="button"
-													class={`${getTagToneClasses(tag.color)} kainbu-tag-tone--lg transition hover:opacity-100`}
+													title="Add recent tag"
+													class={`${getTagToneClasses(tag.color)} opacity-70 transition hover:opacity-100`}
 													on:click={() => addTag(tag.label, tag.color)}
 												>
 													{tag.label}
@@ -1251,56 +1253,55 @@
 								</div>
 
 								{#if explicitLinkedTasks.length || implicitReferenceIds.length}
-									<div class="flex flex-col gap-1.5 sm:col-span-2">
-										<span class="text-[10px] font-bold uppercase tracking-[0.2em] text-app-subtext">Linked tasks</span>
-										<div class="space-y-1.5">
-											{#each explicitLinkedTasks as linkedPlacement (linkedPlacement.task.id)}
-												<div class="flex items-center justify-between gap-2 rounded-lg border border-app-border bg-app-bg/40 px-3 py-2">
+									<span class="self-start pt-1 text-[10px] font-bold uppercase tracking-[0.16em] text-app-subtext">Links</span>
+									<div class="flex min-w-0 flex-col">
+										{#each explicitLinkedTasks as linkedPlacement (linkedPlacement.task.id)}
+											<div class="flex items-center gap-2 rounded px-1.5 py-0.5 hover:bg-app-element/40">
+												<button
+													type="button"
+													class="flex min-w-0 flex-1 items-baseline gap-2 text-left"
+													on:click={() =>
+														void handleReferenceNavigate({
+															kind: 'task',
+															id: linkedPlacement.task.id,
+															label: linkedPlacement.task.title,
+															searchText: linkedPlacement.task.title,
+															columnId: linkedPlacement.columnId,
+															columnTitle: linkedPlacement.columnTitle
+														})}
+												>
+													<span class="truncate text-xs font-medium text-app-text">{linkedPlacement.task.title}</span>
+													<span class="shrink-0 text-[10px] text-app-subtext">{linkedPlacement.columnTitle}</span>
+												</button>
+												{#if onUnlinkLinkedTask}
 													<button
 														type="button"
-														class="min-w-0 flex-1 text-left"
-														on:click={() =>
-															void handleReferenceNavigate({
-																kind: 'task',
-																id: linkedPlacement.task.id,
-																label: linkedPlacement.task.title,
-																searchText: linkedPlacement.task.title,
-																columnId: linkedPlacement.columnId,
-																columnTitle: linkedPlacement.columnTitle
-															})}
+														title="Unlink"
+														aria-label={`Unlink ${linkedPlacement.task.title}`}
+														class="rounded p-0.5 text-app-subtext transition hover:text-rose-300"
+														on:click={() => {
+															onUnlinkLinkedTask?.(linkedPlacement.task.id);
+															mutateDraft(
+																(current) => ({
+																	...current,
+																	linkedTaskIds: normalizeLinkedTaskIds(current.linkedTaskIds).filter(
+																		(entry) => entry !== linkedPlacement.task.id
+																	)
+																}),
+																'immediate'
+															);
+														}}
 													>
-														<p class="truncate text-sm font-medium text-app-text">{linkedPlacement.task.title}</p>
-														<p class="text-[11px] text-app-subtext">{linkedPlacement.columnTitle}</p>
+														<Unlink size={12} />
 													</button>
-													{#if onUnlinkLinkedTask}
-														<button
-															type="button"
-															class="inline-flex items-center gap-1 rounded-md border border-app-border px-2 py-1 text-[11px] font-semibold text-app-subtext transition hover:border-rose-400/40 hover:text-rose-300"
-															on:click={() => {
-																onUnlinkLinkedTask?.(linkedPlacement.task.id);
-																mutateDraft(
-																	(current) => ({
-																		...current,
-																		linkedTaskIds: normalizeLinkedTaskIds(current.linkedTaskIds).filter(
-																			(entry) => entry !== linkedPlacement.task.id
-																		)
-																	}),
-																	'immediate'
-																);
-															}}
-														>
-															<Unlink size={12} />
-															Unlink
-														</button>
-													{/if}
-												</div>
-											{/each}
-											{#if implicitReferenceIds.length}
-												<p class="px-1 text-[11px] text-app-subtext">
-													Also referenced in description: {implicitReferenceIds.length} task{implicitReferenceIds.length === 1 ? '' : 's'}
-												</p>
-											{/if}
-										</div>
+												{/if}
+											</div>
+										{/each}
+										{#if implicitReferenceIds.length}
+											<p class="px-1.5 py-0.5 text-[10px] text-app-subtext">
+												Also referenced in description: {implicitReferenceIds.length} task{implicitReferenceIds.length === 1 ? '' : 's'}
+											</p>
+										{/if}
 									</div>
 								{/if}
 							</div>
