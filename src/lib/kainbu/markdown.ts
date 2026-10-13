@@ -1,5 +1,5 @@
 import DOMPurify from 'dompurify';
-import { Marked, type Token, type Tokens } from 'marked';
+import { Lexer, Marked, type Token, type Tokens } from 'marked';
 import hljs from 'highlight.js/lib/core';
 import bash from 'highlight.js/lib/languages/bash';
 import css from 'highlight.js/lib/languages/css';
@@ -70,6 +70,16 @@ const escapeHtml = (value: string) =>
 		.replaceAll('>', '&gt;')
 		.replaceAll('"', '&quot;')
 		.replaceAll("'", '&#39;');
+
+/**
+ * True when the source is an HTML document rather than markdown: every top-level
+ * block is raw HTML. Tags inside code spans/fences or inline in prose (e.g.
+ * `gen.sh <NAME>`) do not count, so markdown with angle brackets stays markdown.
+ */
+export const isHtmlDocument = (source: string) => {
+	const blocks = Lexer.lex(source || '', { gfm: true }).filter((token) => token.type !== 'space');
+	return blocks.length > 0 && blocks.every((token) => token.type === 'html');
+};
 
 /** Plain-text preview for status traces (thinking snippets, tool output). */
 export const stripMarkdownLite = (value: string) => {

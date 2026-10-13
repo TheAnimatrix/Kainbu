@@ -29,6 +29,7 @@
 	import typescript from 'highlight.js/lib/languages/typescript';
 	import xml from 'highlight.js/lib/languages/xml';
 	import { fluentIconSvg } from '$lib/icons/fluent-svg';
+	import { isHtmlDocument } from '$lib/kainbu/markdown';
 
 	const lowlight = createLowlight();
 	lowlight.register('bash', bash);
@@ -414,15 +415,13 @@ const compressImageIfNeeded = async (file: File): Promise<File> => {
 		if (options.emitChange) queueChange('command');
 	};
 
-	const hasRawHtml = (source: string) => /<\/?[a-z][\s\S]*>/i.test(source || '');
-
 	const applyEditorContent = (target: Editor, source: string) => {
 		if (!hasMarkdownContent(source)) {
 			target.commands.setContent(EMPTY_EDITOR_DOC, { emitUpdate: false });
 			return;
 		}
 
-		if (hasRawHtml(source)) {
+		if (isHtmlDocument(source)) {
 			target.commands.setContent(source, { emitUpdate: false });
 		} else {
 			target.commands.setContent(preprocessMarkdownForEditor(source), {
@@ -1827,7 +1826,7 @@ const compressImageIfNeeded = async (file: File): Promise<File> => {
 		return new Editor({
 			element: editorElement,
 			content: hasContent ? initialMarkdown : EMPTY_EDITOR_DOC,
-			...(hasContent && !hasRawHtml(initialMarkdown) ? { contentType: 'markdown' as const } : {}),
+			...(hasContent && !isHtmlDocument(initialMarkdown) ? { contentType: 'markdown' as const } : {}),
 			editable: !disabled,
 			injectCSS: false,
 			extensions: [
