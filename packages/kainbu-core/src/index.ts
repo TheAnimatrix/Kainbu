@@ -8,7 +8,6 @@ export { fetchWorkspaceMe, type WorkspaceMe } from '../../../src/lib/kainbu/work
 export {
 	fetchWorkspace,
 	fetchProjectBoardKanban,
-	fetchProjectScratchpadMeta,
 	createProject,
 	renameProject,
 	syncProjectBoard,
@@ -18,8 +17,7 @@ export {
 	createProjectPage,
 	renameProjectPage,
 	deleteProjectPage,
-	updateProjectPageContent,
-	updateProjectScratchpad
+	updateProjectPageContent
 } from '../../../src/lib/kainbu/persistence.js';
 export {
 	createCliPocketBaseClient,
@@ -58,7 +56,3 @@ export {
 	getProjectBoard
 } from '../../../src/lib/kainbu/projectStructure.js';
 export { createId } from '../../../src/lib/kainbu/id.js';
-export {
-	normalizeScratchpadData,
-	serializeScratchpadData
-} from '../../../src/lib/kainbu/scratchpad.js';

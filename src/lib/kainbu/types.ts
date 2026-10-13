@@ -399,7 +399,6 @@ export interface Project {
 	activePageId: string;
 	kanbanData: KanbanData;
 	scratchpadData: ScratchpadData;
-	scratchpadRev: number;
 	aiSessions: ProjectAiSession[];
 	activeAiSessionId: string;
 	chatHistory: ChatMessage[];
@@ -768,8 +767,6 @@ export interface ProjectRow {
 	user_id: string;
 	name: string;
 	background_theme: BackgroundTheme | null;
-	scratchpad_data: string;
-	scratchpad_rev: number;
 	created_at: string;
 	updated_at: string;
 }
@@ -914,12 +911,5 @@ export interface ProfileRow {
 	background_theme: BackgroundTheme;
 	color_mode?: ColorMode | null;
 	created_at: string;
-	updated_at: string;
-}
-
-export interface ScratchpadUpdateResultRow {
-	ok: boolean;
-	scratchpad_data: string;
-	scratchpad_rev: number;
 	updated_at: string;
 }

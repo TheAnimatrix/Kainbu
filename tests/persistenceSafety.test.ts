@@ -18,7 +18,6 @@ const project = (kanbanData: Project['kanbanData']): Project => ({
 	activePageId: '',
 	kanbanData,
 	scratchpadData: { activePadId: '', pads: [] },
-	scratchpadRev: 0,
 	viewerLastOpenedAt: 0,
 	backgroundTheme: null,
 	aiSessions: [],

@@ -14,12 +14,6 @@ routerAdd(
 );
 routerAdd(
 	'POST',
-	'/api/kainbu/scratchpad',
-	(e) => require(`${__hooks}/workspace.js`).scratchpad(e),
-	$apis.requireAuth()
-);
-routerAdd(
-	'POST',
 	'/api/kainbu/invites/respond',
 	(e) => require(`${__hooks}/workspace.js`).respondInvite(e),
 	$apis.requireAuth()

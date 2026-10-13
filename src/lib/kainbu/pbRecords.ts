@@ -49,8 +49,6 @@ export const mapProjectRecord = (record: PbRecord): ProjectRow & { _pbId: string
 	user_id: relationId(record.owner),
 	name: String(record.name || ''),
 	background_theme: (record.background_theme as ProjectRow['background_theme']) ?? null,
-	scratchpad_data: String(record.scratchpad_data || ''),
-	scratchpad_rev: typeof record.scratchpad_rev === 'number' ? record.scratchpad_rev : 0,
 	created_at: iso(record.created),
 	updated_at: iso(record.updated)
 });

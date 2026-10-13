@@ -16,7 +16,6 @@ const baseProject = (overrides: Partial<Project> = {}): Project => ({
 	activeBoardId: '',
 	activePageId: '',
 	scratchpadData: { activePadId: '', pads: [] },
-	scratchpadRev: 0,
 	aiSessions: [],
 	activeAiSessionId: '',
 	chatHistory: [],

@@ -66,9 +66,7 @@ describe.skipIf(!(await apiHealthOk()))('Share API', () => {
 		const project = await client.collection('projects').create({
 			client_id: projectClientId,
 			owner: ownerId,
-			name: 'Share API Project',
-			scratchpad_data: '{}',
-			scratchpad_rev: 0
+			name: 'Share API Project'
 		});
 
 		await client.collection('project_memberships').create({

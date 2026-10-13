@@ -57,7 +57,6 @@ const makeProject = (patch: Partial<Project> = {}): Project => ({
 		}
 	],
 	scratchpadData: { activePadId: '', pads: [] },
-	scratchpadRev: 0,
 	aiSessions: [],
 	activeAiSessionId: '',
 	chatHistory: [],

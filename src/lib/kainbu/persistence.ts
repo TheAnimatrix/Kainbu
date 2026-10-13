@@ -11,7 +11,6 @@ import { normalizeNullableBackgroundTheme } from '$lib/kainbu/backgrounds';
 import { invokeWorkspaceApi } from '$lib/kainbu/workspaceApi';
 import { createId } from '$lib/kainbu/id';
 import { normalizeProjectStructure } from '$lib/kainbu/projectStructure';
-import { normalizeScratchpadData, serializeScratchpadData } from '$lib/kainbu/scratchpad';
 import { runProjectInitialization } from '$lib/kainbu/projectCreationTransaction';
 import { normalizeUserSettings } from '$lib/kainbu/settings';
 import { pbNoAutoCancel } from '$lib/kainbu/pbRequest';
@@ -651,18 +650,6 @@ export const fetchProjectBoardKanban = async (
 	);
 };
 
-export const fetchProjectScratchpadMeta = async (projectId: string) => {
-	const pb = getPb();
-	const data = await pb.collection('projects').getFirstListItem(projectClientFilter(projectId));
-
-	return {
-		id: String(data.client_id || data.id),
-		name: String(data.name || ''),
-		scratchpadData: normalizeScratchpadData(data.scratchpad_data),
-		scratchpadRev: typeof data.scratchpad_rev === 'number' ? data.scratchpad_rev : 0
-	};
-};
-
 export const syncProjectBoard = async (
 	projectId: string,
 	boardId: string,
@@ -838,32 +825,6 @@ export const updateProjectPageContent = async (
 		body: { projectId, pageId, content: sanitizeProjectPageContent(content), previousContent },
 		requestKey: null
 	});
-};
-
-export const updateProjectScratchpad = async (
-	projectId: string,
-	scratchpadData: Project['scratchpadData'],
-	expectedRevision: number
-) => {
-	const result = await invokeWorkspaceApi<{
-		ok: boolean;
-		scratchpadData: string;
-		scratchpadRev: number;
-		updatedAt: number;
-	}>('/api/workspace/projects/scratchpad', {
-		body: {
-			projectId,
-			scratchpadData: serializeScratchpadData(scratchpadData),
-			expectedRevision
-		}
-	});
-
-	return {
-		ok: result.ok,
-		scratchpadData: normalizeScratchpadData(result.scratchpadData),
-		scratchpadRev: result.scratchpadRev,
-		updatedAt: result.updatedAt
-	};
 };
 
 export const saveProjectAiState = async (

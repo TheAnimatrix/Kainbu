@@ -141,7 +141,6 @@ describe('mergeProjectBoardsByUpdatedAt', () => {
 			activePageId: '',
 			kanbanData: actualBoard.kanbanData,
 			scratchpadData: { activePadId: 'pad', pads: [{ id: 'pad', name: 'Notes', content: '' }] },
-			scratchpadRev: 0,
 			aiSessions: [],
 			activeAiSessionId: '',
 			chatHistory: structuredClone(DEFAULT_CHAT_HISTORY),

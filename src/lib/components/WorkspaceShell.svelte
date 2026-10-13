@@ -2103,10 +2103,6 @@
 				scratchpadData: activePage
 					? pageToScratchpadData(activePage)
 					: remoteProject.scratchpadData,
-				scratchpadRev:
-					activePageId === localProject.activePageId
-						? localProject.scratchpadRev
-						: remoteProject.scratchpadRev,
 				aiSessions: preferLocalAiState ? localProject.aiSessions : remoteProject.aiSessions,
 				activeAiSessionId: preferLocalAiState
 					? localProject.activeAiSessionId

@@ -162,7 +162,7 @@ export const INITIAL_KANBAN: KanbanData = [
 
 export const INITIAL_SCRATCHPAD = `# Welcome to Kainbu | カインブ
 
-This is a scratchpad for your notes.
+This is a page for your notes.
 The assistant can read this and help you edit it.
 
 - [ ] Jot down ideas
@@ -233,7 +233,6 @@ export const EMPTY_PROJECT = (userId: string, name = 'New Project'): Project => 
 		activePageId: '',
 		kanbanData: structuredClone(INITIAL_KANBAN),
 		scratchpadData: createScratchpadData(INITIAL_SCRATCHPAD, 'Notes'),
-		scratchpadRev: 0,
 		aiSessions: [initialAiSession],
 		activeAiSessionId: initialAiSessionId,
 		chatHistory: structuredClone(initialAiSession.history),

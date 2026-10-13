@@ -86,8 +86,6 @@ import {
 	handleWorkspaceProjectRenameRequest,
 	handleWorkspaceRemoveMemberRequest,
 	handleWorkspaceRespondInviteRequest,
-	handleWorkspaceScratchpadGetRequest,
-	handleWorkspaceScratchpadRequest,
 	handleWorkspaceTouchProjectRequest,
 	handleWorkspacePinProjectRequest,
 	toWorkspaceApiError
@@ -113,7 +111,6 @@ const apiRootPayload = {
 		'/api/workspace/projects/touch',
 		'/api/workspace/projects/pin',
 		'/api/workspace/projects/background',
-		'/api/workspace/projects/scratchpad',
 		'/api/workspace/members/profiles',
 		'/api/workspace/...'
 	]
@@ -608,34 +605,6 @@ app.post('/api/workspace/projects/pin', async (c: Context) => {
 	try {
 		const payload = await handleWorkspacePinProjectRequest(
 			(await c.req.json()) as { projectId: string; pinned?: boolean },
-			c.req.header('Authorization')
-		);
-		return c.json(payload);
-	} catch (error) {
-		return handleWorkspaceMutationError(c, error);
-	}
-});
-
-app.get('/api/workspace/projects/scratchpad', async (c: Context) => {
-	try {
-		const payload = await handleWorkspaceScratchpadGetRequest(
-			c.req.query('projectId'),
-			c.req.header('Authorization')
-		);
-		return c.json(payload);
-	} catch (error) {
-		return handleWorkspaceMutationError(c, error);
-	}
-});
-
-app.post('/api/workspace/projects/scratchpad', async (c: Context) => {
-	try {
-		const payload = await handleWorkspaceScratchpadRequest(
-			(await c.req.json()) as {
-				projectId: string;
-				scratchpadData: string;
-				expectedRevision: number;
-			},
 			c.req.header('Authorization')
 		);
 		return c.json(payload);

@@ -11,7 +11,6 @@ import { createId } from '../src/lib/kainbu/id.js';
 import { EMPTY_PROJECT } from '../src/lib/kainbu/constants.js';
 import { normalizeBoardPreferences } from '../src/lib/kainbu/boardPreferences.js';
 import { normalizeProjectStructure } from '../src/lib/kainbu/projectStructure.js';
-import { normalizeScratchpadData, serializeScratchpadData } from '../src/lib/kainbu/scratchpad.js';
 import { runProjectInitialization } from '../src/lib/kainbu/projectCreationTransaction.js';
 import {
 	getProjectPbId,
@@ -78,12 +77,6 @@ export class WorkspaceApiError extends Error {
 	}
 }
 
-type WorkspaceScratchpadRequest = {
-	projectId: string;
-	scratchpadData: string;
-	expectedRevision: number;
-};
-
 type WorkspaceProjectRequest = {
 	projectId: string;
 };
@@ -141,14 +134,6 @@ const requireBoolean = (value: unknown, field: string) => {
 	return value;
 };
 
-const requireInteger = (value: unknown, field: string) => {
-	if (typeof value !== 'number' || !Number.isInteger(value)) {
-		throw new WorkspaceApiError(400, `${field} must be an integer.`);
-	}
-
-	return value;
-};
-
 const requireBackgroundThemeOrNull = (value: unknown, field: string) => {
 	if (value == null) {
 		return null;
@@ -176,8 +161,6 @@ const getProjectOrThrow = async (admin: PocketBase, projectId: string) => {
 			id: String(data.client_id || data.id),
 			user_id: relationId(data.owner),
 			name: String(data.name || ''),
-			scratchpad_data: String(data.scratchpad_data || ''),
-			scratchpad_rev: typeof data.scratchpad_rev === 'number' ? data.scratchpad_rev : 0,
 			updated_at: String(data.updated || '1970-01-01T00:00:00.000Z'),
 			_pbId: String(data.id)
 		};
@@ -401,30 +384,6 @@ export const handleWorkspacePinProjectRequest = async (
 	});
 
 	return { ok: true, pinned };
-};
-
-export const handleWorkspaceScratchpadRequest = async (
-	body: WorkspaceScratchpadRequest,
-	authorization: string | undefined
-) => {
-	const userId = (await resolveAuthenticatedUserId(authorization)).userId;
-	const admin = await createAdminPb();
-	const projectId = requireString(body.projectId, 'projectId');
-	const scratchpadData = requireString(body.scratchpadData, 'scratchpadData');
-	const expectedRevision = requireInteger(body.expectedRevision, 'expectedRevision');
-
-	await ensureMembership(admin, projectId, userId);
-
-	return admin.send<{
-		ok: boolean;
-		scratchpadData: string;
-		scratchpadRev: number;
-		updatedAt: number;
-	}>('/api/kainbu/scratchpad', {
-		method: 'POST',
-		body: { projectId, scratchpadData, expectedRevision, userId },
-		requestKey: null
-	});
 };
 
 export const handleWorkspaceProjectBackgroundRequest = async (
@@ -1052,25 +1011,6 @@ export const handleWorkspacePageDeleteRequest = async (
 	return { ok: true };
 };
 
-export const handleWorkspaceScratchpadGetRequest = async (
-	projectId: string | undefined,
-	authorization: string | undefined
-) => {
-	const userId = (await resolveAuthenticatedUserId(authorization)).userId;
-	const admin = await createAdminPb();
-	const id = requireString(projectId, 'projectId');
-
-	await ensureMembership(admin, id, userId);
-
-	const project = await getProjectOrThrow(admin, id);
-	return {
-		id: project.id,
-		name: project.name,
-		scratchpadData: normalizeScratchpadData(project.scratchpad_data),
-		scratchpadRev: project.scratchpad_rev
-	};
-};
-
 export const handleWorkspaceProjectRenameRequest = async (
 	body: WorkspaceProjectRenameRequest,
 	authorization: string | undefined
@@ -1117,8 +1057,6 @@ export const handleWorkspaceProjectCreateRequest = async (
 		owner: userId,
 		name: seed.name,
 		background_theme: seed.backgroundTheme,
-		scratchpad_data: serializeScratchpadData(seed.scratchpadData),
-		scratchpad_rev: seed.scratchpadRev,
 		last_opened_at: now
 	});
 

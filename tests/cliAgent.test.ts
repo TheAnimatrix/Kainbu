@@ -45,13 +45,6 @@ let requests: {
 }[];
 let snapshot: Snapshot;
 let failure = 0;
-let scratchpadAccepts = true;
-const scratchpad = {
-	id: 'p1',
-	name: 'Work',
-	scratchpadRev: 3,
-	scratchpadData: { activePadId: 'pad1', pads: [{ id: 'pad1', name: 'Pad', content: 'old' }] }
-};
 
 const run = <T = CliData>(
 	args: string[],
@@ -162,21 +155,6 @@ describe('CLI automation protocol (real executable over HTTP)', () => {
 				return;
 			}
 			const path = req.url!.split('?')[0];
-			if (path === '/api/workspace/projects/scratchpad') {
-				res.end(
-					JSON.stringify(
-						req.method === 'GET'
-							? scratchpad
-							: {
-									ok: scratchpadAccepts,
-									scratchpadData: '',
-									scratchpadRev: scratchpad.scratchpadRev + (scratchpadAccepts ? 1 : 0),
-									updatedAt: 0
-								}
-					)
-				);
-				return;
-			}
 			if (path.startsWith('/api/workspace/tasks/comments')) {
 				// An older server: Hono's plain-text 404 for an unknown route.
 				res.setHeader('Content-Type', 'text/plain');
@@ -202,7 +180,6 @@ describe('CLI automation protocol (real executable over HTTP)', () => {
 	beforeEach(() => {
 		requests = [];
 		failure = 0;
-		scratchpadAccepts = true;
 		snapshot = {
 			projects: [
 				{
@@ -655,12 +632,14 @@ describe('CLI automation protocol (real executable over HTTP)', () => {
 		expect(posts()).toHaveLength(0);
 	});
 
-	it('reports a rejected scratchpad write as a conflict', async () => {
-		scratchpadAccepts = false;
-		const result = await run(['scratchpad', 'set', '--text', 'new', '--project', 'p1', '--json']);
-		expect(result.code).toBe(5);
-		expect(result.stdout).toBe('');
-		expect(result.error.error.code).toBe('conflict');
+	it('has no scratchpad command; notes are pages', async () => {
+		const result = await run(['scratchpad', 'show', '--project', 'p1', '--json']);
+		expect(result.code).toBe(2);
+		expect(result.error.error).toMatchObject({
+			code: 'invalid_arguments',
+			message: "unknown command 'scratchpad'"
+		});
+		expect(requests).toHaveLength(0);
 	});
 
 	it('reports an outdated server instead of a missing task', async () => {
@@ -756,7 +735,7 @@ describe('CLI automation protocol (real executable over HTTP)', () => {
 describe.runIf(process.env.KAINBU_PB_INTEGRATION === '1')(
 	'CLI against disposable PocketBase + API',
 	() => {
-		it('uses a real PAT for complete task, page, column, and scratchpad workflows', async () => {
+		it('uses a real PAT for complete task, page, and column workflows', async () => {
 			base = process.env.KAINBU_TEST_BASE!;
 			const pb = new PocketBase(process.env.KAINBU_TEST_PB);
 			const email = `cli-${Date.now()}@kainbu.test`,
@@ -869,34 +848,7 @@ describe.runIf(process.env.KAINBU_PB_INTEGRATION === '1')(
 				})
 			});
 			expect(conflict.status).toBe(409);
-			const pad = await cli(['scratchpad', 'show', '--project', project.id]);
-			await cli(
-				[
-					'scratchpad',
-					'set',
-					'--project',
-					project.id,
-					'--if-revision',
-					String(pad.revision),
-					'--file',
-					'-'
-				],
-				'Pad content'
-			);
-			expect((await cli(['scratchpad', 'show', '--project', project.id])).pad.content).toBe(
-				'Pad content'
-			);
 			await cli(['page', 'delete', page.id, '--project', project.id]);
-			const newPad = await cli([
-				'scratchpad',
-				'pad',
-				'create',
-				'Agent pad',
-				'--project',
-				project.id
-			]);
-			await cli(['scratchpad', 'pad', 'rename', newPad.id, 'Renamed pad', '--project', project.id]);
-			await cli(['scratchpad', 'pad', 'delete', newPad.id, '--project', project.id]);
 			// 0.2.1: task fields, comments, attachments, trash, settings, moves, pages, search.
 			const me = await cli<{ id: string }>(['whoami']);
 			const second = await cli([

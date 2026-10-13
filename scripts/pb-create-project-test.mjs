@@ -21,8 +21,6 @@ const projectRecord = await pb.collection('projects').create({
 	owner: userId,
 	name: 'Test Project',
 	background_theme: null,
-	scratchpad_data: '{}',
-	scratchpad_rev: 0,
 	last_opened_at: new Date().toISOString()
 });
 console.log('project', projectRecord.id);

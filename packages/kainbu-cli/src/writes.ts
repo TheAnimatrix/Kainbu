@@ -1,9 +1,5 @@
 import { invokeWorkspaceApi } from '@kainbu/core';
-import type {
-	BoardPreferences,
-	KanbanData,
-	ScratchpadData
-} from '../../../src/lib/kainbu/types.js';
+import type { BoardPreferences, KanbanData } from '../../../src/lib/kainbu/types.js';
 import { KainbuError } from './errors.js';
 import { rawWorkspaceRequest } from './http.js';
 
@@ -85,16 +81,6 @@ export const renameProject = async (projectId: string, name: string) => {
 		body: { projectId, name }
 	});
 };
-
-export const fetchProjectScratchpadMeta = async (projectId: string) =>
-	invokeWorkspaceApi<{
-		id: string;
-		name: string;
-		scratchpadData: ScratchpadData;
-		scratchpadRev: number;
-	}>(`/api/workspace/projects/scratchpad?projectId=${encodeURIComponent(projectId)}`, {
-		method: 'GET'
-	});
 
 // ---------------------------------------------------------------------------
 // Endpoints added with CLI 0.2.1. An older server answers them with Hono's

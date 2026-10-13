@@ -6,7 +6,6 @@ import { registerBoardCommands } from './commands/board.js';
 import { registerColumnCommands } from './commands/column.js';
 import { registerPageCommands } from './commands/page.js';
 import { registerProjectCommands } from './commands/project.js';
-import { registerScratchpadCommands } from './commands/scratchpad.js';
 import { registerSearchCommands } from './commands/search.js';
 import { registerTaskCommands } from './commands/task.js';
 import { needsSetup, registerSetupCommand, runSetup } from './commands/setup.js';
@@ -73,7 +72,6 @@ registerBoardCommands(program);
 registerColumnCommands(program);
 registerTaskCommands(program);
 registerPageCommands(program);
-registerScratchpadCommands(program);
 registerSearchCommands(program);
 
 registerSchemaCommand(program);

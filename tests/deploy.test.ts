@@ -128,7 +128,6 @@ describe('Auth rejection (no token)', () => {
 		'/api/workspace-ai',
 		'/api/workspace-ai/stream',
 		'/api/workspace/projects/touch',
-		'/api/workspace/projects/scratchpad',
 		'/api/workspace/projects/background',
 		'/api/workspace/invites/create',
 		'/api/workspace/invites/respond',
@@ -179,15 +178,6 @@ describe.runIf(hasAuth)('Invalid request body (authed)', () => {
 
 	it('POST /api/workspace/projects/touch with missing projectId → 400', async () => {
 		const res = await fetch(`${BASE}/api/workspace/projects/touch`, {
-			method: 'POST',
-			headers: authHeaders(),
-			body: JSON.stringify({})
-		});
-		expect([400, 404, 500]).toContain(res.status);
-	});
-
-	it('POST /api/workspace/projects/scratchpad with missing fields → 400', async () => {
-		const res = await fetch(`${BASE}/api/workspace/projects/scratchpad`, {
 			method: 'POST',
 			headers: authHeaders(),
 			body: JSON.stringify({})
@@ -376,23 +366,6 @@ describe.runIf(hasAuth && hasProject)('Workspace project endpoints', () => {
 		expect(res.status).toBe(200);
 		const body = await res.json();
 		expect(body.ok).toBe(true);
-	});
-
-	it('POST /api/workspace/projects/scratchpad with stale revision → ok: false', async () => {
-		const res = await fetch(`${BASE}/api/workspace/projects/scratchpad`, {
-			method: 'POST',
-			headers: authHeaders(),
-			body: JSON.stringify({
-				projectId: PROJECT_ID,
-				scratchpadData: '{"activePadId":"test","pads":[]}',
-				expectedRevision: -1 // intentionally stale
-			})
-		});
-		expect(res.status).toBe(200);
-		const body = await res.json();
-		// Stale revision should return ok: false with current state
-		expect(body.ok).toBe(false);
-		expect(typeof body.scratchpadRev).toBe('number');
 	});
 
 	it('POST /api/workspace/projects/background sets theme', async () => {

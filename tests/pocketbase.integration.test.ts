@@ -270,25 +270,6 @@ describe.runIf(process.env.KAINBU_PB_INTEGRATION === '1')(
 					.getFullList({ filter: 'task_client_id="asset-task"' })
 			).toHaveLength(0);
 		});
-		it('accepts only one simultaneous scratchpad revision', async () => {
-			const before = await owner.collection('projects').getOne(project.id);
-			const result = await Promise.all(
-				['first', 'second'].map((content) =>
-					request('/api/workspace/projects/scratchpad', owner, 'POST', {
-						projectId: project.client_id,
-						scratchpadData: content,
-						expectedRevision: before.scratchpad_rev
-					}).then(async (r) => {
-						expect(r.status).toBe(200);
-						return r.json();
-					})
-				)
-			);
-			expect(result.filter((r) => r.ok)).toHaveLength(1);
-			expect((await owner.collection('projects').getOne(project.id)).scratchpad_rev).toBe(
-				before.scratchpad_rev + 1
-			);
-		});
 		it('retains conflicting page drafts instead of overwriting remote content', async () => {
 			await owner.collection('project_pages').create({
 				project: project.id,
@@ -476,12 +457,6 @@ describe.runIf(process.env.KAINBU_PB_INTEGRATION === '1')(
 			await expect(
 				materializeWorkspace(project.client_id, 'Bearer ' + former.authStore.token)
 			).rejects.toThrow('do not have access');
-			await expect(
-				former.send('/api/kainbu/scratchpad', {
-					method: 'POST',
-					body: { projectId: project.client_id, scratchpadData: 'Denied', expectedRevision: 0 }
-				})
-			).rejects.toMatchObject({ status: 403 });
 			await expect(
 				owner
 					.collection('project_pages')

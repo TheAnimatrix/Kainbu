@@ -186,33 +186,6 @@ exports.syncBoard = (e) => {
 	return e.json(200, { ok: true });
 };
 
-exports.scratchpad = (e) => {
-	const body = e.requestInfo().body;
-	if (
-		typeof body.scratchpadData !== 'string' ||
-		!Number.isInteger(body.expectedRevision) ||
-		body.expectedRevision < 0
-	)
-		throw new BadRequestError('Invalid scratchpad update.');
-	let result;
-	e.app.runInTransaction((app) => {
-		const project = projectAccess(app, e, body);
-		const matches = project.getInt('scratchpad_rev') === body.expectedRevision;
-		if (matches) {
-			project.set('scratchpad_data', body.scratchpadData);
-			project.set('scratchpad_rev', body.expectedRevision + 1);
-			app.save(project);
-		}
-		result = {
-			ok: matches,
-			scratchpadData: project.getString('scratchpad_data'),
-			scratchpadRev: project.getInt('scratchpad_rev'),
-			updatedAt: Date.parse(project.getString('updated'))
-		};
-	});
-	return e.json(200, result);
-};
-
 // Moves live tasks to another board of the same project, keeping their IDs so
 // comments and attachments (keyed by project + task ID) stay attached. Links
 // are board-local, so links between a moved task and its old board are cleared.

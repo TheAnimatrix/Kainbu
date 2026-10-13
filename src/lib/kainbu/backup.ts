@@ -363,7 +363,6 @@ const normalizeProject = (
 		chatHistory: seed.chatHistory,
 		members: [],
 		invites: [],
-		scratchpadRev: 0,
 		createdAt: now,
 		updatedAt: now,
 		viewerLastOpenedAt: now
