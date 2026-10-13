@@ -2,7 +2,7 @@
 	import { browser } from '$app/environment';
 	import { flip } from 'svelte/animate';
 	import { fade } from 'svelte/transition';
-	import { tick } from 'svelte';
+	import { onDestroy, tick } from 'svelte';
 	import {
 		Check,
 		ArrowDownToLine,
@@ -21,6 +21,7 @@
 		LoaderCircle,
 		MessageSquarePlus,
 		Network,
+		Paperclip,
 		Palette,
 		Pencil,
 		Plus,
@@ -116,6 +117,8 @@
 		Task
 	} from '$lib/kainbu/types';
 	import TaskModal from '$lib/components/TaskModal.svelte';
+	import { watchProjectAttachmentCounts } from '$lib/kainbu/taskDetails';
+	import { pocketbase } from '$lib/pocketbaseClient';
 	import RichText from '$lib/components/RichText.svelte';
 
 	type MenuPosition = {
@@ -210,6 +213,25 @@
 	const dndDropTargetStyle = {};
 	let viewportWidth = 0;
 	let boardData: KanbanData = data;
+
+	// Attachments live in their own collection, so cards need a separate index to show them.
+	let attachmentCounts: Record<string, number> = {};
+	let watchedAttachmentProjectId = '';
+	let stopAttachmentWatch: (() => void) | null = null;
+	const syncAttachmentWatch = (nextProjectId: string) => {
+		const watchId = nextProjectId && pocketbase.authStore.isValid ? nextProjectId : '';
+		if (watchId === watchedAttachmentProjectId) return;
+		stopAttachmentWatch?.();
+		stopAttachmentWatch = null;
+		attachmentCounts = {};
+		watchedAttachmentProjectId = watchId;
+		if (!watchId) return;
+		stopAttachmentWatch = watchProjectAttachmentCounts(watchId, (counts) => {
+			if (watchedAttachmentProjectId === watchId) attachmentCounts = counts;
+		});
+	};
+	$: if (browser) syncAttachmentWatch(projectId);
+	onDestroy(() => stopAttachmentWatch?.());
 
 	let editingColumnId: string | null = null;
 	let editingColumnTitle = '';
@@ -2464,6 +2486,14 @@
 																					aria-label="Has description"
 																				/>
 																			{/if}
+																			{#if attachmentCounts[task.id]}
+																				<Paperclip
+																					size={13}
+																					class="mt-0.5 shrink-0 text-app-subtext/45"
+																					title={`${attachmentCounts[task.id]} ${attachmentCounts[task.id] === 1 ? 'attachment' : 'attachments'}`}
+																					aria-label={`${attachmentCounts[task.id]} ${attachmentCounts[task.id] === 1 ? 'attachment' : 'attachments'}`}
+																				/>
+																			{/if}
 																		</div>
 																	{/if}
 																	{#if column.isLinkGroup && column.taskColumnTitles?.[task.id]}
@@ -2737,6 +2767,14 @@
 																	class="mt-0.5 shrink-0 text-app-subtext/45"
 																	title="Has description"
 																	aria-label="Has description"
+																/>
+															{/if}
+															{#if attachmentCounts[task.id]}
+																<Paperclip
+																	size={13}
+																	class="mt-0.5 shrink-0 text-app-subtext/45"
+																	title={`${attachmentCounts[task.id]} ${attachmentCounts[task.id] === 1 ? 'attachment' : 'attachments'}`}
+																	aria-label={`${attachmentCounts[task.id]} ${attachmentCounts[task.id] === 1 ? 'attachment' : 'attachments'}`}
 																/>
 															{/if}
 														</div>
