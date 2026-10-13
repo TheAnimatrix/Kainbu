@@ -4,7 +4,7 @@
 	import { browser } from '$app/environment';
 	import { crossfade, fade } from 'svelte/transition';
 	import { page } from '$app/stores';
-	import { goto, replaceState } from '$app/navigation';
+	import { afterNavigate, goto } from '$app/navigation';
 	type AuthChangeEvent =
 		| 'INITIAL_SESSION'
 		| 'SIGNED_IN'
@@ -154,6 +154,8 @@
 	import {
 		parseWorkspaceLocation,
 		buildWorkspacePath,
+		isSettingsSection,
+		type WorkspaceLocation,
 		type WorkspaceUrlState
 	} from '$lib/kainbu/workspaceUrl';
 	import { normalizeBoardPreferences, boardPreferencesEqual } from '$lib/kainbu/boardPreferences';
@@ -381,10 +383,17 @@
 	};
 
 	let boardPresenceTimer: ReturnType<typeof setInterval> | null = null;
+	// URL <-> state synchronisation. The URL is the source of truth whenever it changes
+	// from outside (load, back/forward, links, external goto); state changes made by the
+	// user are pushed to the URL by syncWorkspaceUrl().
 	let workspaceUrlReady = false;
 	let suppressWorkspaceUrlSync = false;
 	let pendingWorkspaceNavigation = '';
 	let workspaceUrlSyncKey = '';
+	// Set when state was just derived from a URL; the follow-up sync only canonicalises
+	// that URL (e.g. /settings -> /settings/appearance), so it replaces the history entry.
+	let replaceNextWorkspaceUrlSync = false;
+	const selfInitiatedWorkspaceNavigations = new Set<string>();
 	const boardSyncTimeouts = new Map<string, ReturnType<typeof setTimeout>>();
 	const pendingBoardSyncs = createBoardSyncQueue();
 	const scratchpadSyncTimeouts = new Map<string, ReturnType<typeof setTimeout>>();
@@ -527,9 +536,19 @@
 		currentProjectId,
 		currentBoardId,
 		currentPageId,
-		visibleWorkspaceTab
+		visibleWorkspaceTab,
+		settingsSection
 	].join('|');
-	$: if (workspaceUrlReady && user && projects.length && workspaceUrlSyncKey) {
+	// Project-scoped URLs are only rewritten once projects exist, so a failed or empty
+	// load cannot clobber a deep link. Dashboard and settings URLs do not depend on them.
+	$: if (
+		workspaceUrlReady &&
+		user &&
+		workspaceUrlSyncKey &&
+		(projects.length > 0 ||
+			visibleWorkspaceTab === 'dashboard' ||
+			visibleWorkspaceTab === 'settings')
+	) {
 		syncWorkspaceUrl();
 	}
 	$: projectRailActiveSurface =
@@ -922,6 +941,11 @@
 		}
 	};
 	const handleSettingsSectionChange = (nextSection: SettingsSection) => {
+		if (!isSettingsSection(nextSection)) {
+			console.error('[workspace-url] ignoring unknown settings section', nextSection);
+			return;
+		}
+		// The section is part of the URL (/settings/:section); the sync key picks this up.
 		settingsSection = nextSection;
 	};
 	const isProposalStaleForProject = (proposal: PendingProposal, project: Project) => {
@@ -2125,6 +2149,9 @@
 		const loadVersion = ++workspaceLoadVersion;
 		workspaceHydrating = true;
 		workspaceError = '';
+		// State is about to be replaced wholesale; stop writing it to the URL until
+		// hydrateWorkspaceFromUrl() has re-applied the URL at the end of this load.
+		workspaceUrlReady = false;
 		const localSnapshot = loadWorkspaceSnapshot(currentUser.id);
 		if (!profile || profile.userId !== currentUser.id) {
 			syncUsernameDraftFromProfile(createFallbackUserProfile(currentUser));
@@ -2155,8 +2182,19 @@
 				nextLastSettingsSyncAt: localSnapshot.lastSettingsSyncAt,
 				nextLastSuccessfulSyncAt: localSnapshot.lastSuccessfulSyncAt
 			});
-			desktopWorkspaceTab = localSnapshot.desktopWorkspaceTab || 'dashboard';
-			mobileTab = localSnapshot.mobileTab || localSnapshot.desktopWorkspaceTab || 'dashboard';
+			const urlLocation = parseWorkspaceLocation(
+				window.location.pathname,
+				new URLSearchParams(window.location.search)
+			);
+			if (urlLocation.view) {
+				// The URL names a view: it wins over the remembered tab. Apply it now so the
+				// snapshot tab never flashes before the fetch completes.
+				applyWorkspaceUrlState(urlLocation);
+			} else {
+				// Bare "/" (or a legacy link without a view): restore the remembered tab.
+				desktopWorkspaceTab = localSnapshot.desktopWorkspaceTab || 'dashboard';
+				mobileTab = localSnapshot.mobileTab || localSnapshot.desktopWorkspaceTab || 'dashboard';
+			}
 			workspaceHydrating = false;
 		}
 
@@ -2515,72 +2553,140 @@
 		projectId: currentProjectId || undefined,
 		boardId: currentBoardId || undefined,
 		pageId: visibleWorkspaceTab === 'scratchpad' ? currentPageId : undefined,
-		view: visibleWorkspaceTab
+		view: visibleWorkspaceTab,
+		settingsSection: visibleWorkspaceTab === 'settings' ? settingsSection : undefined
 	});
+
+	const getCurrentLocationPath = () => `${window.location.pathname}${window.location.search}`;
 
 	const syncWorkspaceUrl = () => {
 		if (suppressWorkspaceUrlSync || typeof window === 'undefined' || !user || !workspaceUrlReady) {
 			return;
 		}
 
-		const nextState = getWorkspaceUrlStateFromApp();
-		const nextPath = buildWorkspacePath(nextState);
-		const nextUrl = nextPath;
-		const currentUrl = `${$page.url.pathname}${$page.url.search}`;
-		if (currentUrl === nextUrl) return;
+		const nextUrl = buildWorkspacePath(getWorkspaceUrlStateFromApp());
+		const replace = replaceNextWorkspaceUrlSync;
+		replaceNextWorkspaceUrlSync = false;
+		if (getCurrentLocationPath() === nextUrl) return;
 		if (pendingWorkspaceNavigation === nextUrl) return;
-		// Query-string links are compatibility redirects; normal workspace actions are real history entries.
-		if (workspaceUrlState.legacyQuery) {
-			replaceState(nextUrl, {});
-			return;
-		}
+		// Canonicalising a URL we just applied (legacy query links, /settings without a
+		// section, desktop /chat, unknown ids) replaces the entry so Back does not bounce.
+		// Everything else is a user action and gets its own history entry.
 		pendingWorkspaceNavigation = nextUrl;
-		void goto(nextUrl, { replaceState: false, keepFocus: true, noScroll: true }).finally(() => {
-			if (pendingWorkspaceNavigation === nextUrl) pendingWorkspaceNavigation = '';
-		});
+		selfInitiatedWorkspaceNavigations.add(nextUrl);
+		void goto(nextUrl, { replaceState: replace, keepFocus: true, noScroll: true })
+			.catch((error) => {
+				console.error('[workspace-url] navigation failed', { nextUrl, error });
+			})
+			.finally(() => {
+				selfInitiatedWorkspaceNavigations.delete(nextUrl);
+				if (pendingWorkspaceNavigation === nextUrl) pendingWorkspaceNavigation = '';
+			});
 	};
 
-	const applyWorkspaceUrlState = (parsed: WorkspaceUrlState) => {
+	const applyWorkspaceUrlState = (parsed: WorkspaceLocation) => {
 		if (!parsed.projectId && !parsed.view && !parsed.boardId && !parsed.pageId) return;
 		suppressWorkspaceUrlSync = true;
+		replaceNextWorkspaceUrlSync = true;
 		if (parsed.view) {
-			// Keep the canonical route when crossing the mobile breakpoint.
-			mobileTab = parsed.view;
-			desktopWorkspaceTab = parsed.view;
-		}
-		const project = projects.find((entry) => entry.id === parsed.projectId);
-		if (project && parsed.projectId) {
-			let updater: ((entry: Project) => Project) | undefined;
-			if (
-				parsed.view === 'kanban' &&
-				parsed.boardId &&
-				project.boards.some((board) => board.id === parsed.boardId)
-			) {
-				updater = (entry) => setProjectActiveBoard(entry, parsed.boardId!);
-			} else if (
-				parsed.view === 'scratchpad' &&
-				parsed.pageId &&
-				project.pages.some((page) => page.id === parsed.pageId)
-			) {
-				updater = (entry) => setProjectActivePage(entry, parsed.pageId!);
+			if (parsed.view === 'settings') {
+				const previousTab = isMobile ? mobileTab : desktopWorkspaceTab;
+				if (previousTab !== 'settings') workspaceTabBeforeSettings = previousTab;
+				if (parsed.settingsSection) {
+					settingsSection = parsed.settingsSection;
+				} else if (parsed.invalidSettingsSection !== undefined) {
+					console.warn(
+						'[workspace-url] unknown settings section in URL; keeping current section',
+						{ requested: parsed.invalidSettingsSection, using: settingsSection }
+					);
+				}
 			}
-			selectProject(parsed.projectId, updater);
+			if (parsed.view === 'chat' && !isMobile) {
+				// Desktop has no full-page chat: chat lives in the board's sidebar. Show the
+				// board with the sidebar open; the URL is canonicalised to the board route.
+				console.info('[workspace-url] desktop chat URL opens the board chat sidebar', {
+					projectId: parsed.projectId
+				});
+				mobileTab = 'chat';
+				desktopWorkspaceTab = 'kanban';
+				// Not openDesktopChatSidebar(): that starts the orb exit animation, which only
+				// completes when the orb itself was clicked.
+				desktopChatCollapsed = false;
+			} else {
+				// Keep the canonical route when crossing the mobile breakpoint.
+				mobileTab = parsed.view;
+				desktopWorkspaceTab = parsed.view;
+			}
+		}
+		if (parsed.projectId) {
+			const project = projects.find((entry) => entry.id === parsed.projectId);
+			if (!project) {
+				if (projects.length) {
+					console.warn('[workspace-url] project in URL is not in this workspace', {
+						projectId: parsed.projectId
+					});
+				}
+			} else {
+				let updater: ((entry: Project) => Project) | undefined;
+				if (parsed.view === 'kanban' && parsed.boardId) {
+					if (project.boards.some((board) => board.id === parsed.boardId)) {
+						updater = (entry) => setProjectActiveBoard(entry, parsed.boardId!);
+					} else {
+						console.warn('[workspace-url] board in URL not found; keeping active board', {
+							projectId: parsed.projectId,
+							boardId: parsed.boardId
+						});
+					}
+				} else if (parsed.view === 'scratchpad' && parsed.pageId) {
+					if (project.pages.some((page) => page.id === parsed.pageId)) {
+						updater = (entry) => setProjectActivePage(entry, parsed.pageId!);
+					} else {
+						console.warn('[workspace-url] page in URL not found; keeping active page', {
+							projectId: parsed.projectId,
+							pageId: parsed.pageId
+						});
+					}
+				}
+				selectProject(parsed.projectId, updater);
+			}
 		}
 		// Derived tab/board values must flush before URL synchronization resumes,
-		// including /dashboard which intentionally has no project id.
+		// including /dashboard which intentionally has no project id. The explicit sync
+		// then canonicalises the URL (replace) if state could not represent it exactly.
 		void tick().then(() => {
 			suppressWorkspaceUrlSync = false;
+			syncWorkspaceUrl();
 		});
 	};
 
 	const hydrateWorkspaceFromUrl = () => {
 		if (typeof window === 'undefined') return;
-		applyWorkspaceUrlState(parseWorkspaceLocation($page.url.pathname, $page.url.searchParams));
+		applyWorkspaceUrlState(
+			parseWorkspaceLocation(window.location.pathname, new URLSearchParams(window.location.search))
+		);
 		void tick().then(() => {
 			workspaceUrlReady = true;
 			syncWorkspaceUrl();
 		});
 	};
+
+	// The shell is rendered by the (workspace) layout and survives navigation between
+	// workspace URLs, so every URL change it did not initiate must be applied to state.
+	afterNavigate((navigation) => {
+		// Initial load is applied by bootstrapWorkspace() -> hydrateWorkspaceFromUrl().
+		if (navigation.type === 'enter' || !navigation.to) return;
+		const url = navigation.to.url;
+		const target = `${url.pathname}${url.search}`;
+		if (selfInitiatedWorkspaceNavigations.delete(target)) {
+			// Our own sync landed. If state moved on meanwhile, push the newer state.
+			syncWorkspaceUrl();
+			return;
+		}
+		// While bootstrapping, hydrateWorkspaceFromUrl() reads the latest URL when it finishes.
+		if (!workspaceUrlReady) return;
+		if (target === buildWorkspacePath(getWorkspaceUrlStateFromApp())) return;
+		applyWorkspaceUrlState(parseWorkspaceLocation(url.pathname, url.searchParams));
+	});
 
 	const clearProjectSyncState = (projectId: string) => {
 		for (const syncKey of new Set([...boardSyncTimeouts.keys(), ...pendingBoardSyncs.keys()])) {
@@ -3527,6 +3633,11 @@
 	};
 
 	const openSettings = (nextSection: SettingsSection = 'appearance') => {
+		if (!isSettingsSection(nextSection)) {
+			// Guards against handlers wired as `on:click={openSettings}`, which pass the event.
+			console.error('[workspace-url] openSettings called with a non-section value', nextSection);
+			return;
+		}
 		const currentTab = isMobile ? mobileTab : desktopWorkspaceTab;
 		workspaceTabBeforeSettings =
 			currentTab !== 'settings' ? currentTab : workspaceTabBeforeSettings;
@@ -5620,15 +5731,6 @@
 			return;
 		}
 
-		const handlePopState = () => {
-			applyWorkspaceUrlState(
-				parseWorkspaceLocation(
-					window.location.pathname,
-					new URLSearchParams(window.location.search)
-				)
-			);
-		};
-
 		const handleVisibilityChange = () => {
 			if (document.visibilityState === 'visible') {
 				void loadAiModels();
@@ -5640,10 +5742,8 @@
 		stopVisibilityListener = () => {
 			clearInterval(syncRetryTimer);
 			document.removeEventListener('visibilitychange', handleVisibilityChange);
-			window.removeEventListener('popstate', handlePopState);
 		};
 		document.addEventListener('visibilitychange', handleVisibilityChange);
-		window.addEventListener('popstate', handlePopState);
 
 		stopAuthListener = pocketbase.authStore.onChange((_token, model) => {
 			const nextUser = toAuthUser(model);
@@ -5765,7 +5865,7 @@
 				onDelete={handleDeleteProject}
 				onExport={handleExportProjects}
 				onRestore={handleRestoreProjects}
-				onOpenSettings={openSettings}
+				onOpenSettings={() => openSettings()}
 				onOpenAccount={() => openSettings('account')}
 				onSignOut={handleSignOut}
 			/>
@@ -6632,7 +6732,7 @@
 				onDelete={handleDeleteProject}
 				onExport={handleExportProjects}
 				onRestore={handleRestoreProjects}
-				onOpenSettings={openSettings}
+				onOpenSettings={() => openSettings()}
 				onSignOut={handleSignOut}
 				onDashboard={() => {
 					setWorkspaceTab('dashboard');

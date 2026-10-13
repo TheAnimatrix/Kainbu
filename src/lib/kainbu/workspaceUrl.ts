@@ -1,15 +1,28 @@
-import type { WorkspaceTab } from '$lib/kainbu/types';
+import type { SettingsSection, WorkspaceTab } from '$lib/kainbu/types';
 
 export type WorkspaceUrlState = {
 	projectId?: string;
 	boardId?: string;
 	pageId?: string;
 	view?: WorkspaceTab;
+	/** Only meaningful when `view === 'settings'`. */
+	settingsSection?: SettingsSection;
 };
 
-export type WorkspaceLocation = WorkspaceUrlState & { legacyQuery: boolean };
+export type WorkspaceLocation = WorkspaceUrlState & {
+	legacyQuery: boolean;
+	/**
+	 * Raw `/settings/:section` segment that is not a known section. The location still
+	 * resolves to the settings view (without a section); callers must report it.
+	 */
+	invalidSettingsSection?: string;
+};
 
 const VIEW_TABS = new Set<WorkspaceTab>(['dashboard', 'kanban', 'scratchpad', 'chat', 'settings']);
+export const SETTINGS_SECTIONS: readonly SettingsSection[] = ['account', 'appearance', 'access'];
+
+export const isSettingsSection = (value: unknown): value is SettingsSection =>
+	typeof value === 'string' && (SETTINGS_SECTIONS as readonly string[]).includes(value);
 
 export const parseWorkspaceUrl = (searchParams: URLSearchParams): WorkspaceUrlState => {
 	const projectId = searchParams.get('project') || searchParams.get('p') || undefined;
@@ -19,7 +32,10 @@ export const parseWorkspaceUrl = (searchParams: URLSearchParams): WorkspaceUrlSt
 	const viewRaw = searchParams.get('view') || searchParams.get('v') || undefined;
 	const view =
 		viewRaw && VIEW_TABS.has(viewRaw as WorkspaceTab) ? (viewRaw as WorkspaceTab) : undefined;
-	return { projectId, boardId, pageId, view };
+	const sectionRaw = searchParams.get('section');
+	const settingsSection =
+		view === 'settings' && isSettingsSection(sectionRaw) ? sectionRaw : undefined;
+	return { projectId, boardId, pageId, view, ...(settingsSection ? { settingsSection } : {}) };
 };
 
 /** Parse canonical SvelteKit routes and the pre-routing query-string links. */
@@ -51,6 +67,14 @@ export const parseWorkspaceLocation = (
 		return { projectId, view: 'kanban', legacyQuery: false };
 	}
 	if (path === '/dashboard') return { view: 'dashboard', legacyQuery: false };
+	if (path === '/settings') return { view: 'settings', legacyQuery: false };
+	const settingsMatch = path.match(/^\/settings\/([^/]+)$/);
+	if (settingsMatch) {
+		const section = decodeURIComponent(settingsMatch[1]);
+		return isSettingsSection(section)
+			? { view: 'settings', settingsSection: section, legacyQuery: false }
+			: { view: 'settings', invalidSettingsSection: section, legacyQuery: false };
+	}
 	if (path === '/') {
 		const query = parseWorkspaceUrl(searchParams);
 		return {
@@ -68,12 +92,18 @@ export const buildWorkspaceSearchParams = (state: WorkspaceUrlState): URLSearchP
 	if (state.view) params.set('view', state.view);
 	if (state.view === 'kanban' && state.boardId) params.set('board', state.boardId);
 	if (state.view === 'scratchpad' && state.pageId) params.set('page', state.pageId);
+	if (state.view === 'settings' && state.settingsSection)
+		params.set('section', state.settingsSection);
 	return params;
 };
 
 export const buildWorkspacePath = (state: WorkspaceUrlState): string => {
-	if (!state.projectId || state.view === 'dashboard' || state.view === 'settings')
-		return '/dashboard';
+	// Settings is account-level: it never carries the project in its URL.
+	if (state.view === 'settings')
+		return state.settingsSection
+			? `/settings/${encodeURIComponent(state.settingsSection)}`
+			: '/settings';
+	if (!state.projectId || state.view === 'dashboard') return '/dashboard';
 	const project = encodeURIComponent(state.projectId);
 	if (state.view === 'kanban' && state.boardId)
 		return `/projects/${project}/boards/${encodeURIComponent(state.boardId)}`;
