@@ -173,7 +173,7 @@ export const validateWorkspaceAiRequest = (request: unknown) => {
 					typeof item.title !== 'string' ||
 					item.title.length > 1000 ||
 					(item.description !== undefined &&
-						(typeof item.description !== 'string' || item.description.length > 100_000)) ||
+						typeof item.description !== 'string') ||
 					!Array.isArray(item.tags) ||
 					item.tags.length > 50
 				) {

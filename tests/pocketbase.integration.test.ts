@@ -221,6 +221,34 @@ describe.runIf(process.env.KAINBU_PB_INTEGRATION === '1')(
 			).toBe('Todo');
 			expect(Date.parse(task.created)).toBeGreaterThan(0);
 		});
+		it('stores task descriptions and pages beyond the default text field cap', async () => {
+			const { data } = await setupBoard('long-text');
+			const long = structuredClone(data);
+			long[0].tasks[0].description = 'd'.repeat(50_000);
+			await syncBoardWithPb(owner, project.client_id, 'long-text', data, long);
+			expect(
+				(await owner.collection('project_tasks').getFirstListItem('client_id="long-text-task"'))
+					.description
+			).toHaveLength(50_000);
+			await owner.collection('project_pages').create({
+				project: project.id,
+				client_id: 'page-long',
+				name: 'Long page',
+				content: 'p'.repeat(600_000)
+			});
+			await owner.send('/api/kainbu/page', {
+				method: 'POST',
+				body: {
+					projectId: project.client_id,
+					pageId: 'page-long',
+					previousContent: 'p'.repeat(600_000),
+					content: 'q'.repeat(1_000_000)
+				}
+			});
+			expect(
+				(await owner.collection('project_pages').getFirstListItem('client_id="page-long"')).content
+			).toBe('q'.repeat(1_000_000));
+		});
 		it('removes tasks on column deletion and child records on board deletion', async () => {
 			const { record } = await setupBoard('delete');
 			const column = await owner

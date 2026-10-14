@@ -12,7 +12,6 @@ import {
     WORKSPACE_AI_BOARD_LIST_TASKS_DEFAULT_LIMIT,
     WORKSPACE_AI_BULK_UPDATE_TASKS_MAX,
     WORKSPACE_AI_DELETE_TASKS_MAX_REFS,
-    WORKSPACE_AI_UPDATE_TASK_MAX_CHARS,
 } from "./constants.js";
 import type { MaterializedWorkspace } from "./sync.js";
 import { serializeKanbanDocument } from "./sync.js";
@@ -861,15 +860,6 @@ export const updateTask = async (
         return { ok: false, error: "Task title cannot be empty." };
     }
 
-    const combinedLength =
-        updatedTask.title.length + (updatedTask.description || "").length;
-    if (combinedLength > WORKSPACE_AI_UPDATE_TASK_MAX_CHARS) {
-        return {
-            ok: false,
-            error: `Title and description combined must be under ${WORKSPACE_AI_UPDATE_TASK_MAX_CHARS} characters.`,
-        };
-    }
-
     const nextKanban = kanban.map((column) => {
         if (column.id !== located.column.id) return column;
         return {
@@ -987,15 +977,6 @@ export const bulkUpdateTasks = async (
         const updatedTask = applyTaskUpdateFields(located.task, entry.fields);
         if (!updatedTask.title) {
             fieldErrors.push(`${entry.taskRef}: Task title cannot be empty.`);
-            continue;
-        }
-
-        const combinedLength =
-            updatedTask.title.length + (updatedTask.description || "").length;
-        if (combinedLength > WORKSPACE_AI_UPDATE_TASK_MAX_CHARS) {
-            fieldErrors.push(
-                `${entry.taskRef}: Title and description combined must be under ${WORKSPACE_AI_UPDATE_TASK_MAX_CHARS} characters.`
-            );
             continue;
         }
 

@@ -17,9 +17,6 @@ import { resolveByIdOrName } from './shared.js';
 import { registerAssetCommands } from './assets.js';
 import { insertAt, parsePlacement } from './task-fields.js';
 
-/** Must match the server's page limit; checked first so nothing is sent in vain. */
-export const MAX_PAGE_LENGTH = 500_000;
-
 type ContentOptions = { file?: string; text?: string };
 
 /** Content from exactly one of --file (path or - for stdin) and --text. */
@@ -36,15 +33,6 @@ export const contentFrom = async (options: ContentOptions, required: boolean) =>
 			code: 'invalid_arguments',
 			exitCode: 2
 		});
-	return content;
-};
-
-const checkLength = (content: string, label = 'Page') => {
-	if (content.length > MAX_PAGE_LENGTH)
-		throw new KainbuError(
-			`${label} content would be ${content.length} characters; the limit is ${MAX_PAGE_LENGTH}.`,
-			{ code: 'too_large', exitCode: 2 }
-		);
 	return content;
 };
 
@@ -108,7 +96,6 @@ export const registerPageCommands = (program: Command) => {
 					exitCode: 2
 				});
 			const content = await contentFrom(options, false);
-			if (content !== undefined) checkLength(content);
 			const { project } = await resolveContext({
 				project: options.project,
 				requireBoard: false,
@@ -175,7 +162,7 @@ export const registerPageCommands = (program: Command) => {
 					});
 					const selected = resolveByIdOrName(project.pages, target, 'page', { exact: true });
 					assertRevision(options.ifMatch, selected.content);
-					const content = checkLength(mode === 'set' ? input : appendText(selected.content, input));
+					const content = mode === 'set' ? input : appendText(selected.content, input);
 					// The server rejects the write if the page changed since this read.
 					await updateProjectPageContent(project.id, selected.id, content, selected.content);
 					printSuccess(

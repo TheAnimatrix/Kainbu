@@ -70,11 +70,9 @@ export type MaterializedWorkspace = {
 	boardRefs: BoardRefMap;
 };
 
-const PAGE_CONTENT_MAX_CHARS = 500_000;
-
 export const sanitizePageContent = (value: unknown) => {
 	if (typeof value !== 'string') return '';
-	return value.replace(/\0/g, '').slice(0, PAGE_CONTENT_MAX_CHARS);
+	return value.replace(/\0/g, '');
 };
 
 const PAGE_TEMPLATE_MARKERS = [

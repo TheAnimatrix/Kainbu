@@ -731,12 +731,6 @@ const requireKanbanData = (value: unknown, field: string): KanbanData => {
 					`${field}[${columnIndex}].tasks[${taskIndex}] is malformed.`
 				);
 			}
-			if (typeof task.description === 'string' && task.description.length > 100_000) {
-				throw new WorkspaceApiError(
-					413,
-					`${field}[${columnIndex}].tasks[${taskIndex}].description is too large.`
-				);
-			}
 			if (
 				!isOptionalString(task.color, 128) ||
 				!isOptionalString(task.assignedTo, 128) ||
@@ -792,19 +786,9 @@ const requireKanbanData = (value: unknown, field: string): KanbanData => {
 	return value as KanbanData;
 };
 
-const MAX_PAGE_CONTENT_LENGTH = 500_000;
-
-/** Oversized content is rejected, never truncated: a cut page would look saved. */
-const sanitizeProjectPageContent = (content: unknown) => {
-	if (typeof content !== 'string') return '';
-	const clean = content.replace(/\0/g, '');
-	if (clean.length > MAX_PAGE_CONTENT_LENGTH)
-		throw new WorkspaceApiError(
-			413,
-			`Page content is limited to ${MAX_PAGE_CONTENT_LENGTH} characters (got ${clean.length}).`
-		);
-	return clean;
-};
+/** Page content has no length cap; only NUL bytes are stripped. */
+const sanitizeProjectPageContent = (content: unknown) =>
+	typeof content === 'string' ? content.replace(/\0/g, '') : '';
 
 /** Find a project child (board/page/…) by its app-level client_id, scoped to the project. */
 export const findProjectChildByClientId = async (

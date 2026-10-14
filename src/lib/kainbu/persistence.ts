@@ -791,7 +791,7 @@ export const deleteProjectPage = async (projectId: string, pageId: string) => {
 
 export const sanitizeProjectPageContent = (content: unknown) => {
 	if (typeof content !== 'string') return '';
-	return content.replace(/\0/g, '').slice(0, 500_000);
+	return content.replace(/\0/g, '');
 };
 
 export const updateProjectPageContent = async (
